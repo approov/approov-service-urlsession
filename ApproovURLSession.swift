@@ -1041,7 +1041,7 @@ class ApproovSDK {
         // Invoke fetch token sync
         let approovResult = Approov.fetchTokenAndWait(request.url!.absoluteString)
         // Log result of token fetch
-        NSLog("Approov: Approov token for host: %@ : %@", request.url!.absoluteString, approovResult.loggableToken())
+        NSLog("Approov: Approov token for host: %@ : %@", request.url!.host!, approovResult.loggableToken())
         if approovResult.isConfigChanged {
             // Store dynamic config file if a change has occurred
             if let newConfig = Approov.fetchConfig() {
