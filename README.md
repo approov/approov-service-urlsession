@@ -48,3 +48,17 @@ If you wish to reduce the latency associated with fetching the first Approov tok
 ## Configuration Persistence
 An Approov app automatically downloads any new configurations of APIs and their pins that are available. These are stored in the [`UserDefaults`](https://developer.apple.com/documentation/foundation/userdefaults) for the app in a preference key `approov-dynamic`. You can store the preferences differently by modifying or overriding the methods `storeDynamicConfig` and `readDynamicApproovConfig` in `ApproovURLSession.swift`.
 
+# Bitcode Support
+It is possible to use bitcode enabled Approov SDK by providing a slightly different `Podfile` in your test app:
+
+```
+target 'YourApplication' do
+    use_frameworks!
+    platform :ios, '10.0'
+    pod 'approov-service-urlsession', '2.6.1-bitcode', :source => "https://github.com/approov/approov-service-urlsession.git"
+    pod 'approov-ios-sdk-bitcode', '2.6.1', :source => "https://github.com/approov/approov-ios-sdk-bitcode.git"
+end
+```
+
+Note the changes in the `tag` name of the approov service and also the use of a different repository for the Approov SDK. The wrapper code is the same for both native and bitcode versions of the Approov SDK, only the pod dependency changes. 
+Please, also remember to use the `-bitcode` flag when using the Approov [admin tools](https://www.approov.io/docs/v2.5/approov-installation/#approov-tool) to register your application with the Approov service.
