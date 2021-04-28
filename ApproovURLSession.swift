@@ -1031,11 +1031,6 @@ class ApproovSDK {
             if let aValue = request.value(forHTTPHeaderField: ApproovSDK.bindHeader) {
                 // Add the Bind Header as a data hash to Approov token
                 Approov.setDataHashInToken(aValue)
-            } else {
-                // We fail since required binding header is missing
-                let error = ApproovError.runtimeError(message: "Approov: Approov SDK missing token binding header \(ApproovSDK.bindHeader)")
-                returnData.error = error
-                return returnData
             }
         }
         // Invoke fetch token sync
