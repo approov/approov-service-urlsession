@@ -886,6 +886,29 @@ class ApproovURLSessionDataDelegate: NSObject, URLSessionDelegate, URLSessionTas
         }
         return Data(hash)
     }
+
+    // Bind Header string
+    public static var bindHeader: String {
+        get {
+            ApproovSDK.bindHeader
+        }
+        set {
+            ApproovSDK.bindHeader = newValue
+        }
+    }
+    // Approov Token Header and Prefix
+    public static var approovTokenHeaderAndPrefix: (approovTokenHeader: String, approovTokenPrefix: String) {
+        get {
+            ApproovSDK.approovTokenHeaderAndPrefix
+        }
+        set {
+            ApproovSDK.approovTokenHeaderAndPrefix = newValue
+        }
+    }
+    // Prefetch Approov Token
+    public static let prefetchApproovToken: Void = {
+        ApproovSDK.prefetchApproovToken
+    }
 }// class
 
 
@@ -896,10 +919,6 @@ class ApproovSDK {
     public static let kApproovInitialKey = "approov-initial"
     /* Initial configuration file extention for Approov SDK */
     public static let kConfigFileExtension = "config"
-    /* Approov token default header */
-    private static let kApproovTokenHeader = "Approov-Token"
-    /* Approov token custom prefix: any prefix to be added such as "Bearer " */
-    private static var approovTokenPrefix = ""
     /* Private initializer */
     fileprivate init(){}
     /* Status of Approov SDK initialisation */
@@ -945,6 +964,28 @@ class ApproovSDK {
         }
     }
     
+    // Dispatch queue to manage concurrent access to approovTokenHeader variable
+    private static let approovTokenHeaderAndPrefixQueue = DispatchQueue(label: "ApproovSDK.approovTokenHeader", qos: .default, attributes: .concurrent, autoreleaseFrequency: .never, target: DispatchQueue.global())
+    /* Approov token default header */
+    private static var _approovTokenHeader = "Approov-Token"
+    /* Approov token custom prefix: any prefix to be added such as "Bearer " */
+    private static var _approovTokenPrefix = ""
+    // Approov Token Header String
+    public static var approovTokenHeaderAndPrefix: (approovTokenHeader: String, approovTokenPrefix: String) {
+        get {
+            var approovTokenHeader = ""
+            var approovTokenPrefix = ""
+            approovTokenHeaderAndPrefixQueue.sync {
+                approovTokenHeader = _approovTokenHeader
+                approovTokenPrefix = _approovTokenPrefix
+        }
+        return (approovTokenHeader,approovTokenPrefix)
+        }
+        set {
+            approovTokenHeaderAndPrefixQueue.async(group: nil, qos: .default, flags: .barrier, execute: {(_approovTokenHeader,_approovTokenPrefix) = newValue})
+        }
+    }
+
     /**
     * Reads any previously-saved dynamic configuration for the Approov SDK. May return 'nil' if a
     * dynamic configuration has not yet been saved by calling saveApproovDynamicConfig().
@@ -1050,7 +1091,7 @@ class ApproovSDK {
                 // Can go ahead and make the API call with the provided request object
                 returnData.decision = .ShouldProceed
                 // Set Approov-Token header
-                returnData.request.setValue(ApproovSDK.approovTokenPrefix + approovResult.token, forHTTPHeaderField: ApproovSDK.kApproovTokenHeader)
+                returnData.request.setValue(ApproovSDK.approovTokenHeaderAndPrefix.approovTokenPrefix + approovResult.token, forHTTPHeaderField: ApproovSDK.approovTokenHeaderAndPrefix.approovTokenHeader)
             case ApproovTokenFetchStatus.noNetwork,
                  ApproovTokenFetchStatus.poorNetwork,
                  ApproovTokenFetchStatus.mitmDetected:
