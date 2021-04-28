@@ -908,7 +908,7 @@ class ApproovURLSessionDataDelegate: NSObject, URLSessionDelegate, URLSessionTas
     // Prefetch Approov Token
     public static let prefetchApproovToken: Void = {
         ApproovSDK.prefetchApproovToken
-    }
+    }()
 }// class
 
 
