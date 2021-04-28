@@ -481,6 +481,30 @@ public class ApproovURLSession: NSObject {
         }
         return returnRequest
     }
+
+
+    // Bind Header string
+    public static var bindHeader: String {
+        get {
+            ApproovSDK.bindHeader
+        }
+        set {
+            ApproovSDK.bindHeader = newValue
+        }
+    }
+    // Approov Token Header and Prefix
+    public static var approovTokenHeaderAndPrefix: (approovTokenHeader: String, approovTokenPrefix: String) {
+        get {
+            ApproovSDK.approovTokenHeaderAndPrefix
+        }
+        set {
+            ApproovSDK.approovTokenHeaderAndPrefix = newValue
+        }
+    }
+    // Prefetch Approov Token
+    public static let prefetchApproovToken: Void = {
+        ApproovSDK.prefetchApproovToken
+    }()
 }// class
 
 
@@ -887,28 +911,6 @@ class ApproovURLSessionDataDelegate: NSObject, URLSessionDelegate, URLSessionTas
         return Data(hash)
     }
 
-    // Bind Header string
-    public static var bindHeader: String {
-        get {
-            ApproovSDK.bindHeader
-        }
-        set {
-            ApproovSDK.bindHeader = newValue
-        }
-    }
-    // Approov Token Header and Prefix
-    public static var approovTokenHeaderAndPrefix: (approovTokenHeader: String, approovTokenPrefix: String) {
-        get {
-            ApproovSDK.approovTokenHeaderAndPrefix
-        }
-        set {
-            ApproovSDK.approovTokenHeaderAndPrefix = newValue
-        }
-    }
-    // Prefetch Approov Token
-    public static let prefetchApproovToken: Void = {
-        ApproovSDK.prefetchApproovToken
-    }()
 }// class
 
 
