@@ -1,7 +1,7 @@
 // swift-tools-version:5.3
 // The swift-tools-version declares the minimum version of Swift required to build this package.
 import PackageDescription
-let releaseTAG = "1.0.0"
+let releaseTAG = "2.7.0"
 let package = Package(
     name: "ApproovURLSession",
     platforms: [.iOS(.v10)],
@@ -9,7 +9,7 @@ let package = Package(
         // Products define the executables and libraries a package produces, and make them visible to other packages.
         .library(
             name: "ApproovURLSession",
-            targets: ["ApproovURLSession"]),
+            targets: ["ApproovURLSession", "Approov"]),
     ],
     dependencies: [
         // Here we define our package's external dependencies
@@ -25,6 +25,11 @@ let package = Package(
         .target(
             name: "ApproovURLSession",
             exclude: ["README.md", "LICENSE"]
-            )
+            ),
+        .binaryTarget(
+            name: "Approov",
+            url: "https://github.com/approov/approov-ios-sdk/releases/download/" + releaseTAG + "/Approov.xcframework.zip",
+            checksum : "68ed56b4cc929def38dd7e00a7ce6e3f9e8ddbf5508d22b63b4b42e222deed4f"
+        )
     ]
 )
