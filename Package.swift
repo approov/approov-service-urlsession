@@ -25,6 +25,6 @@ let package = Package(
         .target(
             name: "ApproovURLSession",
             exclude: ["README.md", "LICENSE"],
-            ),
+            )
     ]
 )
