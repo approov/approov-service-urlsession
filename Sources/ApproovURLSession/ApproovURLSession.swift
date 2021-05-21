@@ -42,13 +42,17 @@ public class ApproovURLSession: NSObject {
     // The delegate queue
     var delegateQueue:OperationQueue?
     // The ApproovSDK handle
-    let approovSDK = ApproovSDK.sharedInstance
+    let approovSDK = ApproovSDK.sharedInstance!
     
     /*
      *  URLSession initializer
      *  https://developer.apple.com/documentation/foundation/urlsession/1411597-init
      */
-    public init(configuration: URLSessionConfiguration, delegate: URLSessionDelegate?, delegateQueue: OperationQueue?) {
+    public init(configuration: URLSessionConfiguration, delegate: URLSessionDelegate?, delegateQueue: OperationQueue?, approovConfigString: String? = nil) {
+        // Set config string if not nil
+        if approovConfigString != nil {
+            ApproovSDK.approovConfigString = approovConfigString
+        }
         self.urlSessionConfiguration = configuration
         self.urlSessionDelegate = ApproovURLSessionDataDelegate(with: delegate)
         self.delegateQueue = delegateQueue
@@ -61,8 +65,8 @@ public class ApproovURLSession: NSObject {
      *  URLSession initializer
      *   https://developer.apple.com/documentation/foundation/urlsession/1411474-init
      */
-    public convenience init(configuration: URLSessionConfiguration) {
-        self.init(configuration: configuration, delegate: nil, delegateQueue: nil)
+    public convenience init(configuration: URLSessionConfiguration, approovSDKConfig: String?) {
+        self.init(configuration: configuration, delegate: nil, delegateQueue: nil, approovConfigString: approovSDKConfig)
     }
     
     // MARK: URLSession dataTask
@@ -925,16 +929,23 @@ class ApproovSDK {
     fileprivate init(){}
     /* Status of Approov SDK initialisation */
     private static var approovSDKInitialised = false
-    /* Singleton */
-    fileprivate static let sharedInstance: ApproovSDK = {
+    /* Singleton: configString is obtained using `approov sdk -getConfigString` */
+    fileprivate static let sharedInstance: ApproovSDK? = {
         let instance = ApproovSDK()
+        var initialConfigString: String?
+        // If configString is not set during session initialization read the initial config file
+        if ApproovSDK.approovConfigString == nil {
+            initialConfigString = readInitialApproovConfig()
+        } else {
+            initialConfigString = ApproovSDK.approovConfigString
+        }
         /* Read initial config */
-        if let configString = readInitialApproovConfig() {
+        if initialConfigString != nil {
             /* Read dynamic config  */
             let dynamicConfigString = readDynamicApproovConfig()
             /* Initialise Approov SDK */
             do {
-                try Approov.initialize(configString, updateConfig: dynamicConfigString, comment: nil)
+                try Approov.initialize(initialConfigString!, updateConfig: dynamicConfigString, comment: nil)
                 approovSDKInitialised = true
                 /* Save updated SDK config if this is the first ever app launch */
                 if dynamicConfigString == nil {
@@ -985,6 +996,21 @@ class ApproovSDK {
         }
         set {
             approovTokenHeaderAndPrefixQueue.async(group: nil, qos: .default, flags: .barrier, execute: {(_approovTokenHeader,_approovTokenPrefix) = newValue})
+        }
+    }
+
+    // Initialization configuration string: NOTE this can only ever be written to ONCE since Approov SDK can only
+    // ever be initialized once
+    private static var _approovConfigString: String?
+    // Public setter/getter
+    static var approovConfigString: String? {
+        set (newValue) {
+            if (_approovConfigString == nil) {
+                _approovConfigString = newValue
+            }
+        }
+        get {
+            return _approovConfigString
         }
     }
 
