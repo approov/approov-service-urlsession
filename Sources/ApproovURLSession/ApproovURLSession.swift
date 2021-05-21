@@ -42,7 +42,7 @@ public class ApproovURLSession: NSObject {
     // The delegate queue
     var delegateQueue:OperationQueue?
     // The ApproovSDK handle
-    let approovSDK = ApproovSDK.sharedInstance!
+    let approovSDK: ApproovSDK?
     
     /*
      *  URLSession initializer
@@ -53,6 +53,8 @@ public class ApproovURLSession: NSObject {
         if approovConfigString != nil {
             ApproovSDK.approovConfigString = approovConfigString
         }
+        // ApproovSDK signleton handle
+        approovSDK = ApproovSDK.sharedInstance!
         self.urlSessionConfiguration = configuration
         self.urlSessionDelegate = ApproovURLSessionDataDelegate(with: delegate)
         self.delegateQueue = delegateQueue
@@ -82,7 +84,7 @@ public class ApproovURLSession: NSObject {
      */
     func dataTask(with request: URLRequest) -> URLSessionDataTask {
         let userRequest = addUserHeadersToRequest(request: request)
-        let approovData = approovSDK.fetchApproovToken(request: userRequest)
+        let approovData = approovSDK!.fetchApproovToken(request: userRequest)
         var sessionDataTask:URLSessionDataTask?
         switch approovData.decision {
             case .ShouldProceed:
@@ -117,7 +119,7 @@ public class ApproovURLSession: NSObject {
      */
     public func dataTask(with request: URLRequest, completionHandler: @escaping (Data?, URLResponse?, Error?) -> Void) -> URLSessionDataTask {
         let userRequest = addUserHeadersToRequest(request: request)
-        let approovData = approovSDK.fetchApproovToken(request: userRequest)
+        let approovData = approovSDK!.fetchApproovToken(request: userRequest)
         // The returned task
         var task:URLSessionDataTask?
         switch approovData.decision {
@@ -160,7 +162,7 @@ public class ApproovURLSession: NSObject {
      */
     func downloadTask(with request: URLRequest) -> URLSessionDownloadTask {
         let userRequest = addUserHeadersToRequest(request: request)
-        let approovData = approovSDK.fetchApproovToken(request: userRequest)
+        let approovData = approovSDK!.fetchApproovToken(request: userRequest)
         var sessionDownloadTask:URLSessionDownloadTask?
         switch approovData.decision {
             case .ShouldProceed:
@@ -197,7 +199,7 @@ public class ApproovURLSession: NSObject {
      */
     func downloadTask(with request: URLRequest, completionHandler: @escaping (URL?, URLResponse?, Error?) -> Void) -> URLSessionDownloadTask {
         let userRequest = addUserHeadersToRequest(request: request)
-        let approovData = approovSDK.fetchApproovToken(request: userRequest)
+        let approovData = approovSDK!.fetchApproovToken(request: userRequest)
         // The returned task
         var task:URLSessionDownloadTask?
         switch approovData.decision {
@@ -249,7 +251,7 @@ public class ApproovURLSession: NSObject {
      */
     func uploadTask(with request: URLRequest, from: Data) -> URLSessionUploadTask {
         let userRequest = addUserHeadersToRequest(request: request)
-        let approovData = approovSDK.fetchApproovToken(request: userRequest)
+        let approovData = approovSDK!.fetchApproovToken(request: userRequest)
         var sessionUploadTask:URLSessionUploadTask?
         switch approovData.decision {
             case .ShouldProceed:
@@ -278,7 +280,7 @@ public class ApproovURLSession: NSObject {
      */
     func uploadTask(with request: URLRequest, from: Data?, completionHandler: @escaping (Data?, URLResponse?, Error?) -> Void) -> URLSessionUploadTask {
         let userRequest = addUserHeadersToRequest(request: request)
-        let approovData = approovSDK.fetchApproovToken(request: userRequest)
+        let approovData = approovSDK!.fetchApproovToken(request: userRequest)
         // The returned task
         var task:URLSessionUploadTask?
         switch approovData.decision {
@@ -313,7 +315,7 @@ public class ApproovURLSession: NSObject {
      */
     func uploadTask(with request: URLRequest, fromFile: URL) -> URLSessionUploadTask {
         let userRequest = addUserHeadersToRequest(request: request)
-        let approovData = approovSDK.fetchApproovToken(request: userRequest)
+        let approovData = approovSDK!.fetchApproovToken(request: userRequest)
         var sessionUploadTask:URLSessionUploadTask?
         switch approovData.decision {
             case .ShouldProceed:
@@ -342,7 +344,7 @@ public class ApproovURLSession: NSObject {
      */
     func uploadTask(with request: URLRequest, fromFile: URL, completionHandler: @escaping (Data?, URLResponse?, Error?) -> Void) -> URLSessionUploadTask {
         let userRequest = addUserHeadersToRequest(request: request)
-        let approovData = approovSDK.fetchApproovToken(request: userRequest)
+        let approovData = approovSDK!.fetchApproovToken(request: userRequest)
         // The returned task
         var task:URLSessionUploadTask?
         switch approovData.decision {
@@ -377,7 +379,7 @@ public class ApproovURLSession: NSObject {
      */
     func uploadTask(withStreamedRequest: URLRequest) -> URLSessionUploadTask {
         let userRequest = addUserHeadersToRequest(request: withStreamedRequest)
-        let approovData = approovSDK.fetchApproovToken(request: userRequest)
+        let approovData = approovSDK!.fetchApproovToken(request: userRequest)
         var sessionUploadTask:URLSessionUploadTask?
         switch approovData.decision {
             case .ShouldProceed:
@@ -1105,7 +1107,8 @@ class ApproovSDK {
         // Invoke fetch token sync
         let approovResult = Approov.fetchTokenAndWait(request.url!.absoluteString)
         // Log result of token fetch
-        NSLog("Approov: Approov token for host: %@ : %@", request.url!.host!, approovResult.loggableToken())
+        let aHostname = hostnameFromURL(url: request.url!)
+        print("Approov: Approov token for host: \(aHostname) : \(approovResult.loggableToken())")
         if approovResult.isConfigChanged {
             // Store dynamic config file if a change has occurred
             if let newConfig = Approov.fetchConfig() {
@@ -1157,5 +1160,20 @@ public enum ApproovError: Error {
     }
 }
 
-
-
+/*  Host component only gets resolved if the string includes the protocol used
+ *  This is not always the case when making requests so a convenience method is needed
+ *
+ */
+func hostnameFromURL(url: URL) -> String {
+    if url.absoluteString.starts(with: "https") {
+        return url.host!
+    } else {
+        let fullHost = "https://" + url.absoluteString
+        let newURL = URL(string: fullHost)
+        if let host = newURL?.host {
+            return host
+        } else {
+            return ""
+        }
+    }
+}
