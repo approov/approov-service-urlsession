@@ -836,12 +836,19 @@ class ApproovURLSessionDataDelegate: NSObject, URLSessionDelegate, URLSessionTas
             // Get the receivers host
             let host = challenge.protectionSpace.host
             if let certHashList = approovCertHashes[host] {
+                // We have no pins defined for this host, accept connection (unpinned)
+                if certHashList.count == 0 {
+                    return serverTrust
+                }
                 // We have on or more cert hashes matching the receivers host, compare them
                 for certHash in certHashList {
                     if publicKeyHashBase64 == certHash {
                         return serverTrust
                     }
                 }
+            } else {
+                // Host is not pinned
+                return serverTrust
             }
             indexCurrentCert += 1
         }
@@ -1177,3 +1184,4 @@ func hostnameFromURL(url: URL) -> String {
         }
     }
 }
+
