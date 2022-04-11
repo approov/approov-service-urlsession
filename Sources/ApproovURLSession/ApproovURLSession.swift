@@ -41,20 +41,12 @@ public class ApproovURLSession: NSObject {
     var urlSessionDelegate:URLSessionDelegate?
     // The delegate queue
     var delegateQueue:OperationQueue?
-    // The ApproovSDK handle
-    let approovSDK: ApproovSDK?
     
     /*
      *  URLSession initializer
      *  https://developer.apple.com/documentation/foundation/urlsession/1411597-init
      */
-    public init(configuration: URLSessionConfiguration, delegate: URLSessionDelegate?, delegateQueue: OperationQueue?, approovConfigString: String? = nil) {
-        // Set config string if not nil
-        if approovConfigString != nil {
-            ApproovSDK.approovConfigString = approovConfigString
-        }
-        // ApproovSDK signleton handle
-        approovSDK = ApproovSDK.sharedInstance!
+    public init(configuration: URLSessionConfiguration, delegate: URLSessionDelegate?, delegateQueue: OperationQueue?) {
         self.urlSessionConfiguration = configuration
         self.urlSessionDelegate = ApproovURLSessionDataDelegate(with: delegate)
         self.delegateQueue = delegateQueue
@@ -67,8 +59,8 @@ public class ApproovURLSession: NSObject {
      *  URLSession initializer
      *   https://developer.apple.com/documentation/foundation/urlsession/1411474-init
      */
-    public convenience init(configuration: URLSessionConfiguration, approovSDKConfig: String?) {
-        self.init(configuration: configuration, delegate: nil, delegateQueue: nil, approovConfigString: approovSDKConfig)
+    public convenience init(configuration: URLSessionConfiguration) {
+        self.init(configuration: configuration, delegate: nil, delegateQueue: nil)
     }
     
     // MARK: URLSession dataTask
@@ -84,7 +76,7 @@ public class ApproovURLSession: NSObject {
      */
     func dataTask(with request: URLRequest) -> URLSessionDataTask {
         let userRequest = addUserHeadersToRequest(request: request)
-        let approovData = approovSDK!.fetchApproovToken(request: userRequest)
+        let approovData = ApproovService.fetchApproovToken(request: userRequest)
         var sessionDataTask:URLSessionDataTask?
         switch approovData.decision {
             case .ShouldProceed:
@@ -119,7 +111,7 @@ public class ApproovURLSession: NSObject {
      */
     public func dataTask(with request: URLRequest, completionHandler: @escaping (Data?, URLResponse?, Error?) -> Void) -> URLSessionDataTask {
         let userRequest = addUserHeadersToRequest(request: request)
-        let approovData = approovSDK!.fetchApproovToken(request: userRequest)
+        let approovData = ApproovService.fetchApproovToken(request: userRequest)
         // The returned task
         var task:URLSessionDataTask?
         switch approovData.decision {
@@ -162,7 +154,7 @@ public class ApproovURLSession: NSObject {
      */
     func downloadTask(with request: URLRequest) -> URLSessionDownloadTask {
         let userRequest = addUserHeadersToRequest(request: request)
-        let approovData = approovSDK!.fetchApproovToken(request: userRequest)
+        let approovData = ApproovService.fetchApproovToken(request: userRequest)
         var sessionDownloadTask:URLSessionDownloadTask?
         switch approovData.decision {
             case .ShouldProceed:
@@ -199,7 +191,7 @@ public class ApproovURLSession: NSObject {
      */
     func downloadTask(with request: URLRequest, completionHandler: @escaping (URL?, URLResponse?, Error?) -> Void) -> URLSessionDownloadTask {
         let userRequest = addUserHeadersToRequest(request: request)
-        let approovData = approovSDK!.fetchApproovToken(request: userRequest)
+        let approovData = ApproovService.fetchApproovToken(request: userRequest)
         // The returned task
         var task:URLSessionDownloadTask?
         switch approovData.decision {
@@ -251,7 +243,7 @@ public class ApproovURLSession: NSObject {
      */
     func uploadTask(with request: URLRequest, from: Data) -> URLSessionUploadTask {
         let userRequest = addUserHeadersToRequest(request: request)
-        let approovData = approovSDK!.fetchApproovToken(request: userRequest)
+        let approovData = ApproovService.fetchApproovToken(request: userRequest)
         var sessionUploadTask:URLSessionUploadTask?
         switch approovData.decision {
             case .ShouldProceed:
@@ -280,7 +272,7 @@ public class ApproovURLSession: NSObject {
      */
     func uploadTask(with request: URLRequest, from: Data?, completionHandler: @escaping (Data?, URLResponse?, Error?) -> Void) -> URLSessionUploadTask {
         let userRequest = addUserHeadersToRequest(request: request)
-        let approovData = approovSDK!.fetchApproovToken(request: userRequest)
+        let approovData = ApproovService.fetchApproovToken(request: userRequest)
         // The returned task
         var task:URLSessionUploadTask?
         switch approovData.decision {
@@ -315,7 +307,7 @@ public class ApproovURLSession: NSObject {
      */
     func uploadTask(with request: URLRequest, fromFile: URL) -> URLSessionUploadTask {
         let userRequest = addUserHeadersToRequest(request: request)
-        let approovData = approovSDK!.fetchApproovToken(request: userRequest)
+        let approovData = ApproovService.fetchApproovToken(request: userRequest)
         var sessionUploadTask:URLSessionUploadTask?
         switch approovData.decision {
             case .ShouldProceed:
@@ -344,7 +336,7 @@ public class ApproovURLSession: NSObject {
      */
     func uploadTask(with request: URLRequest, fromFile: URL, completionHandler: @escaping (Data?, URLResponse?, Error?) -> Void) -> URLSessionUploadTask {
         let userRequest = addUserHeadersToRequest(request: request)
-        let approovData = approovSDK!.fetchApproovToken(request: userRequest)
+        let approovData = ApproovService.fetchApproovToken(request: userRequest)
         // The returned task
         var task:URLSessionUploadTask?
         switch approovData.decision {
@@ -379,7 +371,7 @@ public class ApproovURLSession: NSObject {
      */
     func uploadTask(withStreamedRequest: URLRequest) -> URLSessionUploadTask {
         let userRequest = addUserHeadersToRequest(request: withStreamedRequest)
-        let approovData = approovSDK!.fetchApproovToken(request: userRequest)
+        let approovData = ApproovService.fetchApproovToken(request: userRequest)
         var sessionUploadTask:URLSessionUploadTask?
         switch approovData.decision {
             case .ShouldProceed:
@@ -488,29 +480,6 @@ public class ApproovURLSession: NSObject {
         return returnRequest
     }
 
-
-    // Bind Header string
-    public static var bindHeader: String {
-        get {
-            ApproovSDK.bindHeader
-        }
-        set {
-            ApproovSDK.bindHeader = newValue
-        }
-    }
-    // Approov Token Header and Prefix
-    public static var approovTokenHeaderAndPrefix: (approovTokenHeader: String, approovTokenPrefix: String) {
-        get {
-            ApproovSDK.approovTokenHeaderAndPrefix
-        }
-        set {
-            ApproovSDK.approovTokenHeaderAndPrefix = newValue
-        }
-    }
-    // Prefetch Approov Token
-    public static let prefetchApproovToken: Void = {
-        ApproovSDK.prefetchApproovToken
-    }()
 }// class
 
 
@@ -836,12 +805,20 @@ class ApproovURLSessionDataDelegate: NSObject, URLSessionDelegate, URLSessionTas
             // Get the receivers host
             let host = challenge.protectionSpace.host
             if let certHashList = approovCertHashes[host] {
+                // Actual variable to hold certificate hashes
+                var actualCertHashList = certHashList
                 // We have no pins defined for this host, accept connection (unpinned)
-                if certHashList.count == 0 {
-                    return serverTrust
+                if actualCertHashList.count == 0 { // the host is in but no pins defined
+                    // if there are no pins and no managed trust allow connection
+                    if approovCertHashes["*"] == nil {
+                        return serverTrust;  // We do not pin connection explicitly setting no pins for the host
+                    } else {
+                        // there are no pins for current host, then we try and use any managed trust roots since @"*" is available
+                        actualCertHashList = approovCertHashes["*"]!
+                    }
                 }
                 // We have on or more cert hashes matching the receivers host, compare them
-                for certHash in certHashList {
+                for certHash in actualCertHashList {
                     if publicKeyHashBase64 == certHash {
                         return serverTrust
                     }
@@ -927,50 +904,47 @@ class ApproovURLSessionDataDelegate: NSObject, URLSessionDelegate, URLSessionTas
 }// class
 
 
-class ApproovSDK {
-    /* Dynamic configuration string key in user default database */
-    public static let kApproovDynamicKey = "approov-dynamic"
-    /* Initial configuration string/filename for Approov SDK */
-    public static let kApproovInitialKey = "approov-initial"
-    /* Initial configuration file extention for Approov SDK */
-    public static let kConfigFileExtension = "config"
+class ApproovService {
     /* Private initializer */
     fileprivate init(){}
     /* Status of Approov SDK initialisation */
-    private static var approovSDKInitialised = false
-    /* Singleton: configString is obtained using `approov sdk -getConfigString` */
-    fileprivate static let sharedInstance: ApproovSDK? = {
-        let instance = ApproovSDK()
-        var initialConfigString: String?
-        // If configString is not set during session initialization read the initial config file
-        if ApproovSDK.approovConfigString == nil {
-            initialConfigString = readInitialApproovConfig()
-        } else {
-            initialConfigString = ApproovSDK.approovConfigString
-        }
-        /* Read initial config */
-        if initialConfigString != nil {
-            /* Read dynamic config  */
-            let dynamicConfigString = readDynamicApproovConfig()
+    private static var approovServiceInitialised = false
+    /* The singleton object */
+    fileprivate static let shared = ApproovService()
+    /* The initial config string used to initialize */
+    private static var configString:String?
+    /* The dispatch queue to manage serial access to intializer modified variables */
+    private static let initializerQueue = DispatchQueue(label: "ApproovService.initializer")
+    /* map of headers that should have their values substituted for secure strings, mapped to their
+     * required prefixes
+     */
+    private static var substitutionHeaders:Dictionary<String,String> = Dictionary<String,String>()
+    /* The dispatch queue to manage serial access to the substitution headers dictionary */
+    private static let substitutionQueue = DispatchQueue(label: "ApproovService.substitution")
+    /* Singleton: config is obtained using `approov sdk -getConfigString` */
+    public static func initialize(config: String) throws {
+        initializerQueue.sync {
+            // Check if we attempt to use a different configString
+            if (approovServiceInitialised) {
+                if (config != configString) {
+                    // TODO: Throw exception indicating we are attempting to use different config
+                }
+                return
+            }
             /* Initialise Approov SDK */
             do {
-                try Approov.initialize(initialConfigString!, updateConfig: dynamicConfigString, comment: nil)
-                approovSDKInitialised = true
-                /* Save updated SDK config if this is the first ever app launch */
-                if dynamicConfigString == nil {
-                    storeDynamicConfig(newConfig: Approov.fetchConfig()!)
-                }
+                try Approov.initialize(config, updateConfig: "auto", comment: nil)
+                approovServiceInitialised = true
+                Approov.setUserProperty("QuickstartIosURLSession")
             } catch let error {
+                // TODO: Throw exception
                 print("Error initilizing Approov SDK: \(error.localizedDescription)")
             }
-        } else {
-            print("FATAL: Unable to initialize Approov SDK")
         }
-        return instance
-    }()
+    }// initialize func
     
     // Dispatch queue to manage concurrent access to bindHeader variable
-    private static let bindHeaderQueue = DispatchQueue(label: "ApproovSDK.bindHeader", qos: .default, attributes: .concurrent, autoreleaseFrequency: .never, target: DispatchQueue.global())
+    private static let bindHeaderQueue = DispatchQueue(label: "ApproovService.bindHeader", qos: .default, attributes: .concurrent, autoreleaseFrequency: .never, target: DispatchQueue.global())
     private static var _bindHeader = ""
     // Bind Header string
     public static var bindHeader: String {
@@ -987,7 +961,7 @@ class ApproovSDK {
     }
     
     // Dispatch queue to manage concurrent access to approovTokenHeader variable
-    private static let approovTokenHeaderAndPrefixQueue = DispatchQueue(label: "ApproovSDK.approovTokenHeader", qos: .default, attributes: .concurrent, autoreleaseFrequency: .never, target: DispatchQueue.global())
+    private static let approovTokenHeaderAndPrefixQueue = DispatchQueue(label: "ApproovService.approovTokenHeader", qos: .default, attributes: .concurrent, autoreleaseFrequency: .never, target: DispatchQueue.global())
     /* Approov token default header */
     private static var _approovTokenHeader = "Approov-Token"
     /* Approov token custom prefix: any prefix to be added such as "Bearer " */
@@ -1008,83 +982,20 @@ class ApproovSDK {
         }
     }
 
-    // Initialization configuration string: NOTE this can only ever be written to ONCE since Approov SDK can only
-    // ever be initialized once
-    private static var _approovConfigString: String?
-    // Public setter/getter
-    static var approovConfigString: String? {
-        set (newValue) {
-            if (_approovConfigString == nil) {
-                _approovConfigString = newValue
-            }
-        }
-        get {
-            return _approovConfigString
-        }
-    }
-
-    /**
-    * Reads any previously-saved dynamic configuration for the Approov SDK. May return 'nil' if a
-    * dynamic configuration has not yet been saved by calling saveApproovDynamicConfig().
-    */
-    static public func readDynamicApproovConfig() -> String? {
-        return UserDefaults.standard.object(forKey: kApproovDynamicKey) as? String
-    }
-    
-    /*
-     *  Reads the initial configuration file for the Approov SDK
-     *  The file defined as kApproovInitialKey.kConfigFileExtension
-     *  is read from the app bundle main directory
-     */
-    static public func readInitialApproovConfig() -> String? {
-        // Attempt to load the initial config from the app bundle directory
-        guard let originalFileURL = Bundle.main.url(forResource: kApproovInitialKey, withExtension: kConfigFileExtension) else {
-            /*  This is fatal since we can not load the initial configuration file */
-            print("FATAL: unable to load Approov SDK config file from app bundle directories")
-            return nil
-        }
-        
-        // Read file contents
-        do {
-            let fileExists = try originalFileURL.checkResourceIsReachable()
-            if !fileExists {
-                print("FATAL: No initial Approov SDK config file available")
-                return nil
-            }
-            let configString = try String(contentsOf: originalFileURL)
-            return configString
-        } catch let error {
-            print("FATAL: Error attempting to read inital configuration for Approov SDK from \(originalFileURL): \(error)")
-            return nil
-        }
-    }
-    
-    /**
-    * Saves the Approov dynamic configuration to the user defaults database which is persisted
-    * between app launches. This should be called after every Approov token fetch where
-    * isConfigChanged is set. It saves a new configuration received from the Approov server to
-    * the user defaults database so that it is available on app startup on the next launch.
-    */
-    static public func storeDynamicConfig(newConfig: String){
-        if let updateConfig = Approov.fetchConfig() {
-            UserDefaults.standard.set(updateConfig, forKey: kApproovDynamicKey)
-        }
-    }
-    
-    
     /*
      *  Allows token prefetch operation to be performed as early as possible. This
      *  permits a token to be available while an application might be loading resources
      *  or is awaiting user input. Since the initial token fetch is the most
      *  expensive the prefetch seems reasonable.
      */
-    public static let prefetchApproovToken: Void = {
-        let _ = ApproovSDK.sharedInstance
-        if approovSDKInitialised {
-            // We succeeded initializing Approov SDK, fetch a token
-            Approov.fetchToken({(approovResult: ApproovTokenFetchResult) in
-                // Prefetch done, no need to process response
-            }, "approov.io")
+    public static let prefetch: Void = {
+        initializerQueue.sync {
+            if approovServiceInitialised {
+                // We succeeded initializing Approov SDK, fetch a token
+                Approov.fetchToken({(approovResult: ApproovTokenFetchResult) in
+                    // Prefetch done, no need to process response
+                }, "approov.io")
+            }
         }
     }()
     
@@ -1093,20 +1004,16 @@ class ApproovSDK {
      *  Convenience function fetching the Approov token
      *
      */
-    fileprivate func fetchApproovToken(request: URLRequest) -> ApproovData {
+    fileprivate static func fetchApproovToken(request: URLRequest) -> ApproovData {
         var returnData = ApproovData(request: request, decision: .ShouldFail, sdkMessage: "", error: nil)
-        // Get the sahred instance handle, which initializes the Approov SDK
-        if !ApproovSDK.approovSDKInitialised {
-            let _ = ApproovSDK.sharedInstance
-        }
         // Check if Bind Header is set to a non empty String
-        if ApproovSDK.bindHeader != "" {
+        if ApproovService.bindHeader != "" {
             /*  Query the URLSessionConfiguration for user set headers. They would be set like so:
              *  config.httpAdditionalHeaders = ["Authorization Bearer" : "token"]
              *  Since the URLSessionConfiguration is part of the init call and we store its reference
              *  we check for the presence of a user set header there.
              */
-            if let aValue = request.value(forHTTPHeaderField: ApproovSDK.bindHeader) {
+            if let aValue = request.value(forHTTPHeaderField: ApproovService.bindHeader) {
                 // Add the Bind Header as a data hash to Approov token
                 Approov.setDataHashInToken(aValue)
             }
@@ -1115,13 +1022,7 @@ class ApproovSDK {
         let approovResult = Approov.fetchTokenAndWait(request.url!.absoluteString)
         // Log result of token fetch
         let aHostname = hostnameFromURL(url: request.url!)
-        print("Approov: Approov token for host: \(aHostname) : \(approovResult.loggableToken())")
-        if approovResult.isConfigChanged {
-            // Store dynamic config file if a change has occurred
-            if let newConfig = Approov.fetchConfig() {
-                ApproovSDK.storeDynamicConfig(newConfig: newConfig)
-            }
-        }
+        print("Approov: \(aHostname) : \(approovResult.loggableToken())")
         // Update the message
         returnData.sdkMessage = Approov.string(from: approovResult.status)
         switch approovResult.status {
@@ -1129,42 +1030,233 @@ class ApproovSDK {
                 // Can go ahead and make the API call with the provided request object
                 returnData.decision = .ShouldProceed
                 // Set Approov-Token header
-                returnData.request.setValue(ApproovSDK.approovTokenHeaderAndPrefix.approovTokenPrefix + approovResult.token, forHTTPHeaderField: ApproovSDK.approovTokenHeaderAndPrefix.approovTokenHeader)
+                returnData.request.setValue(ApproovService.approovTokenHeaderAndPrefix.approovTokenPrefix + approovResult.token, forHTTPHeaderField: ApproovService.approovTokenHeaderAndPrefix.approovTokenHeader)
             case ApproovTokenFetchStatus.noNetwork,
                  ApproovTokenFetchStatus.poorNetwork,
                  ApproovTokenFetchStatus.mitmDetected:
                  // Must not proceed with network request and inform user a retry is needed
                 returnData.decision = .ShouldRetry
-                let error = ApproovError.runtimeError(message: returnData.sdkMessage)
+                let error = ApproovError.networkingError(message: returnData.sdkMessage)
                 returnData.error = error
+                return returnData
             case ApproovTokenFetchStatus.unprotectedURL,
                  ApproovTokenFetchStatus.unknownURL,
                  ApproovTokenFetchStatus.noApproovService:
                 // We do NOT add the Approov-Token header to the request headers
                 returnData.decision = .ShouldProceed
+                return returnData
             default:
                 let error = ApproovError.runtimeError(message: returnData.sdkMessage)
                 returnData.error = error
                 returnData.decision = .ShouldFail
+                return returnData
         }// switch
+        
+        // we now deal with any header substitutions, which may require further fetches but these
+        // should be using cached results
+        let isIllegalSubstitution = (approovResult.status == ApproovTokenFetchStatus.unknownURL)
+        // Check for the presence of headers
+        if let requestHeaders = returnData.request.allHTTPHeaderFields {
+            // Make a copy of the original request so we can modify it
+            var replacementRequest = returnData.request
+            for (key, _) in substitutionHeaders {
+                let header = key
+                if let prefix = substitutionHeaders[key] {
+                    if let value = requestHeaders[header]{
+                        // Check if the request contains the header we want to replace
+                        if ((value.hasPrefix(prefix)) && (value.count > prefix.count)){
+                            let index = prefix.index(prefix.startIndex, offsetBy: prefix.count)
+                            let approovResults = Approov.fetchSecureStringAndWait(String(value.suffix(from:index)), nil)
+                            print("Substituting header: \(header), " + Approov.string(from: approovResults.status))
+                            // Process the result of the token fetch operation
+                            if approovResults.status == ApproovTokenFetchStatus.success {
+                                if isIllegalSubstitution {
+                                    // don't allow substitutions on unadded API domains to prevent them accidentally being
+                                    // subject to a Man-in-the-Middle (MitM) attack
+                                    let error = ApproovError.configurationError(message: "fetchApproovToken fetchSecureString: API domain unknown")
+                                    returnData.error = error
+                                    return returnData
+                                }
+                                // We add the modified header to the new copy of request
+                                if let secureStringResult = approovResults.secureString {
+                                    replacementRequest.setValue(prefix + secureStringResult, forHTTPHeaderField: key)
+                                } else {
+                                    // Secure string is nil
+                                    let error = ApproovError.configurationError(message: "fetchApproovToken fetchSecureString: No such key")
+                                    returnData.error = error
+                                    return returnData
+                                }
+                            } else if approovResults.status == ApproovTokenFetchStatus.rejected {
+                                // if the request is rejected then we provide a special exception with additional information
+                                let error = ApproovError.runtimeError(message: "fetchApproovToken fetchSecureString: rejected")
+                                returnData.error = error
+                                return returnData
+                            } else if approovResults.status == ApproovTokenFetchStatus.noNetwork ||
+                                        approovResults.status == ApproovTokenFetchStatus.poorNetwork ||
+                                        approovResults.status == ApproovTokenFetchStatus.mitmDetected {
+                                // we are unable to get the secure string due to network conditions so the request can
+                                // be retried by the user later
+                                let error = ApproovError.networkingError(message: "fetchApproovToken fetchSecureString: netwrok issue, retry needed")
+                                returnData.error = error
+                                return returnData
+                            } else if approovResults.status != ApproovTokenFetchStatus.unknownKey {
+                                // we have failed to get a secure string with a more serious permanent error
+                                let error = ApproovError.permanentError(message: "fetchApproovToken fetchSecureString: permanent error")
+                                returnData.error = error
+                                return returnData
+                            }
+                        }// if (value)
+                    } // if let value
+                }// if let prefix
+            }// for
+            // Replace the modified request headers to the request
+            returnData.request = replacementRequest
+        }// if let
         
         return returnData
     }
-}
+    
+    /*
+     * Adds the name of a header which should be subject to secure strings substitution. This
+     * means that if the header is present then the value will be used as a key to look up a
+     * secure string value which will be substituted into the header value instead. This allows
+     * easy migration to the use of secure strings. A required
+     * prefix may be specified to deal with cases such as the use of "Bearer " prefixed before values
+     * in an authorization header.
+     *
+     * @param header is the header to be marked for substitution
+     * @param prefix is any required prefix to the value being substituted or nil if not required
+     */
+    public static func addSubstitutionHeader(header: String, prefix: String?) {
+        if prefix == nil {
+            ApproovService.substitutionQueue.sync {
+                ApproovService.substitutionHeaders[header] = ""
+            }
+        } else {
+            ApproovService.substitutionQueue.sync {
+                ApproovService.substitutionHeaders[header] = prefix
+            }
+        }
+    }
+    
+    /*  Removes the name of a header if it exists from the secure strings substitution dictionary.
+     *
+     */
+    public static func removeSubstitutionHeader(header: String) {
+        ApproovService.substitutionQueue.sync {
+            if ApproovService.substitutionHeaders[header] != nil {
+                ApproovService.substitutionHeaders.removeValue(forKey: header)
+            }
+        }
+    }
+    
+    /*
+     * Fetches a secure string with the given key. If newDef is not null then a
+     * secure string for the particular app instance may be defined. In this case the
+     * new value is returned as the secure string. Use of an empty string for newDef removes
+     * the string entry. Note that this call may require network transaction and thus may block
+     * for some time, so should not be called from the UI thread. If the attestation fails
+     * for any reason then an exception is raised. Note that the returned string should NEVER be cached
+     * by your app, you should call this function when it is needed. If the fetch fails for any reason
+     * an exception is thrown with description TODO: add info on what fails
+     *
+     * @param key is the secure string key to be looked up
+     * @param newDef is any new definition for the secure string, or nil for lookup only
+     * @throws  exception with description of cause
+     * @return secure string (should not be cached by your app) or nil if it was not defined or an error ocurred
+     */
+    public static func fetchSecureString(key: String, newDef: String?) throws -> String? {
+        // determine the type of operation as the values themselves cannot be logged
+        var type = "lookup"
+        if newDef == nil {
+            type = "definition"
+        }
+        // Invoke fetch secure string
+        let approovResult = Approov.fetchSecureStringAndWait(key, newDef)
+        // Log result of token fetch
+        print("ApproovURLSession: fetchSecureString \(type) : \(stringFromApproovTokenFetchStatus(status: approovResult.status))")
+        // Process the returned Approov status
+        if approovResult.status == ApproovTokenFetchStatus.disabled {
+            throw ApproovError.permanentError(message: "fetchSecureString: secure string feature disabled")
+        } else if  approovResult.status == ApproovTokenFetchStatus.badKey {
+            throw ApproovError.permanentError(message: "fetchSecureString: secure string unknown key")
+        } else if approovResult.status == ApproovTokenFetchStatus.rejected {
+            // if the request is rejected then we provide a special exception with additional information
+            throw ApproovError.runtimeError(message: "fetchSecureString: secure string rejected")
+        } else if approovResult.status == ApproovTokenFetchStatus.noNetwork ||
+                    approovResult.status == ApproovTokenFetchStatus.poorNetwork ||
+                    approovResult.status == ApproovTokenFetchStatus.mitmDetected {
+            // we are unable to get the secure string due to network conditions so the request can
+            // be retried by the user later
+            throw ApproovError.networkingError(message: "fetchSecureString: newtork issue, retry needed")
+        } else if ((approovResult.status != ApproovTokenFetchStatus.success) && (approovResult.status != ApproovTokenFetchStatus.unknownKey)){
+            // if the request is rejected then we provide a special exception with additional information
+            throw ApproovError.runtimeError(message: "fetchSecureString: unknown error")
+
+        }
+        return approovResult.secureString
+    }// fetchSecureString
+    
+    /*
+     * Fetches a custom JWT with the given payload. Note that this call will require network
+     * transaction and thus will block for some time, so should not be called from the UI thread.
+     * If the fetch fails for any reason an exception will be thrown TODO: finish off
+     *
+     * @param payload is the marshaled JSON object for the claims to be included
+     * @return custom JWT string or nil if an error occurred
+     */
+    public static func fetchCustomJWT(payload: String) throws -> String? {
+        // fetch the custom JWT
+        let approovResult = Approov.fetchCustomJWTAndWait(payload)
+        // Log result of token fetch operation but do not log the value
+        print("ApproovURLSession: fetchCustomJWT ", stringFromApproovTokenFetchStatus(status: approovResult.status))
+        // process the returned Approov status
+        if approovResult.status == ApproovTokenFetchStatus.badPayload {
+            throw ApproovError.runtimeError(message: "fetchCustomJWT: malformed json")
+        } else if  approovResult.status == ApproovTokenFetchStatus.disabled {
+            throw ApproovError.configurationError(message: "fetchCustomJWT: feature not enabled")
+        } else if approovResult.status == ApproovTokenFetchStatus.rejected {
+            // if the request is rejected then we provide a special exception with additional information
+            throw ApproovError.runtimeError(message: "fetchCustomJWT: rejected")
+        } else if approovResult.status == ApproovTokenFetchStatus.noNetwork ||
+                    approovResult.status == ApproovTokenFetchStatus.poorNetwork ||
+                    approovResult.status == ApproovTokenFetchStatus.mitmDetected {
+            // we are unable to get the secure string due to network conditions so the request can
+            // be retried by the user later
+            throw ApproovError.networkingError(message: "fetchCustomJWT: networking issue, retry needed")
+        } else if (approovResult.status != ApproovTokenFetchStatus.success){
+            // if the request is rejected then we provide a special exception with additional information
+            throw ApproovError.permanentError(message: "fetchCustomJWT: unknown error")
+        }
+        return approovResult.token
+    }
+} // ApproovService class
+
+
+
 
 /*
  *  Approov error conditions
  */
 public enum ApproovError: Error {
     case initializationFailure(message: String)
-    case configurationFailure(message: String)
+    case configurationError(message: String)
     case runtimeError(message: String)
+    case networkingError(message: String)
+    case permanentError(message: String)
     var localizedDescription: String? {
         switch self {
-        case let .initializationFailure(message), let .configurationFailure(message) , let .runtimeError(message):
+        case let .initializationFailure(message), let .configurationError(message) , let .runtimeError(message), let .networkingError(message), let .permanentError(message):
             return message
         }
     }
+}
+
+/*Convenience function that converts Approov status code to its String representation
+ *
+ */
+func stringFromApproovTokenFetchStatus(status: ApproovTokenFetchStatus) -> String {
+    return Approov.string(from: status)
 }
 
 /*  Host component only gets resolved if the string includes the protocol used
