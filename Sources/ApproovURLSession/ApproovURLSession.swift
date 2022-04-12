@@ -18,6 +18,7 @@
 import Foundation
 import Approov
 import CommonCrypto
+import os.log
 
 fileprivate enum ApproovTokenNetworkFetchDecision {
     case ShouldProceed
@@ -394,6 +395,10 @@ public class ApproovURLSession: NSObject {
         return sessionUploadTask!
     }
     
+    // MARK: Combine Publisher Tasks
+    
+    
+    
     
     // MARK: Managing the Session
     /*  Invalidates the session, allowing any outstanding tasks to finish
@@ -669,6 +674,7 @@ class ApproovURLSessionDataDelegate: NSObject, URLSessionDelegate, URLSessionTas
             delegate.urlSession?(session, taskIsWaitingForConnectivity: task)
         }
     }
+
     
     // MARK: URLSessionDataDelegate
     
@@ -921,13 +927,22 @@ class ApproovService {
     private static var substitutionHeaders:Dictionary<String,String> = Dictionary<String,String>()
     /* The dispatch queue to manage serial access to the substitution headers dictionary */
     private static let substitutionQueue = DispatchQueue(label: "ApproovService.substitution")
-    /* Singleton: config is obtained using `approov sdk -getConfigString` */
+    /* Use log subsystem for info/error */
+    let log = OSLog(subsystem: "approov-service-urlsession", category: "network")
+    /* Singleton: config is obtained using `approov sdk -getConfigString`
+     * Note the initializer function should only ever be called once. Subsequent calls will be ignored
+     * since the ApproovSDK can only be intialized once; if however, an attempt is made to initialize
+     * with a different congifuration (config) we throw an ApproovException.configurationError
+     * If the Approov SDk fails to be initialized for some other reason, an .initializationFailure is raised
+     */
     public static func initialize(config: String) throws {
-        initializerQueue.sync {
+        try initializerQueue.sync  {
             // Check if we attempt to use a different configString
             if (approovServiceInitialised) {
                 if (config != configString) {
-                    // TODO: Throw exception indicating we are attempting to use different config
+                    // Throw exception indicating we are attempting to use different config
+                    os_log("Attempting to initialioze with diferent configuration", type: .error)
+                    throw ApproovError.configurationError(message: "Attempting to initialioze with diferent configuration")
                 }
                 return
             }
@@ -935,10 +950,11 @@ class ApproovService {
             do {
                 try Approov.initialize(config, updateConfig: "auto", comment: nil)
                 approovServiceInitialised = true
-                Approov.setUserProperty("QuickstartIosURLSession")
+                Approov.setUserProperty("approov-service-urlsession")
             } catch let error {
-                // TODO: Throw exception
-                print("Error initilizing Approov SDK: \(error.localizedDescription)")
+                // Log error and throw exception
+                os_log("Error initilizing Approov SDK: %@", type: .error, error.localizedDescription)
+                throw ApproovError.initializationFailure(message: "Error initilizing Approov SDK: \(error.localizedDescription)")
             }
         }
     }// initialize func
@@ -1022,7 +1038,7 @@ class ApproovService {
         let approovResult = Approov.fetchTokenAndWait(request.url!.absoluteString)
         // Log result of token fetch
         let aHostname = hostnameFromURL(url: request.url!)
-        print("Approov: \(aHostname) : \(approovResult.loggableToken())")
+        os_log("Approov: %@ : %@ ", type: .info, aHostname, approovResult.loggableToken())
         // Update the message
         returnData.sdkMessage = Approov.string(from: approovResult.status)
         switch approovResult.status {
@@ -1044,7 +1060,6 @@ class ApproovService {
                  ApproovTokenFetchStatus.noApproovService:
                 // We do NOT add the Approov-Token header to the request headers
                 returnData.decision = .ShouldProceed
-                return returnData
             default:
                 let error = ApproovError.runtimeError(message: returnData.sdkMessage)
                 returnData.error = error
@@ -1067,7 +1082,7 @@ class ApproovService {
                         if ((value.hasPrefix(prefix)) && (value.count > prefix.count)){
                             let index = prefix.index(prefix.startIndex, offsetBy: prefix.count)
                             let approovResults = Approov.fetchSecureStringAndWait(String(value.suffix(from:index)), nil)
-                            print("Substituting header: \(header), " + Approov.string(from: approovResults.status))
+                            os_log("Substituting header: %@, %@ ", type: .info, header, Approov.string(from: approovResults.status))
                             // Process the result of the token fetch operation
                             if approovResults.status == ApproovTokenFetchStatus.success {
                                 if isIllegalSubstitution {
@@ -1088,7 +1103,7 @@ class ApproovService {
                                 }
                             } else if approovResults.status == ApproovTokenFetchStatus.rejected {
                                 // if the request is rejected then we provide a special exception with additional information
-                                let error = ApproovError.runtimeError(message: "fetchApproovToken fetchSecureString: rejected")
+                                let error = ApproovError.rejectionError(message: "fetchApproovToken fetchSecureString: rejected", ARC: approovResults.arc, rejectionReasons: approovResults.rejectionReasons)
                                 returnData.error = error
                                 return returnData
                             } else if approovResults.status == ApproovTokenFetchStatus.noNetwork ||
@@ -1158,7 +1173,12 @@ class ApproovService {
      * for some time, so should not be called from the UI thread. If the attestation fails
      * for any reason then an exception is raised. Note that the returned string should NEVER be cached
      * by your app, you should call this function when it is needed. If the fetch fails for any reason
-     * an exception is thrown with description TODO: add info on what fails
+     * an exception is thrown with description. Exceptions could be due to
+     * malformed JSON string provided (then a .runtimeError is raised), the feature not being enabled
+     * from the CLI tools (.configurationError type raised), a rejection throws a rejectionError type
+     * which might include additional information regarding the failure reason. A networkError exception
+     * could potentially allow a retry operation to be performed and finally if some other error occurs
+     * a permanentError is raised.
      *
      * @param key is the secure string key to be looked up
      * @param newDef is any new definition for the secure string, or nil for lookup only
@@ -1174,7 +1194,7 @@ class ApproovService {
         // Invoke fetch secure string
         let approovResult = Approov.fetchSecureStringAndWait(key, newDef)
         // Log result of token fetch
-        print("ApproovURLSession: fetchSecureString \(type) : \(stringFromApproovTokenFetchStatus(status: approovResult.status))")
+        os_log("fetchSecureString: %@ : %@ ", type: .info, type, Approov.string(from: approovResult.status))
         // Process the returned Approov status
         if approovResult.status == ApproovTokenFetchStatus.disabled {
             throw ApproovError.permanentError(message: "fetchSecureString: secure string feature disabled")
@@ -1182,7 +1202,7 @@ class ApproovService {
             throw ApproovError.permanentError(message: "fetchSecureString: secure string unknown key")
         } else if approovResult.status == ApproovTokenFetchStatus.rejected {
             // if the request is rejected then we provide a special exception with additional information
-            throw ApproovError.runtimeError(message: "fetchSecureString: secure string rejected")
+            throw ApproovError.rejectionError(message: "fetchSecureString: rejected", ARC: approovResult.arc, rejectionReasons: approovResult.rejectionReasons)
         } else if approovResult.status == ApproovTokenFetchStatus.noNetwork ||
                     approovResult.status == ApproovTokenFetchStatus.poorNetwork ||
                     approovResult.status == ApproovTokenFetchStatus.mitmDetected {
@@ -1190,7 +1210,7 @@ class ApproovService {
             // be retried by the user later
             throw ApproovError.networkingError(message: "fetchSecureString: newtork issue, retry needed")
         } else if ((approovResult.status != ApproovTokenFetchStatus.success) && (approovResult.status != ApproovTokenFetchStatus.unknownKey)){
-            // if the request is rejected then we provide a special exception with additional information
+            // we are unable to get the secure string due to a more permanent error
             throw ApproovError.runtimeError(message: "fetchSecureString: unknown error")
 
         }
@@ -1200,8 +1220,12 @@ class ApproovService {
     /*
      * Fetches a custom JWT with the given payload. Note that this call will require network
      * transaction and thus will block for some time, so should not be called from the UI thread.
-     * If the fetch fails for any reason an exception will be thrown TODO: finish off
-     *
+     * If the fetch fails for any reason an exception will be thrown. Exceptions could be due to
+     * malformed JSON string provided (then a .runtimeError is raised), the feature not being enabled
+     * from the CLI tools (.configurationError type raised), a rejection throws a rejectionError type
+     * which might include additional information regarding the failure reason. A networkError exception
+     * could potentially allow a retry operation to be performed and finally if some other error occurs
+     * a permanentError is raised.
      * @param payload is the marshaled JSON object for the claims to be included
      * @return custom JWT string or nil if an error occurred
      */
@@ -1209,7 +1233,7 @@ class ApproovService {
         // fetch the custom JWT
         let approovResult = Approov.fetchCustomJWTAndWait(payload)
         // Log result of token fetch operation but do not log the value
-        print("ApproovURLSession: fetchCustomJWT ", stringFromApproovTokenFetchStatus(status: approovResult.status))
+        os_log("fetchCustomJWT: %@ ", type: .info, Approov.string(from: approovResult.status))
         // process the returned Approov status
         if approovResult.status == ApproovTokenFetchStatus.badPayload {
             throw ApproovError.runtimeError(message: "fetchCustomJWT: malformed json")
@@ -1217,7 +1241,7 @@ class ApproovService {
             throw ApproovError.configurationError(message: "fetchCustomJWT: feature not enabled")
         } else if approovResult.status == ApproovTokenFetchStatus.rejected {
             // if the request is rejected then we provide a special exception with additional information
-            throw ApproovError.runtimeError(message: "fetchCustomJWT: rejected")
+            throw ApproovError.rejectionError(message: "fetchCustomJWT: rejected", ARC: approovResult.arc, rejectionReasons: approovResult.rejectionReasons)
         } else if approovResult.status == ApproovTokenFetchStatus.noNetwork ||
                     approovResult.status == ApproovTokenFetchStatus.poorNetwork ||
                     approovResult.status == ApproovTokenFetchStatus.mitmDetected {
@@ -1225,10 +1249,44 @@ class ApproovService {
             // be retried by the user later
             throw ApproovError.networkingError(message: "fetchCustomJWT: networking issue, retry needed")
         } else if (approovResult.status != ApproovTokenFetchStatus.success){
-            // if the request is rejected then we provide a special exception with additional information
+            // we are unable to get the secure string due to a more permanent error
             throw ApproovError.permanentError(message: "fetchCustomJWT: unknown error")
         }
         return approovResult.token
+    }
+    
+    /* Performs a precheck to determine if the app will pass attestation. This requires secure
+    * strings to be enabled for the account, although no strings need to be set up. This will
+    * likely require network access so may take some time to complete. It may return an error
+    * if the precheck fails or if there is some other problem. ApproovTokenFetchStatusRejected is
+    * an error returnedif the app has failed Approov checks or ApproovTokenFetchStatusNoNetwork for networking
+    * issues where a user initiated retry of the operation should be allowed. An ApproovTokenFetchStatusRejected
+    * may provide additional information about the cause of the rejection. Exceptions could be due to
+    * malformed JSON string provided (then a .runtimeError is raised), the feature not being enabled
+    * from the CLI tools (.configurationError type raised), a rejection throws a rejectionError type
+    * which might include additional information regarding the failure reason. A networkError exception
+    * could potentially allow a retry operation to be performed and finally if some other error occurs
+    * a permanentError is raised.
+    * @param none
+    * @return none
+    */
+    public static func precheck() throws {
+        // try to fetch a non-existent secure string in order to check for a rejection
+        let approovResults = Approov.fetchSecureStringAndWait("precheck-dummy-key", nil)
+        // process the returned Approov status
+        if approovResults.status == ApproovTokenFetchStatus.rejected {
+            // if the request is rejected then we provide a special exception with additional information
+            throw ApproovError.rejectionError(message: "fetchSecureString: rejected", ARC: approovResults.arc, rejectionReasons: approovResults.rejectionReasons)
+        } else if approovResults.status == ApproovTokenFetchStatus.noNetwork ||
+                    approovResults.status == ApproovTokenFetchStatus.poorNetwork ||
+                    approovResults.status == ApproovTokenFetchStatus.mitmDetected {
+            // we are unable to get the secure string due to network conditions so the request can
+            // be retried by the user later
+            throw ApproovError.networkingError(message: "fetchSecureString: newtork issue, retry needed")
+        } else if (approovResults.status != ApproovTokenFetchStatus.success) && (approovResults.status != ApproovTokenFetchStatus.unknownKey){
+            // we are unable to get the secure string due to a more permanent error
+            throw ApproovError.runtimeError(message: "prefetch: unknown error")
+        }
     }
 } // ApproovService class
 
@@ -1244,12 +1302,7 @@ public enum ApproovError: Error {
     case runtimeError(message: String)
     case networkingError(message: String)
     case permanentError(message: String)
-    var localizedDescription: String? {
-        switch self {
-        case let .initializationFailure(message), let .configurationError(message) , let .runtimeError(message), let .networkingError(message), let .permanentError(message):
-            return message
-        }
-    }
+    case rejectionError(message: String, ARC: String?, rejectionReasons: String?)
 }
 
 /*Convenience function that converts Approov status code to its String representation
