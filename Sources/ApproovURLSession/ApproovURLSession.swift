@@ -20,14 +20,14 @@ import Approov
 import CommonCrypto
 import os.log
 
-fileprivate enum ApproovTokenNetworkFetchDecision {
+fileprivate enum ApproovFetchDecision {
     case ShouldProceed
     case ShouldRetry
     case ShouldFail
 }
-fileprivate struct ApproovData {
+fileprivate struct ApproovUpdateResponse {
     var request:URLRequest
-    var decision:ApproovTokenNetworkFetchDecision
+    var decision:ApproovFetchDecision
     var sdkMessage:String
     var error:Error?
 }
@@ -77,25 +77,25 @@ public class ApproovURLSession: NSObject {
      */
     func dataTask(with request: URLRequest) -> URLSessionDataTask {
         let userRequest = addUserHeadersToRequest(request: request)
-        let approovData = ApproovService.fetchApproovToken(request: userRequest)
+        let ApproovUpdateResponse = ApproovService.updateRequestWithApproov(request: userRequest)
         var sessionDataTask:URLSessionDataTask?
-        switch approovData.decision {
+        switch ApproovUpdateResponse.decision {
             case .ShouldProceed:
                 // Go ahead and make the API call with the provided request object
-                sessionDataTask = self.urlSession.dataTask(with: approovData.request)
+                sessionDataTask = self.urlSession.dataTask(with: ApproovUpdateResponse.request)
             case .ShouldRetry:
                  // We create a task and cancel it immediately
-                 sessionDataTask = self.urlSession.dataTask(with: approovData.request)
+                 sessionDataTask = self.urlSession.dataTask(with: ApproovUpdateResponse.request)
                  sessionDataTask!.cancel()
                 // We should retry doing a fetch after a user driven event
                 // Tell the delagate we are marking the session as invalid
-                 self.urlSessionDelegate?.urlSession?(self.urlSession, didBecomeInvalidWithError: approovData.error)
+                 self.urlSessionDelegate?.urlSession?(self.urlSession, didBecomeInvalidWithError: ApproovUpdateResponse.error)
             default:
                 // We create a task and cancel it immediately
-                 sessionDataTask = self.urlSession.dataTask(with: approovData.request)
+                 sessionDataTask = self.urlSession.dataTask(with: ApproovUpdateResponse.request)
                  sessionDataTask!.cancel()
                 // Tell the delagate we are marking the session as invalid
-                 self.urlSessionDelegate?.urlSession?(self.urlSession, didBecomeInvalidWithError: approovData.error)
+                 self.urlSessionDelegate?.urlSession?(self.urlSession, didBecomeInvalidWithError: ApproovUpdateResponse.error)
         }// switch
         return sessionDataTask!
     }
@@ -112,28 +112,28 @@ public class ApproovURLSession: NSObject {
      */
     public func dataTask(with request: URLRequest, completionHandler: @escaping (Data?, URLResponse?, Error?) -> Void) -> URLSessionDataTask {
         let userRequest = addUserHeadersToRequest(request: request)
-        let approovData = ApproovService.fetchApproovToken(request: userRequest)
+        let ApproovUpdateResponse = ApproovService.updateRequestWithApproov(request: userRequest)
         // The returned task
         var task:URLSessionDataTask?
-        switch approovData.decision {
+        switch ApproovUpdateResponse.decision {
             case .ShouldProceed:
                 // Go ahead and make the API call with the provided request object
-                task = self.urlSession.dataTask(with: approovData.request) { (data, response, error) -> Void in
+                task = self.urlSession.dataTask(with: ApproovUpdateResponse.request) { (data, response, error) -> Void in
                     // Invoke completition handler
                     completionHandler(data,response,error)
                 }
             case .ShouldRetry:
                 // We should retry doing a fetch after a user driven event
-                completionHandler(nil,nil,approovData.error)
+                completionHandler(nil,nil,ApproovUpdateResponse.error)
                 // Initialize a URLSessionDataTask object
-                task = self.urlSession.dataTask(with: approovData.request) { (data, response, error) -> Void in
+                task = self.urlSession.dataTask(with: ApproovUpdateResponse.request) { (data, response, error) -> Void in
                 }
                 // We cancel the connection and return the task object at end of function
                 task?.cancel()
             default:
-                completionHandler(nil,nil,approovData.error)
+                completionHandler(nil,nil,ApproovUpdateResponse.error)
                 // Initialize a URLSessionDataTask object
-                task = self.urlSession.dataTask(with: approovData.request) { (data, response, error) -> Void in
+                task = self.urlSession.dataTask(with: ApproovUpdateResponse.request) { (data, response, error) -> Void in
                 }
                 // We cancel the connection and return the task object at end of function
                 task?.cancel()
@@ -155,25 +155,25 @@ public class ApproovURLSession: NSObject {
      */
     func downloadTask(with request: URLRequest) -> URLSessionDownloadTask {
         let userRequest = addUserHeadersToRequest(request: request)
-        let approovData = ApproovService.fetchApproovToken(request: userRequest)
+        let ApproovUpdateResponse = ApproovService.updateRequestWithApproov(request: userRequest)
         var sessionDownloadTask:URLSessionDownloadTask?
-        switch approovData.decision {
+        switch ApproovUpdateResponse.decision {
             case .ShouldProceed:
                 // Go ahead and make the API call with the provided request object
-                sessionDownloadTask = self.urlSession.downloadTask(with: approovData.request)
+                sessionDownloadTask = self.urlSession.downloadTask(with: ApproovUpdateResponse.request)
             case .ShouldRetry:
                  // We create a task and cancel it immediately
-                 sessionDownloadTask = self.urlSession.downloadTask(with: approovData.request)
+                 sessionDownloadTask = self.urlSession.downloadTask(with: ApproovUpdateResponse.request)
                  sessionDownloadTask!.cancel()
                 // We should retry doing a fetch after a user driven event
                 // Tell the delagate we are marking the session as invalid
-                self.urlSessionDelegate?.urlSession?(self.urlSession, didBecomeInvalidWithError: approovData.error)
+                self.urlSessionDelegate?.urlSession?(self.urlSession, didBecomeInvalidWithError: ApproovUpdateResponse.error)
             default:
                 // We create a task and cancel it immediately
-                 sessionDownloadTask = self.urlSession.downloadTask(with: approovData.request)
+                 sessionDownloadTask = self.urlSession.downloadTask(with: ApproovUpdateResponse.request)
                  sessionDownloadTask!.cancel()
                 // Tell the delagate we are marking the session as invalid
-                self.urlSessionDelegate?.urlSession?(self.urlSession, didBecomeInvalidWithError: approovData.error)
+                self.urlSessionDelegate?.urlSession?(self.urlSession, didBecomeInvalidWithError: ApproovUpdateResponse.error)
         }// switch
         return sessionDownloadTask!
     }
@@ -192,29 +192,29 @@ public class ApproovURLSession: NSObject {
      */
     func downloadTask(with request: URLRequest, completionHandler: @escaping (URL?, URLResponse?, Error?) -> Void) -> URLSessionDownloadTask {
         let userRequest = addUserHeadersToRequest(request: request)
-        let approovData = ApproovService.fetchApproovToken(request: userRequest)
+        let ApproovUpdateResponse = ApproovService.updateRequestWithApproov(request: userRequest)
         // The returned task
         var task:URLSessionDownloadTask?
-        switch approovData.decision {
+        switch ApproovUpdateResponse.decision {
             case .ShouldProceed:
                 // Go ahead and make the API call with the provided request object
-                task = self.urlSession.downloadTask(with: approovData.request) { (data, response, error) -> Void in
+                task = self.urlSession.downloadTask(with: ApproovUpdateResponse.request) { (data, response, error) -> Void in
                     // Invoke completition handler
                     completionHandler(data,response,error)
                 }
             case .ShouldRetry:
                 // We should retry doing a fetch after a user driven event
                 // Create the early response and invoke callback with custom error
-                completionHandler(nil,nil,approovData.error)
+                completionHandler(nil,nil,ApproovUpdateResponse.error)
                 // Initialize a URLSessionDataTask object
-                task = self.urlSession.downloadTask(with: approovData.request) { (data, response, error) -> Void in
+                task = self.urlSession.downloadTask(with: ApproovUpdateResponse.request) { (data, response, error) -> Void in
                 }
                 // We cancel the connection and return the task object at end of function
                 task?.cancel()
             default:
-                completionHandler(nil,nil,approovData.error)
+                completionHandler(nil,nil,ApproovUpdateResponse.error)
                 // Initialize a URLSessionDataTask object
-                task = self.urlSession.downloadTask(with: approovData.request) { (data, response, error) -> Void in
+                task = self.urlSession.downloadTask(with: ApproovUpdateResponse.request) { (data, response, error) -> Void in
                 }
                 // We cancel the connection and return the task object at end of function
                 task?.cancel()
@@ -244,25 +244,25 @@ public class ApproovURLSession: NSObject {
      */
     func uploadTask(with request: URLRequest, from: Data) -> URLSessionUploadTask {
         let userRequest = addUserHeadersToRequest(request: request)
-        let approovData = ApproovService.fetchApproovToken(request: userRequest)
+        let ApproovUpdateResponse = ApproovService.updateRequestWithApproov(request: userRequest)
         var sessionUploadTask:URLSessionUploadTask?
-        switch approovData.decision {
+        switch ApproovUpdateResponse.decision {
             case .ShouldProceed:
                 // Go ahead and make the API call with the provided request object
-                sessionUploadTask = self.urlSession.uploadTask(with: approovData.request, from: from)
+                sessionUploadTask = self.urlSession.uploadTask(with: ApproovUpdateResponse.request, from: from)
             case .ShouldRetry:
                  // We create a task and cancel it immediately
-                 sessionUploadTask = self.urlSession.uploadTask(with: approovData.request, from: from)
+                 sessionUploadTask = self.urlSession.uploadTask(with: ApproovUpdateResponse.request, from: from)
                  sessionUploadTask!.cancel()
                 // We should retry doing a fetch after a user driven event
                 // Tell the delagate we are marking the session as invalid
-                self.urlSessionDelegate?.urlSession?(self.urlSession, didBecomeInvalidWithError: approovData.error)
+                self.urlSessionDelegate?.urlSession?(self.urlSession, didBecomeInvalidWithError: ApproovUpdateResponse.error)
             default:
                 // We create a task and cancel it immediately
-                 sessionUploadTask = self.urlSession.uploadTask(with: approovData.request, from: from)
+                 sessionUploadTask = self.urlSession.uploadTask(with: ApproovUpdateResponse.request, from: from)
                  sessionUploadTask!.cancel()
                 // Tell the delagate we are marking the session as invalid
-                self.urlSessionDelegate?.urlSession?(self.urlSession, didBecomeInvalidWithError: approovData.error)
+                self.urlSessionDelegate?.urlSession?(self.urlSession, didBecomeInvalidWithError: ApproovUpdateResponse.error)
         }// switch
         return sessionUploadTask!
     }
@@ -273,29 +273,29 @@ public class ApproovURLSession: NSObject {
      */
     func uploadTask(with request: URLRequest, from: Data?, completionHandler: @escaping (Data?, URLResponse?, Error?) -> Void) -> URLSessionUploadTask {
         let userRequest = addUserHeadersToRequest(request: request)
-        let approovData = ApproovService.fetchApproovToken(request: userRequest)
+        let ApproovUpdateResponse = ApproovService.updateRequestWithApproov(request: userRequest)
         // The returned task
         var task:URLSessionUploadTask?
-        switch approovData.decision {
+        switch ApproovUpdateResponse.decision {
             case .ShouldProceed:
                 // Go ahead and make the API call with the provided request object
-                task = self.urlSession.uploadTask(with: approovData.request, from: from) { (data, response, error) -> Void in
+                task = self.urlSession.uploadTask(with: ApproovUpdateResponse.request, from: from) { (data, response, error) -> Void in
                     // Invoke completition handler
                     completionHandler(data,response,error)
                 }
             case .ShouldRetry:
                 // We should retry doing a fetch after a user driven event
                 // Create the early response and invoke callback with custom error
-                completionHandler(nil,nil,approovData.error)
+                completionHandler(nil,nil,ApproovUpdateResponse.error)
                 // Initialize a URLSessionDataTask object
-                task = self.urlSession.uploadTask(with: approovData.request, from: from) { (data, response, error) -> Void in
+                task = self.urlSession.uploadTask(with: ApproovUpdateResponse.request, from: from) { (data, response, error) -> Void in
                 }
                 // We cancel the connection and return the task object at end of function
                 task?.cancel()
             default:
-                completionHandler(nil,nil,approovData.error)
+                completionHandler(nil,nil,ApproovUpdateResponse.error)
                 // Initialize a URLSessionDataTask object
-                task = self.urlSession.uploadTask(with: approovData.request, from: from) { (data, response, error) -> Void in
+                task = self.urlSession.uploadTask(with: ApproovUpdateResponse.request, from: from) { (data, response, error) -> Void in
                 }
                 // We cancel the connection and return the task object at end of function
                 task?.cancel()
@@ -308,25 +308,25 @@ public class ApproovURLSession: NSObject {
      */
     func uploadTask(with request: URLRequest, fromFile: URL) -> URLSessionUploadTask {
         let userRequest = addUserHeadersToRequest(request: request)
-        let approovData = ApproovService.fetchApproovToken(request: userRequest)
+        let ApproovUpdateResponse = ApproovService.updateRequestWithApproov(request: userRequest)
         var sessionUploadTask:URLSessionUploadTask?
-        switch approovData.decision {
+        switch ApproovUpdateResponse.decision {
             case .ShouldProceed:
                 // Go ahead and make the API call with the provided request object
-                sessionUploadTask = self.urlSession.uploadTask(with: approovData.request, fromFile: fromFile)
+                sessionUploadTask = self.urlSession.uploadTask(with: ApproovUpdateResponse.request, fromFile: fromFile)
             case .ShouldRetry:
                  // We create a task and cancel it immediately
-                 sessionUploadTask = self.urlSession.uploadTask(with: approovData.request, fromFile: fromFile)
+                 sessionUploadTask = self.urlSession.uploadTask(with: ApproovUpdateResponse.request, fromFile: fromFile)
                  sessionUploadTask!.cancel()
                 // We should retry doing a fetch after a user driven event
                 // Tell the delagate we are marking the session as invalid
-                self.urlSessionDelegate?.urlSession?(self.urlSession, didBecomeInvalidWithError: approovData.error)
+                self.urlSessionDelegate?.urlSession?(self.urlSession, didBecomeInvalidWithError: ApproovUpdateResponse.error)
             default:
                 // We create a task and cancel it immediately
-                 sessionUploadTask = self.urlSession.uploadTask(with: approovData.request, fromFile: fromFile)
+                 sessionUploadTask = self.urlSession.uploadTask(with: ApproovUpdateResponse.request, fromFile: fromFile)
                  sessionUploadTask!.cancel()
                 // Tell the delagate we are marking the session as invalid
-                self.urlSessionDelegate?.urlSession?(self.urlSession, didBecomeInvalidWithError: approovData.error)
+                self.urlSessionDelegate?.urlSession?(self.urlSession, didBecomeInvalidWithError: ApproovUpdateResponse.error)
         }// switch
         return sessionUploadTask!
     }
@@ -337,29 +337,29 @@ public class ApproovURLSession: NSObject {
      */
     func uploadTask(with request: URLRequest, fromFile: URL, completionHandler: @escaping (Data?, URLResponse?, Error?) -> Void) -> URLSessionUploadTask {
         let userRequest = addUserHeadersToRequest(request: request)
-        let approovData = ApproovService.fetchApproovToken(request: userRequest)
+        let ApproovUpdateResponse = ApproovService.updateRequestWithApproov(request: userRequest)
         // The returned task
         var task:URLSessionUploadTask?
-        switch approovData.decision {
+        switch ApproovUpdateResponse.decision {
             case .ShouldProceed:
                 // Go ahead and make the API call with the provided request object
-                task = self.urlSession.uploadTask(with: approovData.request, fromFile: fromFile) { (data, response, error) -> Void in
+                task = self.urlSession.uploadTask(with: ApproovUpdateResponse.request, fromFile: fromFile) { (data, response, error) -> Void in
                     // Invoke completition handler
                     completionHandler(data,response,error)
                 }
             case .ShouldRetry:
                 // We should retry doing a fetch after a user driven event
                 // Create the early response and invoke callback with custom error
-                completionHandler(nil,nil,approovData.error)
+                completionHandler(nil,nil,ApproovUpdateResponse.error)
                 // Initialize a URLSessionDataTask object
-                task = self.urlSession.uploadTask(with: approovData.request, fromFile: fromFile) { (data, response, error) -> Void in
+                task = self.urlSession.uploadTask(with: ApproovUpdateResponse.request, fromFile: fromFile) { (data, response, error) -> Void in
                 }
                 // We cancel the connection and return the task object at end of function
                 task?.cancel()
             default:
-                completionHandler(nil,nil,approovData.error)
+                completionHandler(nil,nil,ApproovUpdateResponse.error)
                 // Initialize a URLSessionDataTask object
-                task = self.urlSession.uploadTask(with: approovData.request, fromFile: fromFile) { (data, response, error) -> Void in
+                task = self.urlSession.uploadTask(with: ApproovUpdateResponse.request, fromFile: fromFile) { (data, response, error) -> Void in
                 }
                 // We cancel the connection and return the task object at end of function
                 task?.cancel()
@@ -372,32 +372,66 @@ public class ApproovURLSession: NSObject {
      */
     func uploadTask(withStreamedRequest: URLRequest) -> URLSessionUploadTask {
         let userRequest = addUserHeadersToRequest(request: withStreamedRequest)
-        let approovData = ApproovService.fetchApproovToken(request: userRequest)
+        let ApproovUpdateResponse = ApproovService.updateRequestWithApproov(request: userRequest)
         var sessionUploadTask:URLSessionUploadTask?
-        switch approovData.decision {
+        switch ApproovUpdateResponse.decision {
             case .ShouldProceed:
                 // Go ahead and make the API call with the provided request object
-                sessionUploadTask = self.urlSession.uploadTask(withStreamedRequest: approovData.request)
+                sessionUploadTask = self.urlSession.uploadTask(withStreamedRequest: ApproovUpdateResponse.request)
             case .ShouldRetry:
                  // We create a task and cancel it immediately
-                 sessionUploadTask = self.urlSession.uploadTask(withStreamedRequest: approovData.request)
+                 sessionUploadTask = self.urlSession.uploadTask(withStreamedRequest: ApproovUpdateResponse.request)
                  sessionUploadTask!.cancel()
                 // We should retry doing a fetch after a user driven event
                 // Tell the delagate we are marking the session as invalid
-                self.urlSessionDelegate?.urlSession?(self.urlSession, didBecomeInvalidWithError: approovData.error)
+                self.urlSessionDelegate?.urlSession?(self.urlSession, didBecomeInvalidWithError: ApproovUpdateResponse.error)
             default:
                 // We create a task and cancel it immediately
-                 sessionUploadTask = self.urlSession.uploadTask(withStreamedRequest: approovData.request)
+                 sessionUploadTask = self.urlSession.uploadTask(withStreamedRequest: ApproovUpdateResponse.request)
                  sessionUploadTask!.cancel()
                 // Tell the delagate we are marking the session as invalid
-                self.urlSessionDelegate?.urlSession?(self.urlSession, didBecomeInvalidWithError: approovData.error)
+                self.urlSessionDelegate?.urlSession?(self.urlSession, didBecomeInvalidWithError: ApproovUpdateResponse.error)
         }// switch
         return sessionUploadTask!
     }
     
     // MARK: Combine Publisher Tasks
     
+    /*  Returns a publisher that wraps a URL session data task for a given URL request.
+     *  https://developer.apple.com/documentation/foundation/urlsession
+     */
+    @available(iOS 13.0, *)
+    func dataTaskPublisher(for request: URLRequest) -> URLSession.DataTaskPublisher {
+        let userRequest = addUserHeadersToRequest(request: request)
+        let ApproovUpdateResponse = ApproovService.updateRequestWithApproov(request: userRequest)
+        var sessionTaskPublisher:URLSession.DataTaskPublisher?
+        switch ApproovUpdateResponse.decision {
+            case .ShouldProceed:
+                // Go ahead and make the API call with the provided request object
+                sessionTaskPublisher = self.urlSession.dataTaskPublisher(for: ApproovUpdateResponse.request)
+        case .ShouldRetry:
+                 // We create a task and cancel it immediately
+                sessionTaskPublisher = self.urlSession.dataTaskPublisher(for: ApproovUpdateResponse.request)
+                // We should retry doing a fetch after a user driven event
+                // Tell the delagate we are marking the session as invalid
+                self.urlSessionDelegate?.urlSession?(self.urlSession, didBecomeInvalidWithError: ApproovUpdateResponse.error)
+            default:
+                // We create a task and cancel it immediately
+                sessionTaskPublisher = self.urlSession.dataTaskPublisher(for: ApproovUpdateResponse.request)
+                sessionTaskPublisher?.session.invalidateAndCancel()
+                // Tell the delagate we are marking the session as invalid
+                self.urlSessionDelegate?.urlSession?(self.urlSession, didBecomeInvalidWithError: ApproovUpdateResponse.error)
+        }// switch
+        return sessionTaskPublisher!
+    }
     
+    /*  Returns a publisher that wraps a URL session data task for a given URL request.
+     *  https://developer.apple.com/documentation/foundation/urlsession
+     */
+    @available(iOS 13.0, *)
+    func dataTaskPublisher(for url: URL) -> URLSession.DataTaskPublisher {
+        return dataTaskPublisher(for: URLRequest(url: url))
+    }
     
     
     // MARK: Managing the Session
@@ -573,7 +607,7 @@ class ApproovURLSessionDataDelegate: NSObject, URLSessionDelegate, URLSessionTas
                 return
             }
         } catch {
-            NSLog("Approov: \(error)")
+            os_log("Approov %@", type: .error, error.localizedDescription)
         }
         completionHandler(URLSession.AuthChallengeDisposition.cancelAuthenticationChallenge,nil)
     }
@@ -603,7 +637,7 @@ class ApproovURLSessionDataDelegate: NSObject, URLSessionDelegate, URLSessionTas
                     return
                 }
             } catch {
-                NSLog("Approov: \(error)")
+                os_log("Approov %@", type: .error, error.localizedDescription)
             }
             
             completionHandler(URLSession.AuthChallengeDisposition.cancelAuthenticationChallenge,nil)
@@ -1020,8 +1054,8 @@ class ApproovService {
      *  Convenience function fetching the Approov token
      *
      */
-    fileprivate static func fetchApproovToken(request: URLRequest) -> ApproovData {
-        var returnData = ApproovData(request: request, decision: .ShouldFail, sdkMessage: "", error: nil)
+    fileprivate static func updateRequestWithApproov(request: URLRequest) -> ApproovUpdateResponse {
+        var returnData = ApproovUpdateResponse(request: request, decision: .ShouldFail, sdkMessage: "", error: nil)
         // Check if Bind Header is set to a non empty String
         if ApproovService.bindHeader != "" {
             /*  Query the URLSessionConfiguration for user set headers. They would be set like so:
@@ -1088,7 +1122,7 @@ class ApproovService {
                                 if isIllegalSubstitution {
                                     // don't allow substitutions on unadded API domains to prevent them accidentally being
                                     // subject to a Man-in-the-Middle (MitM) attack
-                                    let error = ApproovError.configurationError(message: "fetchApproovToken fetchSecureString: API domain unknown")
+                                    let error = ApproovError.configurationError(message: "updateRequestWithApproov fetchSecureString: API domain unknown")
                                     returnData.error = error
                                     return returnData
                                 }
@@ -1097,13 +1131,13 @@ class ApproovService {
                                     replacementRequest.setValue(prefix + secureStringResult, forHTTPHeaderField: key)
                                 } else {
                                     // Secure string is nil
-                                    let error = ApproovError.configurationError(message: "fetchApproovToken fetchSecureString: No such key")
+                                    let error = ApproovError.configurationError(message: "updateRequestWithApproov fetchSecureString: No such key")
                                     returnData.error = error
                                     return returnData
                                 }
                             } else if approovResults.status == ApproovTokenFetchStatus.rejected {
                                 // if the request is rejected then we provide a special exception with additional information
-                                let error = ApproovError.rejectionError(message: "fetchApproovToken fetchSecureString: rejected", ARC: approovResults.arc, rejectionReasons: approovResults.rejectionReasons)
+                                let error = ApproovError.rejectionError(message: "updateRequestWithApproov fetchSecureString: rejected", ARC: approovResults.arc, rejectionReasons: approovResults.rejectionReasons)
                                 returnData.error = error
                                 return returnData
                             } else if approovResults.status == ApproovTokenFetchStatus.noNetwork ||
@@ -1111,12 +1145,12 @@ class ApproovService {
                                         approovResults.status == ApproovTokenFetchStatus.mitmDetected {
                                 // we are unable to get the secure string due to network conditions so the request can
                                 // be retried by the user later
-                                let error = ApproovError.networkingError(message: "fetchApproovToken fetchSecureString: netwrok issue, retry needed")
+                                let error = ApproovError.networkingError(message: "updateRequestWithApproov fetchSecureString: netwrok issue, retry needed")
                                 returnData.error = error
                                 return returnData
                             } else if approovResults.status != ApproovTokenFetchStatus.unknownKey {
                                 // we have failed to get a secure string with a more serious permanent error
-                                let error = ApproovError.permanentError(message: "fetchApproovToken fetchSecureString: permanent error")
+                                let error = ApproovError.permanentError(message: "updateRequestWithApproov fetchSecureString: permanent error")
                                 returnData.error = error
                                 return returnData
                             }
