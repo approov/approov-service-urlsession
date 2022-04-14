@@ -944,7 +944,7 @@ class ApproovURLSessionDataDelegate: NSObject, URLSessionDelegate, URLSessionTas
 }// class
 
 
-class ApproovService {
+public class ApproovService {
     /* Private initializer */
     fileprivate init(){}
     /* Status of Approov SDK initialisation */
