@@ -1051,9 +1051,11 @@ public class ApproovService {
     
     
     /*
-     *  Convenience function fetching the Approov token and updating the request with it. This will also
-     *  perform header substitutions to include protected secrets.
+     * Convenience function fetching the Approov token and updating the request with it. This will also
+     * perform header substitutions to include protected secrets.
      *
+     * @param request is the original request to be made
+     * @return ApproovUpdateResponse providing an updated requets, plus an errors and status
      */
     fileprivate static func updateRequestWithApproov(request: URLRequest) -> ApproovUpdateResponse {
         var returnData = ApproovUpdateResponse(request: request, decision: .ShouldFail, sdkMessage: "", error: nil)
@@ -1242,7 +1244,7 @@ public class ApproovService {
                     approovResult.status == ApproovTokenFetchStatus.mitmDetected {
             // we are unable to get the secure string due to network conditions so the request can
             // be retried by the user later
-            throw ApproovError.networkingError(message: "fetchSecureString: newtork issue, retry needed")
+            throw ApproovError.networkingError(message: "fetchSecureString: network issue, retry needed")
         } else if ((approovResult.status != ApproovTokenFetchStatus.success) && (approovResult.status != ApproovTokenFetchStatus.unknownKey)){
             // we are unable to get the secure string due to a more permanent error
             throw ApproovError.permanentError(message: "fetchSecureString: unknown error")
@@ -1283,7 +1285,7 @@ public class ApproovService {
                     approovResult.status == ApproovTokenFetchStatus.mitmDetected {
             // we are unable to get the secure string due to network conditions so the request can
             // be retried by the user later
-            throw ApproovError.networkingError(message: "fetchCustomJWT: networking issue, retry needed")
+            throw ApproovError.networkingError(message: "fetchCustomJWT: network issue, retry needed")
         } else if (approovResult.status != ApproovTokenFetchStatus.success){
             // we are unable to get the secure string due to a more permanent error
             throw ApproovError.permanentError(message: "fetchCustomJWT: unknown error")
@@ -1307,16 +1309,16 @@ public class ApproovService {
         // process the returned Approov status
         if approovResults.status == ApproovTokenFetchStatus.rejected {
             // if the request is rejected then we provide a special exception with additional information
-            throw ApproovError.rejectionError(message: "fetchSecureString: rejected", ARC: approovResults.arc, rejectionReasons: approovResults.rejectionReasons)
+            throw ApproovError.rejectionError(message: "precheck: rejected", ARC: approovResults.arc, rejectionReasons: approovResults.rejectionReasons)
         } else if approovResults.status == ApproovTokenFetchStatus.noNetwork ||
                     approovResults.status == ApproovTokenFetchStatus.poorNetwork ||
                     approovResults.status == ApproovTokenFetchStatus.mitmDetected {
             // we are unable to get the secure string due to network conditions so the request can
             // be retried by the user later
-            throw ApproovError.networkingError(message: "fetchSecureString: newtork issue, retry needed")
+            throw ApproovError.networkingError(message: "precheck: network issue, retry needed")
         } else if (approovResults.status != ApproovTokenFetchStatus.success) && (approovResults.status != ApproovTokenFetchStatus.unknownKey){
             // we are unable to get the secure string due to a more permanent error
-            throw ApproovError.permanentError(message: "prefetch: unknown error")
+            throw ApproovError.permanentError(message: "precheck unknown error")
         }
     }
 } // ApproovService class
