@@ -1153,7 +1153,7 @@ public class ApproovService {
                                 return returnData
                             } else if approovResults.status != ApproovTokenFetchStatus.unknownKey {
                                 // we have failed to get a secure string with a more serious permanent error
-                                let error = ApproovError.permanentError(message: "Header substitution: permanent error")
+                                let error = ApproovError.permanentError(message: "Header substitution: permanent error => " +  + Approov.string(from: approovResults.status))
                                 returnData.error = error
                                 return returnData
                             }
@@ -1247,7 +1247,7 @@ public class ApproovService {
             throw ApproovError.networkingError(message: "fetchSecureString: network issue, retry needed")
         } else if ((approovResult.status != ApproovTokenFetchStatus.success) && (approovResult.status != ApproovTokenFetchStatus.unknownKey)){
             // we are unable to get the secure string due to a more permanent error
-            throw ApproovError.permanentError(message: "fetchSecureString: unknown error")
+            throw ApproovError.permanentError(message: "fetchSecureString: unknown error => " +  + Approov.string(from: approovResult.status))
 
         }
         return approovResult.secureString
@@ -1288,7 +1288,7 @@ public class ApproovService {
             throw ApproovError.networkingError(message: "fetchCustomJWT: network issue, retry needed")
         } else if (approovResult.status != ApproovTokenFetchStatus.success){
             // we are unable to get the secure string due to a more permanent error
-            throw ApproovError.permanentError(message: "fetchCustomJWT: unknown error")
+            throw ApproovError.permanentError(message: "fetchCustomJWT: unknown error => "  + Approov.string(from: approovResult.status))
         }
         return approovResult.token
     }
@@ -1318,7 +1318,7 @@ public class ApproovService {
             throw ApproovError.networkingError(message: "precheck: network issue, retry needed")
         } else if (approovResults.status != ApproovTokenFetchStatus.success) && (approovResults.status != ApproovTokenFetchStatus.unknownKey){
             // we are unable to get the secure string due to a more permanent error
-            throw ApproovError.permanentError(message: "precheck unknown error")
+            throw ApproovError.permanentError(message: "precheck unknown error =>" + Approov.string(from: approovResults.status))
         }
     }
 } // ApproovService class
