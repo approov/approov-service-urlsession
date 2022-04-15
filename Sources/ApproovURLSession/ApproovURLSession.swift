@@ -68,14 +68,14 @@ public class ApproovURLSession: NSObject {
     /*  Creates a task that retrieves the contents of the specified URL
      *  https://developer.apple.com/documentation/foundation/urlsession/1411554-datatask
      */
-    func dataTask(with url: URL) -> URLSessionDataTask {
+    public func dataTask(with url: URL) -> URLSessionDataTask {
         return dataTask(with: URLRequest(url: url))
     }
     
     /*  Creates a task that retrieves the contents of a URL based on the specified URL request object
      *  https://developer.apple.com/documentation/foundation/urlsession/1410592-datatask
      */
-    func dataTask(with request: URLRequest) -> URLSessionDataTask {
+    public func dataTask(with request: URLRequest) -> URLSessionDataTask {
         let userRequest = addUserHeadersToRequest(request: request)
         let approovUpdateResponse = ApproovService.updateRequestWithApproov(request: userRequest)
         var sessionDataTask:URLSessionDataTask?
@@ -145,7 +145,7 @@ public class ApproovURLSession: NSObject {
     /*  Creates a download task that retrieves the contents of the specified URL and saves the results to a file
      *  https://developer.apple.com/documentation/foundation/urlsession/1411482-downloadtask
      */
-    func downloadTask(with url: URL) -> URLSessionDownloadTask {
+    public func downloadTask(with url: URL) -> URLSessionDownloadTask {
         return downloadTask(with: URLRequest(url: url))
     }
     
@@ -153,7 +153,7 @@ public class ApproovURLSession: NSObject {
      *  and saves the results to a file
      *  https://developer.apple.com/documentation/foundation/urlsession/1411481-downloadtask
      */
-    func downloadTask(with request: URLRequest) -> URLSessionDownloadTask {
+    public func downloadTask(with request: URLRequest) -> URLSessionDownloadTask {
         let userRequest = addUserHeadersToRequest(request: request)
         let approovUpdateResponse = ApproovService.updateRequestWithApproov(request: userRequest)
         var sessionDownloadTask:URLSessionDownloadTask?
@@ -182,7 +182,7 @@ public class ApproovURLSession: NSObject {
      *  and calls a handler upon completion
      *  https://developer.apple.com/documentation/foundation/urlsession/1411608-downloadtask
      */
-    func downloadTask(with: URL, completionHandler: @escaping (URL?, URLResponse?, Error?) -> Void) -> URLSessionDownloadTask {
+    public func downloadTask(with: URL, completionHandler: @escaping (URL?, URLResponse?, Error?) -> Void) -> URLSessionDownloadTask {
         return downloadTask(with: URLRequest(url: with), completionHandler: completionHandler)
     }
     
@@ -190,7 +190,7 @@ public class ApproovURLSession: NSObject {
      *  saves the results to a file, and calls a handler upon completion
      *
      */
-    func downloadTask(with request: URLRequest, completionHandler: @escaping (URL?, URLResponse?, Error?) -> Void) -> URLSessionDownloadTask {
+    public func downloadTask(with request: URLRequest, completionHandler: @escaping (URL?, URLResponse?, Error?) -> Void) -> URLSessionDownloadTask {
         let userRequest = addUserHeadersToRequest(request: request)
         let approovUpdateResponse = ApproovService.updateRequestWithApproov(request: userRequest)
         // The returned task
@@ -226,7 +226,7 @@ public class ApproovURLSession: NSObject {
      *  https://developer.apple.com/documentation/foundation/urlsession/1409226-downloadtask
      *  NOTE: this call is not protected by Approov
      */
-    func downloadTask(withResumeData: Data) -> URLSessionDownloadTask {
+    public func downloadTask(withResumeData: Data) -> URLSessionDownloadTask {
         return self.urlSession.downloadTask(withResumeData: withResumeData)
     }
     
@@ -234,7 +234,7 @@ public class ApproovURLSession: NSObject {
      *  https://developer.apple.com/documentation/foundation/urlsession/1411598-downloadtask
      *  NOTE: this call is not protected by Approov
      */
-    func downloadTask(withResumeData: Data, completionHandler: @escaping (URL?, URLResponse?, Error?) -> Void) -> URLSessionDownloadTask {
+    public func downloadTask(withResumeData: Data, completionHandler: @escaping (URL?, URLResponse?, Error?) -> Void) -> URLSessionDownloadTask {
         return self.urlSession.downloadTask(withResumeData: withResumeData, completionHandler: completionHandler)
     }
     
@@ -242,7 +242,7 @@ public class ApproovURLSession: NSObject {
     /*  Creates a task that performs an HTTP request for the specified URL request object and uploads the provided data
      *  https://developer.apple.com/documentation/foundation/urlsession/1409763-uploadtask
      */
-    func uploadTask(with request: URLRequest, from: Data) -> URLSessionUploadTask {
+    public func uploadTask(with request: URLRequest, from: Data) -> URLSessionUploadTask {
         let userRequest = addUserHeadersToRequest(request: request)
         let approovUpdateResponse = ApproovService.updateRequestWithApproov(request: userRequest)
         var sessionUploadTask:URLSessionUploadTask?
@@ -271,7 +271,7 @@ public class ApproovURLSession: NSObject {
      *  and calls a handler upon completion
      *  https://developer.apple.com/documentation/foundation/urlsession/1411518-uploadtask
      */
-    func uploadTask(with request: URLRequest, from: Data?, completionHandler: @escaping (Data?, URLResponse?, Error?) -> Void) -> URLSessionUploadTask {
+    public func uploadTask(with request: URLRequest, from: Data?, completionHandler: @escaping (Data?, URLResponse?, Error?) -> Void) -> URLSessionUploadTask {
         let userRequest = addUserHeadersToRequest(request: request)
         let approovUpdateResponse = ApproovService.updateRequestWithApproov(request: userRequest)
         // The returned task
@@ -306,7 +306,7 @@ public class ApproovURLSession: NSObject {
     /*  Creates a task that performs an HTTP request for uploading the specified file
      *  https://developer.apple.com/documentation/foundation/urlsession/1411550-uploadtask
      */
-    func uploadTask(with request: URLRequest, fromFile: URL) -> URLSessionUploadTask {
+    public func uploadTask(with request: URLRequest, fromFile: URL) -> URLSessionUploadTask {
         let userRequest = addUserHeadersToRequest(request: request)
         let approovUpdateResponse = ApproovService.updateRequestWithApproov(request: userRequest)
         var sessionUploadTask:URLSessionUploadTask?
@@ -335,7 +335,7 @@ public class ApproovURLSession: NSObject {
      *  and calls a handler upon completion
      *  https://developer.apple.com/documentation/foundation/urlsession/1411518-uploadtask
      */
-    func uploadTask(with request: URLRequest, fromFile: URL, completionHandler: @escaping (Data?, URLResponse?, Error?) -> Void) -> URLSessionUploadTask {
+    public func uploadTask(with request: URLRequest, fromFile: URL, completionHandler: @escaping (Data?, URLResponse?, Error?) -> Void) -> URLSessionUploadTask {
         let userRequest = addUserHeadersToRequest(request: request)
         let approovUpdateResponse = ApproovService.updateRequestWithApproov(request: userRequest)
         // The returned task
@@ -370,7 +370,7 @@ public class ApproovURLSession: NSObject {
     /*  Creates a task that performs an HTTP request for uploading data based on the specified URL request
      *  https://developer.apple.com/documentation/foundation/urlsession/1410934-uploadtask
      */
-    func uploadTask(withStreamedRequest: URLRequest) -> URLSessionUploadTask {
+    public func uploadTask(withStreamedRequest: URLRequest) -> URLSessionUploadTask {
         let userRequest = addUserHeadersToRequest(request: withStreamedRequest)
         let approovUpdateResponse = ApproovService.updateRequestWithApproov(request: userRequest)
         var sessionUploadTask:URLSessionUploadTask?
@@ -401,7 +401,7 @@ public class ApproovURLSession: NSObject {
      *  https://developer.apple.com/documentation/foundation/urlsession
      */
     @available(iOS 13.0, *)
-    func dataTaskPublisher(for request: URLRequest) -> URLSession.DataTaskPublisher {
+    public func dataTaskPublisher(for request: URLRequest) -> URLSession.DataTaskPublisher {
         let userRequest = addUserHeadersToRequest(request: request)
         let approovUpdateResponse = ApproovService.updateRequestWithApproov(request: userRequest)
         var sessionTaskPublisher:URLSession.DataTaskPublisher?
@@ -429,7 +429,7 @@ public class ApproovURLSession: NSObject {
      *  https://developer.apple.com/documentation/foundation/urlsession
      */
     @available(iOS 13.0, *)
-    func dataTaskPublisher(for url: URL) -> URLSession.DataTaskPublisher {
+    public func dataTaskPublisher(for url: URL) -> URLSession.DataTaskPublisher {
         return dataTaskPublisher(for: URLRequest(url: url))
     }
     
@@ -438,7 +438,7 @@ public class ApproovURLSession: NSObject {
     /*  Invalidates the session, allowing any outstanding tasks to finish
      *  https://developer.apple.com/documentation/foundation/urlsession/1407428-finishtasksandinvalidate
      */
-    func finishTasksAndInvalidate(){
+    public func finishTasksAndInvalidate(){
         self.urlSession.finishTasksAndInvalidate()
     }
     
@@ -446,28 +446,28 @@ public class ApproovURLSession: NSObject {
      *  occur on a new TCP connection
      *  https://developer.apple.com/documentation/foundation/urlsession/1411622-flush
      */
-    func flush(completionHandler: @escaping () -> Void){
+    public func flush(completionHandler: @escaping () -> Void){
         self.urlSession.flush(completionHandler: completionHandler)
     }
     
     /*  Asynchronously calls a completion callback with all data, upload, and download tasks in a session
      *  https://developer.apple.com/documentation/foundation/urlsession/1411578-gettaskswithcompletionhandler
      */
-    func getTasksWithCompletionHandler(_ completionHandler: @escaping ([URLSessionDataTask], [URLSessionUploadTask], [URLSessionDownloadTask]) -> Void) {
+    public func getTasksWithCompletionHandler(_ completionHandler: @escaping ([URLSessionDataTask], [URLSessionUploadTask], [URLSessionDownloadTask]) -> Void) {
         self.urlSession.getTasksWithCompletionHandler(completionHandler)
     }
     
     /*  Asynchronously calls a completion callback with all tasks in a session
      *  https://developer.apple.com/documentation/foundation/urlsession/1411618-getalltasks
      */
-    func getAllTasks(completionHandler: @escaping ([URLSessionTask]) -> Void) {
+    public func getAllTasks(completionHandler: @escaping ([URLSessionTask]) -> Void) {
         self.urlSession.getAllTasks(completionHandler: completionHandler)
     }
     
     /*  Cancels all outstanding tasks and then invalidates the session
      *  https://developer.apple.com/documentation/foundation/urlsession/1411538-invalidateandcancel
      */
-    func invalidateAndCancel() {
+    public func invalidateAndCancel() {
         self.urlSession.invalidateAndCancel()
     }
     
@@ -475,7 +475,7 @@ public class ApproovURLSession: NSObject {
      *  and ensures that future requests occur on a new socket
      *  https://developer.apple.com/documentation/foundation/urlsession/1411479-reset
      */
-    func reset(completionHandler: @escaping () -> Void) {
+    public func reset(completionHandler: @escaping () -> Void) {
         self.urlSession.reset(completionHandler: completionHandler)
     }
     
@@ -485,7 +485,7 @@ public class ApproovURLSession: NSObject {
      *  https://developer.apple.com/documentation/foundation/urlsession/3181171-websockettask
      */
     @available(iOS 13.0, *)
-    func webSocketTask(with: URL) -> URLSessionWebSocketTask {
+    public func webSocketTask(with: URL) -> URLSessionWebSocketTask {
         self.urlSession.webSocketTask(with: with)
     }
     
@@ -493,7 +493,7 @@ public class ApproovURLSession: NSObject {
      *  https://developer.apple.com/documentation/foundation/urlsession/3235750-websockettask
      */
     @available(iOS 13.0, *)
-    func webSocketTask(with: URLRequest) -> URLSessionWebSocketTask {
+    public func webSocketTask(with: URLRequest) -> URLSessionWebSocketTask {
         self.urlSession.webSocketTask(with: with)
     }
     
@@ -501,7 +501,7 @@ public class ApproovURLSession: NSObject {
      *  https://developer.apple.com/documentation/foundation/urlsession/3181172-websockettask
      */
     @available(iOS 13.0, *)
-    func webSocketTask(with: URL, protocols: [String]) -> URLSessionWebSocketTask {
+    public func webSocketTask(with: URL, protocols: [String]) -> URLSessionWebSocketTask {
         self.urlSession.webSocketTask(with: with, protocols: protocols)
     }
     
