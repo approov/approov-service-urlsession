@@ -506,10 +506,10 @@ public class ApproovURLSession: NSObject {
     }
     
     /*  Add any user defined headers to a URLRequest object
-     *  @param  request URLRequest
+     *  @param request URLRequest
      *  @return URLRequest the input request including any user defined configuration headers
      */
-    func addUserHeadersToRequest( request: URLRequest) -> URLRequest{
+    func addUserHeadersToRequest(request: URLRequest) -> URLRequest{
         var returnRequest = request
         if let allHeaders = urlSessionConfiguration.httpAdditionalHeaders {
             for key in allHeaders.keys {
@@ -623,7 +623,7 @@ class ApproovURLSessionDataDelegate: NSObject, URLSessionDelegate, URLSessionTas
      *  https://developer.apple.com/documentation/foundation/urlsessiontaskdelegate/1411595-urlsession
      */
     func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
-        if let delegate =  approovURLDelegate as? URLSessionTaskDelegate {
+        if let delegate = approovURLDelegate as? URLSessionTaskDelegate {
             // We are only interested in server trust requests
             if !challenge.protectionSpace.authenticationMethod.isEqual(NSURLAuthenticationMethodServerTrust) {
                 delegate.urlSession?(session, task: task, didReceive: challenge, completionHandler: completionHandler)
@@ -648,7 +648,7 @@ class ApproovURLSessionDataDelegate: NSObject, URLSessionDelegate, URLSessionTas
      *  https://developer.apple.com/documentation/foundation/urlsessiontaskdelegate/1411610-urlsession
      */
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        if let delegate =  approovURLDelegate as? URLSessionTaskDelegate {
+        if let delegate = approovURLDelegate as? URLSessionTaskDelegate {
             delegate.urlSession?(session, task: task, didCompleteWithError: error)
         }
     }
@@ -657,7 +657,7 @@ class ApproovURLSessionDataDelegate: NSObject, URLSessionDelegate, URLSessionTas
      *  https://developer.apple.com/documentation/foundation/urlsessiontaskdelegate/1411626-urlsession
      */
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
-        if let delegate =  approovURLDelegate as? URLSessionTaskDelegate {
+        if let delegate = approovURLDelegate as? URLSessionTaskDelegate {
             delegate.urlSession?(session, task: task, willPerformHTTPRedirection: response, newRequest: request, completionHandler: completionHandler)
         }
     }
@@ -666,7 +666,7 @@ class ApproovURLSessionDataDelegate: NSObject, URLSessionDelegate, URLSessionTas
      *  https://developer.apple.com/documentation/foundation/urlsessiontaskdelegate/1410001-urlsession
      */
     func urlSession(_ session: URLSession, task: URLSessionTask, needNewBodyStream completionHandler: @escaping (InputStream?) -> Void) {
-        if let delegate =  approovURLDelegate as? URLSessionTaskDelegate {
+        if let delegate = approovURLDelegate as? URLSessionTaskDelegate {
             delegate.urlSession?(session, task: task, needNewBodyStream: completionHandler)
         }
     }
@@ -675,7 +675,7 @@ class ApproovURLSessionDataDelegate: NSObject, URLSessionDelegate, URLSessionTas
      *  https://developer.apple.com/documentation/foundation/urlsessiontaskdelegate/1408299-urlsession
      */
     func urlSession(_ session: URLSession, task: URLSessionTask, didSendBodyData bytesSent: Int64, totalBytesSent: Int64, totalBytesExpectedToSend: Int64) {
-        if let delegate =  approovURLDelegate as? URLSessionTaskDelegate {
+        if let delegate = approovURLDelegate as? URLSessionTaskDelegate {
             delegate.urlSession?(session, task: task, didSendBodyData: bytesSent, totalBytesSent: totalBytesSent, totalBytesExpectedToSend: totalBytesExpectedToSend)
         }
     }
@@ -685,7 +685,7 @@ class ApproovURLSessionDataDelegate: NSObject, URLSessionDelegate, URLSessionTas
      */
     @available(iOS 11.0, *)
     func urlSession(_ session: URLSession, task: URLSessionTask, willBeginDelayedRequest request: URLRequest, completionHandler: @escaping (URLSession.DelayedRequestDisposition, URLRequest?) -> Void) {
-        if let delegate =  approovURLDelegate as? URLSessionTaskDelegate {
+        if let delegate = approovURLDelegate as? URLSessionTaskDelegate {
             delegate.urlSession?(session, task:task, willBeginDelayedRequest: request, completionHandler: completionHandler)
         }
     }
@@ -694,7 +694,7 @@ class ApproovURLSessionDataDelegate: NSObject, URLSessionDelegate, URLSessionTas
      *  https://developer.apple.com/documentation/foundation/urlsessiontaskdelegate/1643148-urlsession
      */
     func urlSession(_ session: URLSession, task: URLSessionTask, didFinishCollecting metrics: URLSessionTaskMetrics) {
-        if let delegate =  approovURLDelegate as? URLSessionTaskDelegate {
+        if let delegate = approovURLDelegate as? URLSessionTaskDelegate {
             delegate.urlSession?(session, task: task, didFinishCollecting: metrics)
         }
     }
@@ -704,7 +704,7 @@ class ApproovURLSessionDataDelegate: NSObject, URLSessionDelegate, URLSessionTas
      */
     @available(iOS 11.0, *)
     func urlSession(_ session: URLSession, taskIsWaitingForConnectivity task: URLSessionTask) {
-        if let delegate =  approovURLDelegate as? URLSessionTaskDelegate {
+        if let delegate = approovURLDelegate as? URLSessionTaskDelegate {
             delegate.urlSession?(session, taskIsWaitingForConnectivity: task)
         }
     }
@@ -723,7 +723,7 @@ class ApproovURLSessionDataDelegate: NSObject, URLSessionDelegate, URLSessionTas
      */
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse, completionHandler: @escaping (URLSession.ResponseDisposition) -> Void)
     {
-        if let delegate =  approovURLDelegate as? URLSessionDataDelegate {
+        if let delegate = approovURLDelegate as? URLSessionDataDelegate {
             delegate.urlSession?(session, dataTask: dataTask, didReceive: response, completionHandler: completionHandler)
         }
     }
@@ -732,7 +732,7 @@ class ApproovURLSessionDataDelegate: NSObject, URLSessionDelegate, URLSessionTas
      *  https://developer.apple.com/documentation/foundation/urlsessiondatadelegate/1409936-urlsession
      */
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didBecome downloadTask: URLSessionDownloadTask) {
-        if let delegate =  approovURLDelegate as? URLSessionDataDelegate {
+        if let delegate = approovURLDelegate as? URLSessionDataDelegate {
             delegate.urlSession?(session, dataTask: dataTask, didBecome: downloadTask)
         }
     }
@@ -741,7 +741,7 @@ class ApproovURLSessionDataDelegate: NSObject, URLSessionDelegate, URLSessionTas
      *  https://developer.apple.com/documentation/foundation/urlsessiondatadelegate/1411648-urlsession
      */
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didBecome streamTask: URLSessionStreamTask) {
-        if let delegate =  approovURLDelegate as? URLSessionDataDelegate {
+        if let delegate = approovURLDelegate as? URLSessionDataDelegate {
             delegate.urlSession?(session, dataTask: dataTask, didBecome: streamTask)
         }
     }
@@ -750,7 +750,7 @@ class ApproovURLSessionDataDelegate: NSObject, URLSessionDelegate, URLSessionTas
      *  https://developer.apple.com/documentation/foundation/urlsessiondatadelegate/1411528-urlsession
      */
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
-        if let delegate =  approovURLDelegate as? URLSessionDataDelegate {
+        if let delegate = approovURLDelegate as? URLSessionDataDelegate {
             delegate.urlSession?(session,dataTask: dataTask, didReceive: data)
         }
     }
@@ -759,7 +759,7 @@ class ApproovURLSessionDataDelegate: NSObject, URLSessionDelegate, URLSessionTas
      *  https://developer.apple.com/documentation/foundation/urlsessiondatadelegate/1411612-urlsession
      */
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, willCacheResponse proposedResponse: CachedURLResponse, completionHandler: @escaping (CachedURLResponse?) -> Void) {
-        if let delegate =  approovURLDelegate as? URLSessionDataDelegate {
+        if let delegate = approovURLDelegate as? URLSessionDataDelegate {
             delegate.urlSession?(session, dataTask: dataTask, willCacheResponse: proposedResponse, completionHandler: completionHandler)
         }
     }
@@ -775,7 +775,7 @@ class ApproovURLSessionDataDelegate: NSObject, URLSessionDelegate, URLSessionTas
      *  https://developer.apple.com/documentation/foundation/urlsessiondownloaddelegate/1411575-urlsession
      */
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
-        if let delegate =  approovURLDelegate as? URLSessionDownloadDelegate {
+        if let delegate = approovURLDelegate as? URLSessionDownloadDelegate {
             delegate.urlSession(session, downloadTask: downloadTask, didFinishDownloadingTo: location)
         }
     }
@@ -784,7 +784,7 @@ class ApproovURLSessionDataDelegate: NSObject, URLSessionDelegate, URLSessionTas
      *  https://developer.apple.com/documentation/foundation/urlsessiondownloaddelegate/1408142-urlsession
      */
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didResumeAtOffset: Int64, expectedTotalBytes: Int64) {
-        if let delegate =  approovURLDelegate as? URLSessionDownloadDelegate {
+        if let delegate = approovURLDelegate as? URLSessionDownloadDelegate {
             delegate.urlSession?(session, downloadTask: downloadTask, didResumeAtOffset: didResumeAtOffset, expectedTotalBytes: expectedTotalBytes)
         }
     }
@@ -793,7 +793,7 @@ class ApproovURLSessionDataDelegate: NSObject, URLSessionDelegate, URLSessionTas
      *  https://developer.apple.com/documentation/foundation/urlsessiondownloaddelegate/1409408-urlsession
      */
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData: Int64, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
-        if let delegate =  approovURLDelegate as? URLSessionDownloadDelegate {
+        if let delegate = approovURLDelegate as? URLSessionDownloadDelegate {
             delegate.urlSession?(session, downloadTask: downloadTask, didWriteData: didWriteData, totalBytesWritten: totalBytesWritten, totalBytesExpectedToWrite: totalBytesExpectedToWrite)
         }
     }
@@ -830,7 +830,7 @@ class ApproovURLSessionDataDelegate: NSObject, URLSessionDelegate, URLSessionTas
             
             // get the subject public key info from the certificate
             guard let publicKeyInfo = publicKeyInfoOfCertificate(certificate: serverCert) else {
-                /* Throw to indicate we could not parse SPKI header */
+                // Throw to indicate we could not parse SPKI header
                 throw ApproovError.pinningError(message: "Error parsing SPKI header for host \(challenge.protectionSpace.host) Unsupported certificate type, SPKI header cannot be created")
             }
             
@@ -930,10 +930,10 @@ class ApproovURLSessionDataDelegate: NSObject, URLSessionDelegate, URLSessionTas
         return nil
     }
     
-    /*  SHA256 of given input bytes
-     *
+    /* 
+     * SHA256 of given input bytes
      */
-    func sha256(data : Data) -> Data {
+    func sha256(data: Data) -> Data {
         var hash = [UInt8](repeating: 0,  count: Int(CC_SHA256_DIGEST_LENGTH))
         data.withUnsafeBytes {
             _ = CC_SHA256($0.baseAddress, CC_LONG(data.count), &hash)
@@ -980,7 +980,7 @@ public class ApproovService {
                 }
                 return
             }
-            /* Initialise Approov SDK */
+            // Initialize Approov SDK
             do {
                 try Approov.initialize(config, updateConfig: "auto", comment: nil)
                 approovServiceInitialised = true
@@ -1034,9 +1034,9 @@ public class ApproovService {
 
     /*
      *  Allows token prefetch operation to be performed as early as possible. This
-     *  permits a token to be available while an application might be loading resources
-     *  or is awaiting user input. Since the initial token fetch is the most
-     *  expensive the prefetch seems reasonable.
+     *  permits a token or secure strings to be available while an application might
+     *  be loading resources or is awaiting user input. Since the initial fetch is the
+     *  most expensive the prefetch can hide the most latency.
      */
     public static let prefetch: Void = {
         initializerQueue.sync {
@@ -1048,7 +1048,6 @@ public class ApproovService {
             }
         }
     }()
-    
     
     /*
      * Convenience function fetching the Approov token and updating the request with it. This will also
@@ -1075,7 +1074,7 @@ public class ApproovService {
         let approovResult = Approov.fetchTokenAndWait(request.url!.absoluteString)
         // Log result of token fetch
         let aHostname = hostnameFromURL(url: request.url!)
-        os_log("Approov: updateRequest %@: %@ ", type: .info, aHostname, approovResult.loggableToken())
+        os_log("Approov: updateRequest %@: %@", type: .info, aHostname, approovResult.loggableToken())
         // Update the message
         returnData.sdkMessage = Approov.string(from: approovResult.status)
         switch approovResult.status {
@@ -1119,7 +1118,7 @@ public class ApproovService {
                         if ((value.hasPrefix(prefix)) && (value.count > prefix.count)){
                             let index = prefix.index(prefix.startIndex, offsetBy: prefix.count)
                             let approovResults = Approov.fetchSecureStringAndWait(String(value.suffix(from:index)), nil)
-                            os_log("Approov: Substituting header: %@, %@ ", type: .info, header, Approov.string(from: approovResults.status))
+                            os_log("Approov: Substituting header: %@, %@", type: .info, header, Approov.string(from: approovResults.status))
                             // Process the result of the token fetch operation
                             if approovResults.status == ApproovTokenFetchStatus.success {
                                 if isIllegalSubstitution {
@@ -1134,7 +1133,7 @@ public class ApproovService {
                                     replacementRequest.setValue(prefix + secureStringResult, forHTTPHeaderField: key)
                                 } else {
                                     // Secure string is nil
-                                    let error = ApproovError.permanentError(message: "Header substitution: Key lookup error")
+                                    let error = ApproovError.permanentError(message: "Header substitution: key lookup error")
                                     returnData.error = error
                                     return returnData
                                 }
@@ -1153,7 +1152,7 @@ public class ApproovService {
                                 return returnData
                             } else if approovResults.status != ApproovTokenFetchStatus.unknownKey {
                                 // we have failed to get a secure string with a more serious permanent error
-                                let error = ApproovError.permanentError(message: "Header substitution: permanent error => " +  Approov.string(from: approovResults.status))
+                                let error = ApproovError.permanentError(message: "Header substitution: " + Approov.string(from: approovResults.status))
                                 returnData.error = error
                                 return returnData
                             }
@@ -1172,9 +1171,8 @@ public class ApproovService {
      * Adds the name of a header which should be subject to secure strings substitution. This
      * means that if the header is present then the value will be used as a key to look up a
      * secure string value which will be substituted into the header value instead. This allows
-     * easy migration to the use of secure strings. A required
-     * prefix may be specified to deal with cases such as the use of "Bearer " prefixed before values
-     * in an authorization header.
+     * easy migration to the use of secure strings. A required prefix may be specified to deal
+     * with cases such as the use of "Bearer " prefixed before values in an authorization header.
      *
      * @param header is the header to be marked for substitution
      * @param prefix is any required prefix to the value being substituted or nil if not required
@@ -1212,7 +1210,7 @@ public class ApproovService {
      * it is needed. If the fetch fails for any reason an exception is thrown with description. Exceptions
      * could be due to the feature not being enabled from the CLI tools (ApproovError.configurationError
      * type raised), a rejection throws an Approov.rejectionError type which might include additional
-     * information regarding the failure reason. An ApproovError.networkError exception should allow a
+     * information regarding the failure reason. An ApproovError.networkingError exception should allow a
      * retry operation to be performed and finally if some other error occurs an Approov.permanentError
      * is raised.
      *
@@ -1227,11 +1225,10 @@ public class ApproovService {
         if newDef == nil {
             type = "definition"
         }
-        // Invoke fetch secure string
+        // invoke fetch secure string
         let approovResult = Approov.fetchSecureStringAndWait(key, newDef)
-        // Log result of token fetch
-        os_log("Approov: fetchSecureString: %@: %@ ", type: .info, type, Approov.string(from: approovResult.status))
-        // Process the returned Approov status
+        os_log("Approov: fetchSecureString: %@: %@", type: .info, type, Approov.string(from: approovResult.status))
+        // process the returned Approov status
         if approovResult.status == ApproovTokenFetchStatus.disabled {
             throw ApproovError.configurationError(message: "fetchSecureString: secure string feature disabled")
         } else if  approovResult.status == ApproovTokenFetchStatus.badKey {
@@ -1247,7 +1244,7 @@ public class ApproovService {
             throw ApproovError.networkingError(message: "fetchSecureString: network issue, retry needed")
         } else if ((approovResult.status != ApproovTokenFetchStatus.success) && (approovResult.status != ApproovTokenFetchStatus.unknownKey)){
             // we are unable to get the secure string due to a more permanent error
-            throw ApproovError.permanentError(message: "fetchSecureString: unknown error => "  + Approov.string(from: approovResult.status))
+            throw ApproovError.permanentError(message: "fetchSecureString: " + Approov.string(from: approovResult.status))
 
         }
         return approovResult.secureString
@@ -1270,8 +1267,8 @@ public class ApproovService {
     public static func fetchCustomJWT(payload: String) throws -> String? {
         // fetch the custom JWT
         let approovResult = Approov.fetchCustomJWTAndWait(payload)
-        // Log result of token fetch operation but do not log the value
-        os_log("Approov: fetchCustomJWT: %@ ", type: .info, Approov.string(from: approovResult.status))
+        // log result of token fetch operation but do not log the value
+        os_log("Approov: fetchCustomJWT: %@", type: .info, Approov.string(from: approovResult.status))
         // process the returned Approov status
         if approovResult.status == ApproovTokenFetchStatus.badPayload {
             throw ApproovError.permanentError(message: "fetchCustomJWT: malformed JSON")
@@ -1283,12 +1280,12 @@ public class ApproovService {
         } else if approovResult.status == ApproovTokenFetchStatus.noNetwork ||
                     approovResult.status == ApproovTokenFetchStatus.poorNetwork ||
                     approovResult.status == ApproovTokenFetchStatus.mitmDetected {
-            // we are unable to get the secure string due to network conditions so the request can
+            // we are unable to get the custom JWT due to network conditions so the request can
             // be retried by the user later
             throw ApproovError.networkingError(message: "fetchCustomJWT: network issue, retry needed")
         } else if (approovResult.status != ApproovTokenFetchStatus.success){
-            // we are unable to get the secure string due to a more permanent error
-            throw ApproovError.permanentError(message: "fetchCustomJWT: unknown error => "  + Approov.string(from: approovResult.status))
+            // we are unable to get the custom JWT due to a more permanent error
+            throw ApproovError.permanentError(message: "fetchCustomJWT: " + Approov.string(from: approovResult.status))
         }
         return approovResult.token
     }
@@ -1299,7 +1296,7 @@ public class ApproovService {
      * likely require network access so may take some time to complete. It may throw an exception
      * if the precheck fails or if there is some other problem. Exceptions could be due to
      * a rejection (throws a ApproovError.rejectionError) type which might include additional
-     * information regarding the rejection reason. A ApproovError.networkingError exception should
+     * information regarding the rejection reason. An ApproovError.networkingError exception should
      * allow a retry operation to be performed and finally if some other error occurs an
      * ApproovError.permanentError is raised.
      */
@@ -1318,12 +1315,10 @@ public class ApproovService {
             throw ApproovError.networkingError(message: "precheck: network issue, retry needed")
         } else if (approovResults.status != ApproovTokenFetchStatus.success) && (approovResults.status != ApproovTokenFetchStatus.unknownKey){
             // we are unable to get the secure string due to a more permanent error
-            throw ApproovError.permanentError(message: "precheck unknown error =>" + Approov.string(from: approovResults.status))
+            throw ApproovError.permanentError(message: "precheck: " + Approov.string(from: approovResults.status))
         }
     }
 } // ApproovService class
-
-
 
 
 /*
