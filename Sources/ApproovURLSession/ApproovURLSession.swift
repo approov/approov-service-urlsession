@@ -949,8 +949,6 @@ public class ApproovService {
     fileprivate init(){}
     /* Status of Approov SDK initialisation */
     private static var approovServiceInitialised = false
-    /* The singleton object */
-    fileprivate static let shared = ApproovService()
     /* The initial config string used to initialize */
     private static var configString:String?
     /* The dispatch queue to manage serial access to intializer modified variables */
@@ -963,7 +961,7 @@ public class ApproovService {
     private static let substitutionQueue = DispatchQueue(label: "ApproovService.substitution")
     /* Use log subsystem for info/error */
     let log = OSLog(subsystem: "approov-service-urlsession", category: "network")
-    /* Singleton: config is obtained using `approov sdk -getConfigString`
+    /* Initializer: config is obtained using `approov sdk -getConfigString`
      * Note the initializer function should only ever be called once. Subsequent calls will be ignored
      * since the ApproovSDK can only be intialized once; if however, an attempt is made to initialize
      * with a different configuration (config) we throw an ApproovException.configurationError
@@ -984,6 +982,7 @@ public class ApproovService {
             do {
                 try Approov.initialize(config, updateConfig: "auto", comment: nil)
                 approovServiceInitialised = true
+                ApproovService.approovConfigString = config
                 Approov.setUserProperty("approov-service-urlsession")
             } catch let error {
                 // Log error and throw exception
