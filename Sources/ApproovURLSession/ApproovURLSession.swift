@@ -42,6 +42,8 @@ public class ApproovURLSession: NSObject {
     var urlSessionDelegate:URLSessionDelegate?
     // The delegate queue
     var delegateQueue:OperationQueue?
+    // The observer object
+    var taskObserver:ApproovSessionTaskObserver?
     
     /*
      *  URLSession initializer
@@ -53,6 +55,7 @@ public class ApproovURLSession: NSObject {
         self.delegateQueue = delegateQueue
         // Set as URLSession delegate our implementation
         self.urlSession = URLSession(configuration: configuration, delegate: urlSessionDelegate, delegateQueue: delegateQueue)
+        taskObserver = ApproovSessionTaskObserver()
         super.init()
     }
     
@@ -111,7 +114,14 @@ public class ApproovURLSession: NSObject {
      *  https://developer.apple.com/documentation/foundation/urlsession/1407613-datatask
      */
     public func dataTask(with request: URLRequest, completionHandler: @escaping (Data?, URLResponse?, Error?) -> Void) -> URLSessionDataTask {
+        var task:URLSessionDataTask?
         let userRequest = addUserHeadersToRequest(request: request)
+        task = self.urlSession.dataTask(with: userRequest) { (data, response, error) -> Void in
+            // Invoke completition handler
+            completionHandler(data,response,error)
+        }
+        task?.addObserver(taskObserver!, forKeyPath: "state", options: NSKeyValueObservingOptions.new, context: nil)
+        /*
         let approovUpdateResponse = ApproovService.updateRequestWithApproov(request: userRequest)
         // The returned task
         var task:URLSessionDataTask?
@@ -138,7 +148,9 @@ public class ApproovURLSession: NSObject {
                 // We cancel the connection and return the task object at end of function
                 task?.cancel()
         }// switch
-    return task!
+         */
+        
+        return task!
     }// func
     
     // MARK: URLSession downloadTask
@@ -982,7 +994,7 @@ public class ApproovService {
             do {
                 try Approov.initialize(config, updateConfig: "auto", comment: nil)
                 approovServiceInitialised = true
-                ApproovService.approovConfigString = config
+                ApproovService.configString = config
                 Approov.setUserProperty("approov-service-urlsession")
             } catch let error {
                 // Log error and throw exception
@@ -1353,6 +1365,27 @@ func hostnameFromURL(url: URL) -> String {
             return host
         } else {
             return ""
+        }
+    }
+}
+
+/* The ApproovSessionTask observer */
+public class ApproovSessionTaskObserver : NSObject {
+    let stateString = "state"
+    /*
+        NSURLSessionTaskStateRunning = 0,
+        NSURLSessionTaskStateSuspended = 1,
+        NSURLSessionTaskStateCanceling = 2,
+        NSURLSessionTaskStateCompleted = 3,
+     */
+    public override func observeValue(forKeyPath keyPath: String?,
+                             of object: Any?,
+                         change: [NSKeyValueChangeKey : Any]?,
+                             context: UnsafeMutableRawPointer?) {
+        if keyPath == stateString {
+            os_log("YEEEEES")
+            let newC = change![NSKeyValueChangeKey.newKey]
+            os_log("YEEEEES AGAIN?")
         }
     }
 }
