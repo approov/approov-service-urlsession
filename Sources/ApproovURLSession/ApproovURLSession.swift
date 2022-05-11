@@ -1371,7 +1371,17 @@ func hostnameFromURL(url: URL) -> String {
 
 /* The ApproovSessionTask observer */
 public class ApproovSessionTaskObserver : NSObject {
+    // The KVO object we are intersted in
     static let stateString = "state"
+    // The completion handler type could be Data,URLResponse,Error or URL,URLResponse,Error
+    typealias completionHandlerType = ((Any,URLResponse,Error)->Void)?
+    // Dictionary to hold completion handlers to their mapped UUID task id
+    var completionHandlers: Dictionary<NSNumber,completionHandlerType>?
+
+    public override init() {
+        completionHandlers = Dictionary()
+        super.init()
+    }
     
     /*
      * It is necessary to use KVO and observe the task returned to the user in order to modify the original request
@@ -1391,10 +1401,20 @@ public class ApproovSessionTaskObserver : NSObject {
          */
         if keyPath == ApproovSessionTaskObserver.stateString {
             let newC = change![NSKeyValueChangeKey.newKey] as! NSNumber
-            let newLongValue = newC.int32Value
+            let newState = getURLSessionState(state: newC.uint32Value)
             
             // The task at hand; we simply cast to superclass from which specific Data/Download ... etc classes inherit
             let task = object as! URLSessionTask
+            /*  If the new state is Cancelling or Completed we must remove ourselves as observers and return
+             *  because the user is either cancelling or the connection has simply terminated
+             */
+            if ((newState == URLSessionTask.State.completed) || (newState == URLSessionTask.State.canceling)) {
+                os_log("task id %lu is cancelling or has completed; removing observer", task.taskIdentifier)
+                task.removeObserver(self, forKeyPath: ApproovSessionTaskObserver.stateString)
+                // If the completionHandler is in dictionary, remove it since it will not be needed
+                
+            }
+            
             
             if task.state == URLSessionTask.State.running {
                 task.suspend()
@@ -1420,5 +1440,26 @@ public class ApproovSessionTaskObserver : NSObject {
                 }
             }
         }
+    } // func
+    
+    
+    func getURLSessionState(state: UInt32) -> URLSessionTask.State {
+        /*
+            NSURLSessionTaskStateRunning = 0,
+            NSURLSessionTaskStateSuspended = 1,
+            NSURLSessionTaskStateCanceling = 2,
+            NSURLSessionTaskStateCompleted = 3,
+         */
+        switch state {
+        case 0:
+            return URLSessionTask.State.running
+        case 1:
+            return URLSessionTask.State.suspended
+        case 2:
+            return URLSessionTask.State.canceling
+        default:
+            return URLSessionTask.State.completed
+        }
     }
+    
 }
