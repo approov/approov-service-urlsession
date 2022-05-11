@@ -1371,21 +1371,54 @@ func hostnameFromURL(url: URL) -> String {
 
 /* The ApproovSessionTask observer */
 public class ApproovSessionTaskObserver : NSObject {
-    let stateString = "state"
+    static let stateString = "state"
+    
     /*
-        NSURLSessionTaskStateRunning = 0,
-        NSURLSessionTaskStateSuspended = 1,
-        NSURLSessionTaskStateCanceling = 2,
-        NSURLSessionTaskStateCompleted = 3,
+     * It is necessary to use KVO and observe the task returned to the user in order to modify the original request
+     * Since we do not want to block the task in order to contact the Approov servers, we have to perform the Approov
+     * network connection asynchronously and depending on the result, modify the header and resume the request or
+     * cancel the task after informing the caller of the error
      */
     public override func observeValue(forKeyPath keyPath: String?,
                              of object: Any?,
                          change: [NSKeyValueChangeKey : Any]?,
                              context: UnsafeMutableRawPointer?) {
-        if keyPath == stateString {
-            os_log("YEEEEES")
-            let newC = change![NSKeyValueChangeKey.newKey]
-            os_log("YEEEEES AGAIN?")
+        /*
+            NSURLSessionTaskStateRunning = 0,
+            NSURLSessionTaskStateSuspended = 1,
+            NSURLSessionTaskStateCanceling = 2,
+            NSURLSessionTaskStateCompleted = 3,
+         */
+        if keyPath == ApproovSessionTaskObserver.stateString {
+            let newC = change![NSKeyValueChangeKey.newKey] as! NSNumber
+            let newLongValue = newC.int32Value
+            
+            // The task at hand; we simply cast to superclass from which specific Data/Download ... etc classes inherit
+            let task = object as! URLSessionTask
+            
+            if task.state == URLSessionTask.State.running {
+                task.suspend()
+            }
+            // Suspend task
+            if task.state != URLSessionTask.State.running {
+                print("Status: \(task.state)")
+                print("Old headers: \(task.currentRequest?.allHTTPHeaderFields)")
+                // Fetch token
+                let resultData = ApproovService.updateRequestWithApproov(request: task.currentRequest!)
+                print("Old headers: \(task.currentRequest?.allHTTPHeaderFields)")
+                if resultData.decision == .ShouldProceed {
+                    // Modify original request
+                    let sel = NSSelectorFromString("updateCurrentRequest:")
+                    //let imp = task.method(for: sel)
+                    //var functonCall: ((Any,Selector,URLRequest) -> IMP) = imp as! ((Any,Selector,URLRequest) -> IMP)
+                    //void (*func)(id, SEL, NSURLRequest*) = (void *)imp
+                    //functonCall!(task,sel,resultData.request)
+                    task.perform(sel, with: resultData.request)
+                    print("New headers: \(task.currentRequest?.allHTTPHeaderFields)")
+                    task.removeObserver(self, forKeyPath: ApproovSessionTaskObserver.stateString)
+                    task.resume()
+                }
+            }
         }
     }
 }
