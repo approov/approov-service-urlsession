@@ -45,8 +45,6 @@ public class ApproovService {
     private static var substitutionHeaders:Dictionary<String,String> = Dictionary<String,String>()
     /* The dispatch queue to manage serial access to the substitution headers dictionary */
     private static let substitutionQueue = DispatchQueue(label: "ApproovService.substitution")
-    /* Use log subsystem for info/error */
-    let log = OSLog(subsystem: "approov-service-urlsession", category: "network")
     /* Initializer: config is obtained using `approov sdk -getConfigString`
      * Note the initializer function should only ever be called once. Subsequent calls will be ignored
      * since the ApproovSDK can only be intialized once; if however, an attempt is made to initialize

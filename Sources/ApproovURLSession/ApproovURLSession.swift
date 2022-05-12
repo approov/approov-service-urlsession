@@ -18,7 +18,7 @@
 import Foundation
 import Approov
 import CommonCrypto
-
+import os.log
 
 public class ApproovURLSession: NSObject {
     
@@ -32,6 +32,8 @@ public class ApproovURLSession: NSObject {
     var delegateQueue:OperationQueue?
     // The observer object
     var taskObserver:ApproovSessionTaskObserver?
+    /* Use log subsystem for info/error */
+    let log = OSLog(subsystem: "approov-service-urlsession", category: "network")
     
     /*
      *  URLSession initializer
