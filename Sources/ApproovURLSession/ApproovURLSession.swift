@@ -70,27 +70,11 @@ public class ApproovURLSession: NSObject {
      */
     public func dataTask(with request: URLRequest) -> URLSessionDataTask {
         let userRequest = addUserHeadersToRequest(request: request)
-        let approovUpdateResponse = ApproovService.updateRequestWithApproov(request: userRequest)
-        var sessionDataTask:URLSessionDataTask?
-        switch approovUpdateResponse.decision {
-            case .ShouldProceed:
-                // Go ahead and make the API call with the provided request object
-                sessionDataTask = self.pinnedURLSession.dataTask(with: approovUpdateResponse.request)
-            case .ShouldRetry:
-                 // We create a task and cancel it immediately
-                 sessionDataTask = self.pinnedURLSession.dataTask(with: approovUpdateResponse.request)
-                 sessionDataTask!.cancel()
-                // We should retry doing a fetch after a user driven event
-                // Tell the delagate we are marking the session as invalid
-                 self.pinnedURLSessionDelegate?.urlSession?(self.pinnedURLSession, didBecomeInvalidWithError: approovUpdateResponse.error)
-            default:
-                // We create a task and cancel it immediately
-                 sessionDataTask = self.pinnedURLSession.dataTask(with: approovUpdateResponse.request)
-                 sessionDataTask!.cancel()
-                // Tell the delagate we are marking the session as invalid
-                 self.pinnedURLSessionDelegate?.urlSession?(self.pinnedURLSession, didBecomeInvalidWithError: approovUpdateResponse.error)
-        }// switch
-        return sessionDataTask!
+        // Create the return object
+        let task = self.pinnedURLSession.dataTask(with: userRequest)
+        // Add observer
+        task.addObserver(taskObserver!, forKeyPath: "state", options: NSKeyValueObservingOptions.new, context: nil)
+        return task
     }
     
     /*  Creates a task that retrieves the contents of the specified URL, then calls a handler upon completion
@@ -105,41 +89,11 @@ public class ApproovURLSession: NSObject {
      */
     public func dataTask(with request: URLRequest, completionHandler: @escaping (Data?, URLResponse?, Error?) -> Void) -> URLSessionDataTask {
         let userRequest = addUserHeadersToRequest(request: request)
-        var task = self.pinnedURLSession.dataTask(with: userRequest, completionHandler: completionHandler)
+        let task = self.pinnedURLSession.dataTask(with: userRequest, completionHandler: completionHandler)
         task.addObserver(taskObserver!, forKeyPath: "state", options: NSKeyValueObservingOptions.new, context: nil)
         taskObserver?.addCompletionHandlerTaskToDictionary(taskId: task.taskIdentifier, handler: completionHandler)
-        //taskObserver?.addCompletionHandlerTaskToDictionary(taskId: task.taskIdentifier, handler: completionHandler)
-        /*
-        let approovUpdateResponse = ApproovService.updateRequestWithApproov(request: userRequest)
-        // The returned task
-        var task:URLSessionDataTask?
-        switch approovUpdateResponse.decision {
-            case .ShouldProceed:
-                // Go ahead and make the API call with the provided request object
-                task = self.pinnedURLSession.dataTask(with: approovUpdateResponse.request) { (data, response, error) -> Void in
-                    // Invoke completition handler
-                    completionHandler(data,response,error)
-                }
-            case .ShouldRetry:
-                // We should retry doing a fetch after a user driven event
-                completionHandler(nil,nil,approovUpdateResponse.error)
-                // Initialize a URLSessionDataTask object
-                task = self.pinnedURLSession.dataTask(with: approovUpdateResponse.request) { (data, response, error) -> Void in
-                }
-                // We cancel the connection and return the task object at end of function
-                task?.cancel()
-            default:
-                completionHandler(nil,nil,approovUpdateResponse.error)
-                // Initialize a URLSessionDataTask object
-                task = self.pinnedURLSession.dataTask(with: approovUpdateResponse.request) { (data, response, error) -> Void in
-                }
-                // We cancel the connection and return the task object at end of function
-                task?.cancel()
-        }// switch
-         */
-        
         return task
-    }// func
+    }
     
     // MARK: URLSession downloadTask
     /*  Creates a download task that retrieves the contents of the specified URL and saves the results to a file
@@ -155,27 +109,11 @@ public class ApproovURLSession: NSObject {
      */
     public func downloadTask(with request: URLRequest) -> URLSessionDownloadTask {
         let userRequest = addUserHeadersToRequest(request: request)
-        let approovUpdateResponse = ApproovService.updateRequestWithApproov(request: userRequest)
-        var sessionDownloadTask:URLSessionDownloadTask?
-        switch approovUpdateResponse.decision {
-            case .ShouldProceed:
-                // Go ahead and make the API call with the provided request object
-                sessionDownloadTask = self.pinnedURLSession.downloadTask(with: approovUpdateResponse.request)
-            case .ShouldRetry:
-                 // We create a task and cancel it immediately
-                 sessionDownloadTask = self.pinnedURLSession.downloadTask(with: approovUpdateResponse.request)
-                 sessionDownloadTask!.cancel()
-                // We should retry doing a fetch after a user driven event
-                // Tell the delagate we are marking the session as invalid
-                self.pinnedURLSessionDelegate?.urlSession?(self.pinnedURLSession, didBecomeInvalidWithError: approovUpdateResponse.error)
-            default:
-                // We create a task and cancel it immediately
-                 sessionDownloadTask = self.pinnedURLSession.downloadTask(with: approovUpdateResponse.request)
-                 sessionDownloadTask!.cancel()
-                // Tell the delagate we are marking the session as invalid
-                self.pinnedURLSessionDelegate?.urlSession?(self.pinnedURLSession, didBecomeInvalidWithError: approovUpdateResponse.error)
-        }// switch
-        return sessionDownloadTask!
+        // The return object
+        let task = self.pinnedURLSession.downloadTask(with: userRequest)
+        // Add observer
+        task.addObserver(taskObserver!, forKeyPath: "state", options: NSKeyValueObservingOptions.new, context: nil)
+        return task
     }
     
     /*  Creates a download task that retrieves the contents of the specified URL, saves the results to a file,
@@ -192,34 +130,12 @@ public class ApproovURLSession: NSObject {
      */
     public func downloadTask(with request: URLRequest, completionHandler: @escaping (URL?, URLResponse?, Error?) -> Void) -> URLSessionDownloadTask {
         let userRequest = addUserHeadersToRequest(request: request)
-        let approovUpdateResponse = ApproovService.updateRequestWithApproov(request: userRequest)
-        // The returned task
-        var task:URLSessionDownloadTask?
-        switch approovUpdateResponse.decision {
-            case .ShouldProceed:
-                // Go ahead and make the API call with the provided request object
-                task = self.pinnedURLSession.downloadTask(with: approovUpdateResponse.request) { (data, response, error) -> Void in
-                    // Invoke completition handler
-                    completionHandler(data,response,error)
-                }
-            case .ShouldRetry:
-                // We should retry doing a fetch after a user driven event
-                // Create the early response and invoke callback with custom error
-                completionHandler(nil,nil,approovUpdateResponse.error)
-                // Initialize a URLSessionDataTask object
-                task = self.pinnedURLSession.downloadTask(with: approovUpdateResponse.request) { (data, response, error) -> Void in
-                }
-                // We cancel the connection and return the task object at end of function
-                task?.cancel()
-            default:
-                completionHandler(nil,nil,approovUpdateResponse.error)
-                // Initialize a URLSessionDataTask object
-                task = self.pinnedURLSession.downloadTask(with: approovUpdateResponse.request) { (data, response, error) -> Void in
-                }
-                // We cancel the connection and return the task object at end of function
-                task?.cancel()
-        }// switch
-    return task!
+        // The return object
+        let task = self.pinnedURLSession.downloadTask(with: userRequest, completionHandler: completionHandler)
+        // Add completionHandler
+        taskObserver?.addCompletionHandlerTaskToDictionary(taskId: task.taskIdentifier, handler: completionHandler)
+        task.addObserver(taskObserver!, forKeyPath: "state", options: NSKeyValueObservingOptions.new, context: nil)
+        return task
     }
     
     /*  Creates a download task to resume a previously canceled or failed download
@@ -244,27 +160,10 @@ public class ApproovURLSession: NSObject {
      */
     public func uploadTask(with request: URLRequest, from: Data) -> URLSessionUploadTask {
         let userRequest = addUserHeadersToRequest(request: request)
-        let approovUpdateResponse = ApproovService.updateRequestWithApproov(request: userRequest)
-        var sessionUploadTask:URLSessionUploadTask?
-        switch approovUpdateResponse.decision {
-            case .ShouldProceed:
-                // Go ahead and make the API call with the provided request object
-                sessionUploadTask = self.pinnedURLSession.uploadTask(with: approovUpdateResponse.request, from: from)
-            case .ShouldRetry:
-                 // We create a task and cancel it immediately
-                 sessionUploadTask = self.pinnedURLSession.uploadTask(with: approovUpdateResponse.request, from: from)
-                 sessionUploadTask!.cancel()
-                // We should retry doing a fetch after a user driven event
-                // Tell the delagate we are marking the session as invalid
-                self.pinnedURLSessionDelegate?.urlSession?(self.pinnedURLSession, didBecomeInvalidWithError: approovUpdateResponse.error)
-            default:
-                // We create a task and cancel it immediately
-                 sessionUploadTask = self.pinnedURLSession.uploadTask(with: approovUpdateResponse.request, from: from)
-                 sessionUploadTask!.cancel()
-                // Tell the delagate we are marking the session as invalid
-                self.pinnedURLSessionDelegate?.urlSession?(self.pinnedURLSession, didBecomeInvalidWithError: approovUpdateResponse.error)
-        }// switch
-        return sessionUploadTask!
+        // The return object
+        let task = pinnedURLSession.uploadTask(with: userRequest, from: from)
+        task.addObserver(taskObserver!, forKeyPath: "state", options: NSKeyValueObservingOptions.new, context: nil)
+        return task
     }
     
     /*  Creates a task that performs an HTTP request for the specified URL request object, uploads the provided data,
@@ -273,34 +172,12 @@ public class ApproovURLSession: NSObject {
      */
     public func uploadTask(with request: URLRequest, from: Data?, completionHandler: @escaping (Data?, URLResponse?, Error?) -> Void) -> URLSessionUploadTask {
         let userRequest = addUserHeadersToRequest(request: request)
-        let approovUpdateResponse = ApproovService.updateRequestWithApproov(request: userRequest)
-        // The returned task
-        var task:URLSessionUploadTask?
-        switch approovUpdateResponse.decision {
-            case .ShouldProceed:
-                // Go ahead and make the API call with the provided request object
-                task = self.pinnedURLSession.uploadTask(with: approovUpdateResponse.request, from: from) { (data, response, error) -> Void in
-                    // Invoke completition handler
-                    completionHandler(data,response,error)
-                }
-            case .ShouldRetry:
-                // We should retry doing a fetch after a user driven event
-                // Create the early response and invoke callback with custom error
-                completionHandler(nil,nil,approovUpdateResponse.error)
-                // Initialize a URLSessionDataTask object
-                task = self.pinnedURLSession.uploadTask(with: approovUpdateResponse.request, from: from) { (data, response, error) -> Void in
-                }
-                // We cancel the connection and return the task object at end of function
-                task?.cancel()
-            default:
-                completionHandler(nil,nil,approovUpdateResponse.error)
-                // Initialize a URLSessionDataTask object
-                task = self.pinnedURLSession.uploadTask(with: approovUpdateResponse.request, from: from) { (data, response, error) -> Void in
-                }
-                // We cancel the connection and return the task object at end of function
-                task?.cancel()
-        }// switch
-        return task!
+        // The return object
+        let task = self.pinnedURLSession.uploadTask(with: userRequest, from: from, completionHandler:  completionHandler)
+        // Add completionHandler
+        taskObserver?.addCompletionHandlerTaskToDictionary(taskId: task.taskIdentifier, handler: completionHandler)
+        task.addObserver(taskObserver!, forKeyPath: "state", options: NSKeyValueObservingOptions.new, context: nil)
+        return task
     }
     
     /*  Creates a task that performs an HTTP request for uploading the specified file
@@ -308,27 +185,11 @@ public class ApproovURLSession: NSObject {
      */
     public func uploadTask(with request: URLRequest, fromFile: URL) -> URLSessionUploadTask {
         let userRequest = addUserHeadersToRequest(request: request)
-        let approovUpdateResponse = ApproovService.updateRequestWithApproov(request: userRequest)
-        var sessionUploadTask:URLSessionUploadTask?
-        switch approovUpdateResponse.decision {
-            case .ShouldProceed:
-                // Go ahead and make the API call with the provided request object
-                sessionUploadTask = self.pinnedURLSession.uploadTask(with: approovUpdateResponse.request, fromFile: fromFile)
-            case .ShouldRetry:
-                 // We create a task and cancel it immediately
-                 sessionUploadTask = self.pinnedURLSession.uploadTask(with: approovUpdateResponse.request, fromFile: fromFile)
-                 sessionUploadTask!.cancel()
-                // We should retry doing a fetch after a user driven event
-                // Tell the delagate we are marking the session as invalid
-                self.pinnedURLSessionDelegate?.urlSession?(self.pinnedURLSession, didBecomeInvalidWithError: approovUpdateResponse.error)
-            default:
-                // We create a task and cancel it immediately
-                 sessionUploadTask = self.pinnedURLSession.uploadTask(with: approovUpdateResponse.request, fromFile: fromFile)
-                 sessionUploadTask!.cancel()
-                // Tell the delagate we are marking the session as invalid
-                self.pinnedURLSessionDelegate?.urlSession?(self.pinnedURLSession, didBecomeInvalidWithError: approovUpdateResponse.error)
-        }// switch
-        return sessionUploadTask!
+        // The return object
+        let task = self.pinnedURLSession.uploadTask(with: userRequest, fromFile: fromFile)
+        // Add observer
+        task.addObserver(taskObserver!, forKeyPath: "state", options: NSKeyValueObservingOptions.new, context: nil)
+        return task
     }
     
     /*  Creates a task that performs an HTTP request for the specified URL request object, uploads the provided data,
@@ -337,34 +198,12 @@ public class ApproovURLSession: NSObject {
      */
     public func uploadTask(with request: URLRequest, fromFile: URL, completionHandler: @escaping (Data?, URLResponse?, Error?) -> Void) -> URLSessionUploadTask {
         let userRequest = addUserHeadersToRequest(request: request)
-        let approovUpdateResponse = ApproovService.updateRequestWithApproov(request: userRequest)
-        // The returned task
-        var task:URLSessionUploadTask?
-        switch approovUpdateResponse.decision {
-            case .ShouldProceed:
-                // Go ahead and make the API call with the provided request object
-                task = self.pinnedURLSession.uploadTask(with: approovUpdateResponse.request, fromFile: fromFile) { (data, response, error) -> Void in
-                    // Invoke completition handler
-                    completionHandler(data,response,error)
-                }
-            case .ShouldRetry:
-                // We should retry doing a fetch after a user driven event
-                // Create the early response and invoke callback with custom error
-                completionHandler(nil,nil,approovUpdateResponse.error)
-                // Initialize a URLSessionDataTask object
-                task = self.pinnedURLSession.uploadTask(with: approovUpdateResponse.request, fromFile: fromFile) { (data, response, error) -> Void in
-                }
-                // We cancel the connection and return the task object at end of function
-                task?.cancel()
-            default:
-                completionHandler(nil,nil,approovUpdateResponse.error)
-                // Initialize a URLSessionDataTask object
-                task = self.pinnedURLSession.uploadTask(with: approovUpdateResponse.request, fromFile: fromFile) { (data, response, error) -> Void in
-                }
-                // We cancel the connection and return the task object at end of function
-                task?.cancel()
-        }// switch
-        return task!
+        // The return object
+        let task = self.pinnedURLSession.uploadTask(with: userRequest, fromFile: fromFile, completionHandler: completionHandler)
+        // Add completionHandler
+        taskObserver?.addCompletionHandlerTaskToDictionary(taskId: task.taskIdentifier, handler: completionHandler)
+        task.addObserver(taskObserver!, forKeyPath: "state", options: NSKeyValueObservingOptions.new, context: nil)
+        return task
     }
     
     /*  Creates a task that performs an HTTP request for uploading data based on the specified URL request
@@ -372,31 +211,15 @@ public class ApproovURLSession: NSObject {
      */
     public func uploadTask(withStreamedRequest: URLRequest) -> URLSessionUploadTask {
         let userRequest = addUserHeadersToRequest(request: withStreamedRequest)
-        let approovUpdateResponse = ApproovService.updateRequestWithApproov(request: userRequest)
-        var sessionUploadTask:URLSessionUploadTask?
-        switch approovUpdateResponse.decision {
-            case .ShouldProceed:
-                // Go ahead and make the API call with the provided request object
-                sessionUploadTask = self.pinnedURLSession.uploadTask(withStreamedRequest: approovUpdateResponse.request)
-            case .ShouldRetry:
-                 // We create a task and cancel it immediately
-                 sessionUploadTask = self.pinnedURLSession.uploadTask(withStreamedRequest: approovUpdateResponse.request)
-                 sessionUploadTask!.cancel()
-                // We should retry doing a fetch after a user driven event
-                // Tell the delagate we are marking the session as invalid
-                self.pinnedURLSessionDelegate?.urlSession?(self.pinnedURLSession, didBecomeInvalidWithError: approovUpdateResponse.error)
-            default:
-                // We create a task and cancel it immediately
-                 sessionUploadTask = self.pinnedURLSession.uploadTask(withStreamedRequest: approovUpdateResponse.request)
-                 sessionUploadTask!.cancel()
-                // Tell the delagate we are marking the session as invalid
-                self.pinnedURLSessionDelegate?.urlSession?(self.pinnedURLSession, didBecomeInvalidWithError: approovUpdateResponse.error)
-        }// switch
-        return sessionUploadTask!
+        // The return object
+        let task = self.pinnedURLSession.uploadTask(withStreamedRequest: userRequest)
+        // Add observer
+        task.addObserver(taskObserver!, forKeyPath: "state", options: NSKeyValueObservingOptions.new, context: nil)
+        return task
     }
     
     // MARK: Combine Publisher Tasks
-    
+    // TODO: fix this (no observer for publisher available!)
     /*  Returns a publisher that wraps a URL session data task for a given URL request.
      *  https://developer.apple.com/documentation/foundation/urlsession
      */
@@ -527,7 +350,7 @@ public class ApproovURLSession: NSObject {
  */
 class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDelegate, URLSessionDataDelegate, URLSessionDownloadDelegate {
     
-    var approovURLDelegate:URLSessionDelegate?
+    var optionalURLDelegate:URLSessionDelegate?
     
     struct Constants {
         static let rsa2048SPKIHeader:[UInt8] = [
@@ -565,7 +388,7 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
     }
     init(with delegate: URLSessionDelegate?){
         PinningURLSessionDelegate.initializePKI()
-        self.approovURLDelegate = delegate
+        self.optionalURLDelegate = delegate
     }
     
     // MARK: URLSessionDelegate
@@ -580,14 +403,14 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
      *  https://developer.apple.com/documentation/foundation/urlsessiondelegate/1407776-urlsession
      */
     func urlSession(_ session: URLSession, didBecomeInvalidWithError error: Error?) {
-        approovURLDelegate?.urlSession?(session, didBecomeInvalidWithError: error)
+        optionalURLDelegate?.urlSession?(session, didBecomeInvalidWithError: error)
     }
     
     /*  Tells the delegate that all messages enqueued for a session have been delivered
      *  https://developer.apple.com/documentation/foundation/urlsessiondelegate/1617185-urlsessiondidfinishevents
      */
     func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
-        approovURLDelegate?.urlSessionDidFinishEvents?(forBackgroundURLSession: session)
+        optionalURLDelegate?.urlSessionDidFinishEvents?(forBackgroundURLSession: session)
     }
     
     /*  Requests credentials from the delegate in response to a session-level authentication request from the remote server
@@ -596,14 +419,14 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
     func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
         // We are only interested in server trust requests
         if !challenge.protectionSpace.authenticationMethod.isEqual(NSURLAuthenticationMethodServerTrust) {
-            approovURLDelegate?.urlSession?(session, didReceive: challenge, completionHandler: completionHandler)
+            optionalURLDelegate?.urlSession?(session, didReceive: challenge, completionHandler: completionHandler)
             return
         }
         do {
             if let serverTrust = try shouldAcceptAuthenticationChallenge(challenge: challenge){
                 completionHandler(.useCredential,
                                   URLCredential.init(trust: serverTrust));
-                approovURLDelegate?.urlSession?(session, didReceive: challenge, completionHandler: completionHandler)
+                optionalURLDelegate?.urlSession?(session, didReceive: challenge, completionHandler: completionHandler)
                 return
             }
         } catch {
@@ -623,7 +446,7 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
      *  https://developer.apple.com/documentation/foundation/urlsessiontaskdelegate/1411595-urlsession
      */
     func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
-        if let delegate = approovURLDelegate as? URLSessionTaskDelegate {
+        if let delegate = optionalURLDelegate as? URLSessionTaskDelegate {
             // We are only interested in server trust requests
             if !challenge.protectionSpace.authenticationMethod.isEqual(NSURLAuthenticationMethodServerTrust) {
                 delegate.urlSession?(session, task: task, didReceive: challenge, completionHandler: completionHandler)
@@ -648,7 +471,7 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
      *  https://developer.apple.com/documentation/foundation/urlsessiontaskdelegate/1411610-urlsession
      */
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        if let delegate = approovURLDelegate as? URLSessionTaskDelegate {
+        if let delegate = optionalURLDelegate as? URLSessionTaskDelegate {
             delegate.urlSession?(session, task: task, didCompleteWithError: error)
         }
     }
@@ -657,7 +480,7 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
      *  https://developer.apple.com/documentation/foundation/urlsessiontaskdelegate/1411626-urlsession
      */
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
-        if let delegate = approovURLDelegate as? URLSessionTaskDelegate {
+        if let delegate = optionalURLDelegate as? URLSessionTaskDelegate {
             delegate.urlSession?(session, task: task, willPerformHTTPRedirection: response, newRequest: request, completionHandler: completionHandler)
         }
     }
@@ -666,7 +489,7 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
      *  https://developer.apple.com/documentation/foundation/urlsessiontaskdelegate/1410001-urlsession
      */
     func urlSession(_ session: URLSession, task: URLSessionTask, needNewBodyStream completionHandler: @escaping (InputStream?) -> Void) {
-        if let delegate = approovURLDelegate as? URLSessionTaskDelegate {
+        if let delegate = optionalURLDelegate as? URLSessionTaskDelegate {
             delegate.urlSession?(session, task: task, needNewBodyStream: completionHandler)
         }
     }
@@ -675,7 +498,7 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
      *  https://developer.apple.com/documentation/foundation/urlsessiontaskdelegate/1408299-urlsession
      */
     func urlSession(_ session: URLSession, task: URLSessionTask, didSendBodyData bytesSent: Int64, totalBytesSent: Int64, totalBytesExpectedToSend: Int64) {
-        if let delegate = approovURLDelegate as? URLSessionTaskDelegate {
+        if let delegate = optionalURLDelegate as? URLSessionTaskDelegate {
             delegate.urlSession?(session, task: task, didSendBodyData: bytesSent, totalBytesSent: totalBytesSent, totalBytesExpectedToSend: totalBytesExpectedToSend)
         }
     }
@@ -685,7 +508,7 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
      */
     @available(iOS 11.0, *)
     func urlSession(_ session: URLSession, task: URLSessionTask, willBeginDelayedRequest request: URLRequest, completionHandler: @escaping (URLSession.DelayedRequestDisposition, URLRequest?) -> Void) {
-        if let delegate = approovURLDelegate as? URLSessionTaskDelegate {
+        if let delegate = optionalURLDelegate as? URLSessionTaskDelegate {
             delegate.urlSession?(session, task:task, willBeginDelayedRequest: request, completionHandler: completionHandler)
         }
     }
@@ -694,7 +517,7 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
      *  https://developer.apple.com/documentation/foundation/urlsessiontaskdelegate/1643148-urlsession
      */
     func urlSession(_ session: URLSession, task: URLSessionTask, didFinishCollecting metrics: URLSessionTaskMetrics) {
-        if let delegate = approovURLDelegate as? URLSessionTaskDelegate {
+        if let delegate = optionalURLDelegate as? URLSessionTaskDelegate {
             delegate.urlSession?(session, task: task, didFinishCollecting: metrics)
         }
     }
@@ -704,7 +527,7 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
      */
     @available(iOS 11.0, *)
     func urlSession(_ session: URLSession, taskIsWaitingForConnectivity task: URLSessionTask) {
-        if let delegate = approovURLDelegate as? URLSessionTaskDelegate {
+        if let delegate = optionalURLDelegate as? URLSessionTaskDelegate {
             delegate.urlSession?(session, taskIsWaitingForConnectivity: task)
         }
     }
@@ -723,7 +546,7 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
      */
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse, completionHandler: @escaping (URLSession.ResponseDisposition) -> Void)
     {
-        if let delegate = approovURLDelegate as? URLSessionDataDelegate {
+        if let delegate = optionalURLDelegate as? URLSessionDataDelegate {
             delegate.urlSession?(session, dataTask: dataTask, didReceive: response, completionHandler: completionHandler)
         }
     }
@@ -732,7 +555,7 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
      *  https://developer.apple.com/documentation/foundation/urlsessiondatadelegate/1409936-urlsession
      */
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didBecome downloadTask: URLSessionDownloadTask) {
-        if let delegate = approovURLDelegate as? URLSessionDataDelegate {
+        if let delegate = optionalURLDelegate as? URLSessionDataDelegate {
             delegate.urlSession?(session, dataTask: dataTask, didBecome: downloadTask)
         }
     }
@@ -741,7 +564,7 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
      *  https://developer.apple.com/documentation/foundation/urlsessiondatadelegate/1411648-urlsession
      */
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didBecome streamTask: URLSessionStreamTask) {
-        if let delegate = approovURLDelegate as? URLSessionDataDelegate {
+        if let delegate = optionalURLDelegate as? URLSessionDataDelegate {
             delegate.urlSession?(session, dataTask: dataTask, didBecome: streamTask)
         }
     }
@@ -750,7 +573,7 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
      *  https://developer.apple.com/documentation/foundation/urlsessiondatadelegate/1411528-urlsession
      */
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
-        if let delegate = approovURLDelegate as? URLSessionDataDelegate {
+        if let delegate = optionalURLDelegate as? URLSessionDataDelegate {
             delegate.urlSession?(session,dataTask: dataTask, didReceive: data)
         }
     }
@@ -759,7 +582,7 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
      *  https://developer.apple.com/documentation/foundation/urlsessiondatadelegate/1411612-urlsession
      */
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, willCacheResponse proposedResponse: CachedURLResponse, completionHandler: @escaping (CachedURLResponse?) -> Void) {
-        if let delegate = approovURLDelegate as? URLSessionDataDelegate {
+        if let delegate = optionalURLDelegate as? URLSessionDataDelegate {
             delegate.urlSession?(session, dataTask: dataTask, willCacheResponse: proposedResponse, completionHandler: completionHandler)
         }
     }
@@ -775,7 +598,7 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
      *  https://developer.apple.com/documentation/foundation/urlsessiondownloaddelegate/1411575-urlsession
      */
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
-        if let delegate = approovURLDelegate as? URLSessionDownloadDelegate {
+        if let delegate = optionalURLDelegate as? URLSessionDownloadDelegate {
             delegate.urlSession(session, downloadTask: downloadTask, didFinishDownloadingTo: location)
         }
     }
@@ -784,7 +607,7 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
      *  https://developer.apple.com/documentation/foundation/urlsessiondownloaddelegate/1408142-urlsession
      */
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didResumeAtOffset: Int64, expectedTotalBytes: Int64) {
-        if let delegate = approovURLDelegate as? URLSessionDownloadDelegate {
+        if let delegate = optionalURLDelegate as? URLSessionDownloadDelegate {
             delegate.urlSession?(session, downloadTask: downloadTask, didResumeAtOffset: didResumeAtOffset, expectedTotalBytes: expectedTotalBytes)
         }
     }
@@ -793,7 +616,7 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
      *  https://developer.apple.com/documentation/foundation/urlsessiondownloaddelegate/1409408-urlsession
      */
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData: Int64, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
-        if let delegate = approovURLDelegate as? URLSessionDownloadDelegate {
+        if let delegate = optionalURLDelegate as? URLSessionDownloadDelegate {
             delegate.urlSession?(session, downloadTask: downloadTask, didWriteData: didWriteData, totalBytesWritten: totalBytesWritten, totalBytesExpectedToWrite: totalBytesExpectedToWrite)
         }
     }
