@@ -45,6 +45,9 @@ public class ApproovService {
     private static var substitutionHeaders:Dictionary<String,String> = Dictionary<String,String>()
     /* The dispatch queue to manage serial access to the substitution headers dictionary */
     private static let substitutionQueue = DispatchQueue(label: "ApproovService.substitution")
+    /** Set of URL regexs that should be excluded from any Approov protection, mapped to the compiled Pattern */
+    private static var exclusionURLRegexs: Dictionary<String, NSRegularExpression> = Dictionary<String, NSRegularExpression>();
+    
     /* Initializer: config is obtained using `approov sdk -getConfigString`
      * Note the initializer function should only ever be called once. Subsequent calls will be ignored
      * since the ApproovSDK can only be intialized once; if however, an attempt is made to initialize
@@ -399,6 +402,83 @@ public class ApproovService {
         } else if (approovResults.status != ApproovTokenFetchStatus.success) && (approovResults.status != ApproovTokenFetchStatus.unknownKey){
             // we are unable to get the secure string due to a more permanent error
             throw ApproovError.permanentError(message: "precheck: " + Approov.string(from: approovResults.status))
+        }
+    }
+    
+    /**
+     * Adds an Approov token and substitutes header values as defined in substitutionHeaders in the headers if present.
+     * If no token is added and no substitution is made then the original collection of headers are returned, otherwise
+     * a new one is constructed with the updated headers values. If it is not currently possible to fetch a token or
+     * secure strings due to networking issues then ApproovError.networkingError is thrown and a user initiated retry of
+     * the operation should be allowed. ApproovError.rejectionError may be thrown if the attestation fails and secure
+     * strings cannot be obtained. Other ApproovExecptions represent a more permanent error condition.
+     *
+     * Note this is a blocking function and must not be called from the UI thread!
+     *
+     * @param headers is the collection of headers to be updated
+     * @return headers passed in, or modified by adding an Approov token header and new header values if required
+     * @throws ApproovError if it is not possible to obtain secure strings for substitution
+     */
+
+    public static func updateRequestHeaders(headers: Dictionary<String,String>, url: URL, hostname: String) throws -> Dictionary<String,String>? {
+        
+        var exclusionURLRegexs: Dictionary<String, NSRegularExpression> = [:]
+        do {
+            objc_sync_enter(ApproovService.exclusionURLRegexs)
+            defer { objc_sync_exit(ApproovService.exclusionURLRegexs) }
+            exclusionURLRegexs = ApproovService.exclusionURLRegexs
+        }
+        // Check if the URL matches one of the exclusion regexs and just return original headers if so
+        for (_, regex) in exclusionURLRegexs {
+            let urlString = url.absoluteString
+            let urlStringRange = NSRange(urlString.startIndex..<urlString.endIndex, in: urlString)
+            let matches: [NSTextCheckingResult] = regex.matches(in: urlString, options: [], range: urlStringRange)
+            if !matches.isEmpty {
+                return headers;
+            }
+        }
+    }
+    
+    /**
+     * Adds an exclusion URL regular expression. If a URL for a request matches this regular expression
+     * then it will not be subject to any Approov protection. Note that this facility must be used with
+     * EXTREME CAUTION due to the impact of dynamic pinning. Pinning may be applied to all domains added
+     * using Approov, and updates to the pins are received when an Approov fetch is performed. If you
+     * exclude some URLs on domains that are protected with Approov, then these will be protected with
+     * Approov pins but without a path to update the pins until a URL is used that is not excluded. Thus
+     * you are responsible for ensuring that there is always a possibility of calling a non-excluded
+     * URL, or you should make an explicit call to fetchToken if there are persistent pinning failures.
+     * Conversely, use of those option may allow a connection to be established before any dynamic pins
+     * have been received via Approov, thus potentially opening the channel to a MitM.
+     *
+     * @param urlRegex is the regular expression that will be compared against URLs to exclude them
+     */
+    public static func addExclusionURLRegex(urlRegex: String) {
+        do {
+            objc_sync_enter(ApproovService.exclusionURLRegexs)
+            defer { objc_sync_exit(ApproovService.exclusionURLRegexs) }
+            let regex = try NSRegularExpression(pattern: urlRegex, options: [])
+            ApproovService.exclusionURLRegexs[urlRegex] = regex
+            os_log("Approov: addExclusionURLRegex: %@", type: .debug, urlRegex)
+        } catch {
+            // TODO wouldn't we rather throw?
+            os_log("Approov: addExclusionURLRegex: %@ error: %@", type: .debug, urlRegex, error.localizedDescription)
+        }
+    }
+
+    /**
+     * Removes an exclusion URL regular expression previously added using addExclusionURLRegex.
+     *
+     * @param urlRegex is the regular expression that will be compared against URLs to exclude them
+     */
+    public static func removeExclusionURLRegex(urlRegex: String) {
+        do {
+            objc_sync_enter(ApproovService.exclusionURLRegexs)
+            defer { objc_sync_exit(ApproovService.exclusionURLRegexs) }
+            if ApproovService.exclusionURLRegexs[urlRegex] != nil {
+                os_log("Approov: removeExclusionURLRegex: %@", type: .debug, urlRegex)
+                ApproovService.exclusionURLRegexs.removeValue(forKey: urlRegex)
+            }
         }
     }
 } // ApproovService class

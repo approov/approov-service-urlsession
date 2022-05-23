@@ -19,6 +19,7 @@ import Foundation
 import Approov
 import CommonCrypto
 import os.log
+import Combine
 
 public class ApproovURLSession: NSObject {
     
@@ -34,7 +35,7 @@ public class ApproovURLSession: NSObject {
     var taskObserver:ApproovSessionTaskObserver?
     /* Use log subsystem for info/error */
     let log = OSLog(subsystem: "approov-service-urlsession", category: "network")
-    
+
     /*
      *  URLSession initializer
      *  https://developer.apple.com/documentation/foundation/urlsession/1411597-init
@@ -219,7 +220,6 @@ public class ApproovURLSession: NSObject {
     }
     
     // MARK: Combine Publisher Tasks
-    // TODO: fix this (no observer for publisher available!)
     /*  Returns a publisher that wraps a URL session data task for a given URL request.
      *  https://developer.apple.com/documentation/foundation/urlsession
      */
@@ -227,33 +227,25 @@ public class ApproovURLSession: NSObject {
     public func dataTaskPublisher(for request: URLRequest) -> URLSession.DataTaskPublisher {
         let userRequest = addUserHeadersToRequest(request: request)
         let approovUpdateResponse = ApproovService.updateRequestWithApproov(request: userRequest)
-        var sessionTaskPublisher:URLSession.DataTaskPublisher?
-        switch approovUpdateResponse.decision {
-            case .ShouldProceed:
-                // Go ahead and make the API call with the provided request object
-                sessionTaskPublisher = self.pinnedURLSession.dataTaskPublisher(for: approovUpdateResponse.request)
-            case .ShouldRetry:
-                 // We create a task and cancel it immediately
-                sessionTaskPublisher = self.pinnedURLSession.dataTaskPublisher(for: approovUpdateResponse.request)
-                // We should retry doing a fetch after a user driven event
-                // Tell the delagate we are marking the session as invalid
-                self.pinnedURLSessionDelegate?.urlSession?(self.pinnedURLSession, didBecomeInvalidWithError: approovUpdateResponse.error)
-            default:
-                // We create a task and cancel it immediately
-                sessionTaskPublisher = self.pinnedURLSession.dataTaskPublisher(for: approovUpdateResponse.request)
-                sessionTaskPublisher?.session.invalidateAndCancel()
-                // Tell the delagate we are marking the session as invalid
-                self.pinnedURLSessionDelegate?.urlSession?(self.pinnedURLSession, didBecomeInvalidWithError: approovUpdateResponse.error)
-        }// switch
-        return sessionTaskPublisher!
-    }
-    
-    /*  Returns a publisher that wraps a URL session data task for a given URL request.
-     *  https://developer.apple.com/documentation/foundation/urlsession
-     */
-    @available(iOS 13.0, *)
-    public func dataTaskPublisher(for url: URL) -> URLSession.DataTaskPublisher {
-        return dataTaskPublisher(for: URLRequest(url: url))
+                var sessionTaskPublisher:URLSession.DataTaskPublisher?
+                switch approovUpdateResponse.decision {
+                    case .ShouldProceed:
+                        // Go ahead and make the API call with the provided request object
+                        sessionTaskPublisher = self.pinnedURLSession.dataTaskPublisher(for: approovUpdateResponse.request)
+                    case .ShouldRetry:
+                         // We create a task and cancel it immediately
+                        sessionTaskPublisher = self.pinnedURLSession.dataTaskPublisher(for: approovUpdateResponse.request)
+                        // We should retry doing a fetch after a user driven event
+                        // Tell the delagate we are marking the session as invalid
+                        self.pinnedURLSessionDelegate?.urlSession?(self.pinnedURLSession, didBecomeInvalidWithError: approovUpdateResponse.error)
+                    default:
+                        // We create a task and cancel it immediately
+                        sessionTaskPublisher = self.pinnedURLSession.dataTaskPublisher(for: approovUpdateResponse.request)
+                        sessionTaskPublisher?.session.invalidateAndCancel()
+                        // Tell the delagate we are marking the session as invalid
+                        self.pinnedURLSessionDelegate?.urlSession?(self.pinnedURLSession, didBecomeInvalidWithError: approovUpdateResponse.error)
+                }// switch
+                return sessionTaskPublisher!
     }
     
     
