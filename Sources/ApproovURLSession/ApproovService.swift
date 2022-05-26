@@ -35,8 +35,16 @@ public class ApproovService {
     fileprivate init(){}
     /* Status of Approov SDK initialisation */
     private static var approovServiceInitialised = false
+    /* If we whouls proceed on network fail */
+    private static var proceedOnNetworkFail = false
     /* The initial config string used to initialize */
     private static var configString:String?
+    /* Binding header string */
+    private static var bindHeader = ""
+    /* Approov token default header */
+    private static var approovTokenHeader = "Approov-Token"
+    /* Approov token custom prefix: any prefix to be added such as "Bearer " */
+    private static var approovTokenPrefix = ""
     /* The dispatch queue to manage serial access to intializer modified variables */
     private static let initializerQueue = DispatchQueue(label: "ApproovService.initializer")
     /* map of headers that should have their values substituted for secure strings, mapped to their
@@ -67,7 +75,10 @@ public class ApproovService {
             }
             // Initialize Approov SDK
             do {
-                try Approov.initialize(config, updateConfig: "auto", comment: nil)
+                if config.count > 0 {
+                    // Allow empty config string to initialize
+                    try Approov.initialize(config, updateConfig: "auto", comment: nil)
+                }
                 approovServiceInitialised = true
                 ApproovService.configString = config
                 Approov.setUserProperty("approov-service-urlsession")
@@ -79,42 +90,56 @@ public class ApproovService {
         }
     }// initialize func
     
-    // Dispatch queue to manage concurrent access to bindHeader variable
-    private static let bindHeaderQueue = DispatchQueue(label: "ApproovService.bindHeader", qos: .default, attributes: .concurrent, autoreleaseFrequency: .never, target: DispatchQueue.global())
-    private static var _bindHeader = ""
-    // Bind Header string
-    public static var bindHeader: String {
-        get {
-            var bindHeader = ""
-            bindHeaderQueue.sync {
-                bindHeader = _bindHeader
-            }
-            return bindHeader
-        }
-        set {
-            bindHeaderQueue.async(group: nil, qos: .default, flags: .barrier, execute: {self._bindHeader = newValue})
+    /**
+     * Sets a flag indicating if the network interceptor should proceed anyway if it is
+     * not possible to obtain an Approov token due to a networking failure. If this is set
+     * then your backend API can receive calls without the expected Approov token header
+     * being added, or without header/query parameter substitutions being made. Note that
+     * this should be used with caution because it may allow a connection to be established
+     * before any dynamic pins have been received via Approov, thus potentially opening the channel to a MitM.
+     *
+     * @param proceed is true if Approov networking fails should allow continuation
+     */
+    public static func setProceedOnNetworkFailure(proceed: Bool) {
+        do {
+            objc_sync_enter(ApproovService.proceedOnNetworkFail)
+            defer { objc_sync_exit(ApproovService.proceedOnNetworkFail) }
+            os_log("Approov: setProceedOnNetworkFailure ", type: .info, proceed)
+            proceedOnNetworkFail = proceed
         }
     }
     
-    // Dispatch queue to manage concurrent access to approovTokenHeader variable
-    private static let approovTokenHeaderAndPrefixQueue = DispatchQueue(label: "ApproovService.approovTokenHeader", qos: .default, attributes: .concurrent, autoreleaseFrequency: .never, target: DispatchQueue.global())
-    /* Approov token default header */
-    private static var _approovTokenHeader = "Approov-Token"
-    /* Approov token custom prefix: any prefix to be added such as "Bearer " */
-    private static var _approovTokenPrefix = ""
-    // Approov Token Header String
-    public static var approovTokenHeaderAndPrefix: (approovTokenHeader: String, approovTokenPrefix: String) {
-        get {
-            var approovTokenHeader = ""
-            var approovTokenPrefix = ""
-            approovTokenHeaderAndPrefixQueue.sync {
-                approovTokenHeader = _approovTokenHeader
-                approovTokenPrefix = _approovTokenPrefix
+    /**
+     * Sets a binding header that must be present on all requests using the Approov service. A
+     * header should be chosen whose value is unchanging for most requests (such as an
+     * Authorization header). A hash of the header value is included in the issued Approov tokens
+     * to bind them to the value. This may then be verified by the backend API integration. This
+     * method should typically only be called once.
+     *
+     * @param header is the header to use for Approov token binding
+     */
+    public static func setBindingHeader(header:String) {
+        do {
+            objc_sync_enter(ApproovService.bindHeader)
+            defer { objc_sync_exit(ApproovService.bindHeader) }
+            ApproovService.bindHeader = header
         }
-        return (approovTokenHeader,approovTokenPrefix)
-        }
-        set {
-            approovTokenHeaderAndPrefixQueue.async(group: nil, qos: .default, flags: .barrier, execute: {(_approovTokenHeader,_approovTokenPrefix) = newValue})
+    }
+    
+    /**
+     * Sets the header that the Approov token is added on, as well as an optional
+     * prefix String (such as "Bearer "). By default the token is provided on
+     * "Approov-Token" with no prefix.
+     *
+     * @param header is the header to place the Approov token on
+     * @param prefix is any prefix String for the Approov token header
+     */
+    public static func setApproovHeader(header: String, prefix: String) {
+        do {
+            objc_sync_enter(ApproovService.approovTokenHeader)
+            defer { objc_sync_exit(ApproovService.approovTokenHeader) }
+            ApproovService.approovTokenHeader = header
+            ApproovService.approovTokenPrefix = prefix
         }
     }
 
@@ -143,6 +168,8 @@ public class ApproovService {
      * @return ApproovUpdateResponse providing an updated requets, plus an errors and status
      */
     public static func updateRequestWithApproov(request: URLRequest) -> ApproovUpdateResponse {
+        // Check if the URL matches one of the exclusion regexs and just proceed
+        
         var returnData = ApproovUpdateResponse(request: request, decision: .ShouldFail, sdkMessage: "", error: nil)
         // Check if Bind Header is set to a non empty String
         if ApproovService.bindHeader != "" {
@@ -168,7 +195,7 @@ public class ApproovService {
                 // Can go ahead and make the API call with the provided request object
                 returnData.decision = .ShouldProceed
                 // Set Approov-Token header
-                returnData.request.setValue(ApproovService.approovTokenHeaderAndPrefix.approovTokenPrefix + approovResult.token, forHTTPHeaderField: ApproovService.approovTokenHeaderAndPrefix.approovTokenHeader)
+                returnData.request.setValue(ApproovService.approovTokenPrefix + approovResult.token, forHTTPHeaderField: ApproovService.approovTokenHeader)
             case ApproovTokenFetchStatus.noNetwork,
                  ApproovTokenFetchStatus.poorNetwork,
                  ApproovTokenFetchStatus.mitmDetected:
@@ -264,13 +291,13 @@ public class ApproovService {
      * @param prefix is any required prefix to the value being substituted or nil if not required
      */
     public static func addSubstitutionHeader(header: String, prefix: String?) {
-        if prefix == nil {
+        if approovServiceInitialised {
             ApproovService.substitutionQueue.sync {
-                ApproovService.substitutionHeaders[header] = ""
-            }
-        } else {
-            ApproovService.substitutionQueue.sync {
-                ApproovService.substitutionHeaders[header] = prefix
+                if prefix == nil {
+                    ApproovService.substitutionHeaders[header] = ""
+                } else {
+                    ApproovService.substitutionHeaders[header] = prefix
+                }
             }
         }
     }
@@ -280,8 +307,10 @@ public class ApproovService {
      */
     public static func removeSubstitutionHeader(header: String) {
         ApproovService.substitutionQueue.sync {
-            if ApproovService.substitutionHeaders[header] != nil {
-                ApproovService.substitutionHeaders.removeValue(forKey: header)
+            if approovServiceInitialised {
+                if ApproovService.substitutionHeaders[header] != nil {
+                    ApproovService.substitutionHeaders.removeValue(forKey: header)
+                }
             }
         }
     }
@@ -406,37 +435,28 @@ public class ApproovService {
     }
     
     /**
-     * Adds an Approov token and substitutes header values as defined in substitutionHeaders in the headers if present.
-     * If no token is added and no substitution is made then the original collection of headers are returned, otherwise
-     * a new one is constructed with the updated headers values. If it is not currently possible to fetch a token or
-     * secure strings due to networking issues then ApproovError.networkingError is thrown and a user initiated retry of
-     * the operation should be allowed. ApproovError.rejectionError may be thrown if the attestation fails and secure
-     * strings cannot be obtained. Other ApproovExecptions represent a more permanent error condition.
-     *
-     * Note this is a blocking function and must not be called from the UI thread!
+     * Checks if the url matches one of the exclusion regexs
      *
      * @param headers is the collection of headers to be updated
      * @return headers passed in, or modified by adding an Approov token header and new header values if required
      * @throws ApproovError if it is not possible to obtain secure strings for substitution
      */
 
-    public static func updateRequestHeaders(headers: Dictionary<String,String>, url: URL, hostname: String) throws -> Dictionary<String,String>? {
-        
-        var exclusionURLRegexs: Dictionary<String, NSRegularExpression> = [:]
+    public static func checkURLIsExcluded(url: URL) -> Bool {
         do {
             objc_sync_enter(ApproovService.exclusionURLRegexs)
             defer { objc_sync_exit(ApproovService.exclusionURLRegexs) }
-            exclusionURLRegexs = ApproovService.exclusionURLRegexs
-        }
-        // Check if the URL matches one of the exclusion regexs and just return original headers if so
-        for (_, regex) in exclusionURLRegexs {
-            let urlString = url.absoluteString
-            let urlStringRange = NSRange(urlString.startIndex..<urlString.endIndex, in: urlString)
-            let matches: [NSTextCheckingResult] = regex.matches(in: urlString, options: [], range: urlStringRange)
-            if !matches.isEmpty {
-                return headers;
+            // Check if the URL matches one of the exclusion regexs and just return original headers if so
+            for (_, regex) in ApproovService.exclusionURLRegexs {
+                let urlString = url.absoluteString
+                let urlStringRange = NSRange(urlString.startIndex..<urlString.endIndex, in: urlString)
+                let matches: [NSTextCheckingResult] = regex.matches(in: urlString, options: [], range: urlStringRange)
+                if !matches.isEmpty {
+                    return true;
+                }
             }
         }
+        return false
     }
     
     /**
@@ -481,4 +501,62 @@ public class ApproovService {
             }
         }
     }
+    
+    /**
+     * Gets the device ID used by Approov to identify the particular device that the SDK is running on. Note
+     * that different Approov apps on the same device will return a different ID. Moreover, the ID may be
+     * changed by an uninstall and reinstall of the app.
+     *
+     * @return String of the device ID or nil in case of an error
+     */
+    public static func getDeviceID() -> String? {
+        return Approov.getDeviceID()
+    }
+    
+    /**
+     * Directly sets the data hash to be included in subsequently fetched Approov tokens. If the hash is
+     * different from any previously set value then this will cause the next token fetch operation to
+     * fetch a new token with the correct payload data hash. The hash appears in the
+     * 'pay' claim of the Approov token as a base64 encoded string of the SHA256 hash of the
+     * data. Note that the data is hashed locally and never sent to the Approov cloud service.
+     *
+     * @param data is the data to be hashed and set in the token
+     */
+    public static func setDataHashInToken(data: String) {
+        Approov.setDataHashInToken(data)
+    }
+    
+    /**
+     * Performs an Approov token fetch for the given URL. This should be used in situations where it
+     * is not possible to use the networking interception to add the token. This will
+     * likely require network access so may take some time to complete. If the attestation fails
+     * for any reason then an ApproovException is thrown. This will be ApproovNetworkException for
+     * networking issues wher a user initiated retry of the operation should be allowed. Note that
+     * the returned token should NEVER be cached by your app, you should call this function when
+     * it is needed.
+     *
+     * @param url is the URL giving the domain for the token fetch
+     * @return String of the fetched token
+     */
+    public static func fetchToken(url: String) -> String {
+        let result = Approov.fetchTokenAndWait(url)
+        return result.token
+    }
+    
+    /**
+     * Gets the signature for the given message. This uses an account specific message signing key that is
+     * transmitted to the SDK after a successful fetch if the facility is enabled for the account. Note
+     * that if the attestation failed then the signing key provided is actually random so that the
+     * signature will be incorrect. An Approov token should always be included in the message
+     * being signed and sent alongside this signature to prevent replay attacks. If no signature is
+     * available, because there has been no prior fetch or the feature is not enabled, then an
+     * ApproovException is thrown.
+     *
+     * @param message is the message whose content is to be signed
+     * @return String of the base64 encoded message signature
+     */
+    public static func getMessageSignature(message: String) -> String? {
+        return Approov.getMessageSignature(message)
+    }
 } // ApproovService class
+

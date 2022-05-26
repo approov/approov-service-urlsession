@@ -73,8 +73,13 @@ public class ApproovURLSession: NSObject {
         let userRequest = addUserHeadersToRequest(request: request)
         // Create the return object
         let task = self.pinnedURLSession.dataTask(with: userRequest)
-        // Add observer
-        task.addObserver(taskObserver!, forKeyPath: "state", options: NSKeyValueObservingOptions.new, context: nil)
+        // Check if the url request contains a url string that should not be protected
+        if let url = userRequest.url {
+            if (!ApproovService.checkURLIsExcluded(url:url )) {
+                // Add observer
+                task.addObserver(taskObserver!, forKeyPath: "state", options: NSKeyValueObservingOptions.new, context: nil)
+            }
+        }
         return task
     }
     
@@ -91,8 +96,15 @@ public class ApproovURLSession: NSObject {
     public func dataTask(with request: URLRequest, completionHandler: @escaping (Data?, URLResponse?, Error?) -> Void) -> URLSessionDataTask {
         let userRequest = addUserHeadersToRequest(request: request)
         let task = self.pinnedURLSession.dataTask(with: userRequest, completionHandler: completionHandler)
-        task.addObserver(taskObserver!, forKeyPath: "state", options: NSKeyValueObservingOptions.new, context: nil)
-        taskObserver?.addCompletionHandlerTaskToDictionary(taskId: task.taskIdentifier, handler: completionHandler)
+        // Check if the url request contains a url string that should not be protected
+        if let url = userRequest.url {
+            if (!ApproovService.checkURLIsExcluded(url:url )) {
+                // Add observer
+                task.addObserver(taskObserver!, forKeyPath: "state", options: NSKeyValueObservingOptions.new, context: nil)
+                taskObserver?.addCompletionHandlerTaskToDictionary(taskId: task.taskIdentifier, handler: completionHandler)
+            }
+        }
+        //TODO: ignoring completionHandler????
         return task
     }
     
@@ -112,8 +124,13 @@ public class ApproovURLSession: NSObject {
         let userRequest = addUserHeadersToRequest(request: request)
         // The return object
         let task = self.pinnedURLSession.downloadTask(with: userRequest)
-        // Add observer
-        task.addObserver(taskObserver!, forKeyPath: "state", options: NSKeyValueObservingOptions.new, context: nil)
+        // Check if the url request contains a url string that should not be protected
+        if let url = userRequest.url {
+            if (!ApproovService.checkURLIsExcluded(url:url )) {
+                // Add observer
+                task.addObserver(taskObserver!, forKeyPath: "state", options: NSKeyValueObservingOptions.new, context: nil)
+            }
+        }
         return task
     }
     
@@ -133,9 +150,14 @@ public class ApproovURLSession: NSObject {
         let userRequest = addUserHeadersToRequest(request: request)
         // The return object
         let task = self.pinnedURLSession.downloadTask(with: userRequest, completionHandler: completionHandler)
-        // Add completionHandler
-        taskObserver?.addCompletionHandlerTaskToDictionary(taskId: task.taskIdentifier, handler: completionHandler)
-        task.addObserver(taskObserver!, forKeyPath: "state", options: NSKeyValueObservingOptions.new, context: nil)
+        // Check if the url request contains a url string that should not be protected
+        if let url = userRequest.url {
+            if (!ApproovService.checkURLIsExcluded(url:url )) {
+                // Add observer
+                task.addObserver(taskObserver!, forKeyPath: "state", options: NSKeyValueObservingOptions.new, context: nil)
+                taskObserver?.addCompletionHandlerTaskToDictionary(taskId: task.taskIdentifier, handler: completionHandler)
+            }
+        }
         return task
     }
     
@@ -163,7 +185,13 @@ public class ApproovURLSession: NSObject {
         let userRequest = addUserHeadersToRequest(request: request)
         // The return object
         let task = pinnedURLSession.uploadTask(with: userRequest, from: from)
-        task.addObserver(taskObserver!, forKeyPath: "state", options: NSKeyValueObservingOptions.new, context: nil)
+        // Check if the url request contains a url string that should not be protected
+        if let url = userRequest.url {
+            if (!ApproovService.checkURLIsExcluded(url:url )) {
+                // Add observer
+                task.addObserver(taskObserver!, forKeyPath: "state", options: NSKeyValueObservingOptions.new, context: nil)
+            }
+        }
         return task
     }
     
@@ -175,9 +203,14 @@ public class ApproovURLSession: NSObject {
         let userRequest = addUserHeadersToRequest(request: request)
         // The return object
         let task = self.pinnedURLSession.uploadTask(with: userRequest, from: from, completionHandler:  completionHandler)
-        // Add completionHandler
-        taskObserver?.addCompletionHandlerTaskToDictionary(taskId: task.taskIdentifier, handler: completionHandler)
-        task.addObserver(taskObserver!, forKeyPath: "state", options: NSKeyValueObservingOptions.new, context: nil)
+        // Check if the url request contains a url string that should not be protected
+        if let url = userRequest.url {
+            if (!ApproovService.checkURLIsExcluded(url:url )) {
+                // Add observer
+                task.addObserver(taskObserver!, forKeyPath: "state", options: NSKeyValueObservingOptions.new, context: nil)
+                taskObserver?.addCompletionHandlerTaskToDictionary(taskId: task.taskIdentifier, handler: completionHandler)
+            }
+        }
         return task
     }
     
@@ -188,8 +221,13 @@ public class ApproovURLSession: NSObject {
         let userRequest = addUserHeadersToRequest(request: request)
         // The return object
         let task = self.pinnedURLSession.uploadTask(with: userRequest, fromFile: fromFile)
-        // Add observer
-        task.addObserver(taskObserver!, forKeyPath: "state", options: NSKeyValueObservingOptions.new, context: nil)
+        // Check if the url request contains a url string that should not be protected
+        if let url = userRequest.url {
+            if (!ApproovService.checkURLIsExcluded(url:url )) {
+                // Add observer
+                task.addObserver(taskObserver!, forKeyPath: "state", options: NSKeyValueObservingOptions.new, context: nil)
+            }
+        }
         return task
     }
     
@@ -201,9 +239,14 @@ public class ApproovURLSession: NSObject {
         let userRequest = addUserHeadersToRequest(request: request)
         // The return object
         let task = self.pinnedURLSession.uploadTask(with: userRequest, fromFile: fromFile, completionHandler: completionHandler)
-        // Add completionHandler
-        taskObserver?.addCompletionHandlerTaskToDictionary(taskId: task.taskIdentifier, handler: completionHandler)
-        task.addObserver(taskObserver!, forKeyPath: "state", options: NSKeyValueObservingOptions.new, context: nil)
+        // Check if the url request contains a url string that should not be protected
+        if let url = userRequest.url {
+            if (!ApproovService.checkURLIsExcluded(url:url )) {
+                // Add observer
+                task.addObserver(taskObserver!, forKeyPath: "state", options: NSKeyValueObservingOptions.new, context: nil)
+                taskObserver?.addCompletionHandlerTaskToDictionary(taskId: task.taskIdentifier, handler: completionHandler)
+            }
+        }
         return task
     }
     
@@ -214,8 +257,13 @@ public class ApproovURLSession: NSObject {
         let userRequest = addUserHeadersToRequest(request: withStreamedRequest)
         // The return object
         let task = self.pinnedURLSession.uploadTask(withStreamedRequest: userRequest)
-        // Add observer
-        task.addObserver(taskObserver!, forKeyPath: "state", options: NSKeyValueObservingOptions.new, context: nil)
+        // Check if the url request contains a url string that should not be protected
+        if let url = userRequest.url {
+            if (!ApproovService.checkURLIsExcluded(url:url )) {
+                // Add observer
+                task.addObserver(taskObserver!, forKeyPath: "state", options: NSKeyValueObservingOptions.new, context: nil)
+            }
+        }
         return task
     }
     
@@ -226,26 +274,33 @@ public class ApproovURLSession: NSObject {
     @available(iOS 13.0, *)
     public func dataTaskPublisher(for request: URLRequest) -> URLSession.DataTaskPublisher {
         let userRequest = addUserHeadersToRequest(request: request)
+        // Check if the url request contains a url string that should not be protected
+        if let url = userRequest.url {
+            if (ApproovService.checkURLIsExcluded(url:url )) {
+                return self.pinnedURLSession.dataTaskPublisher(for: request)
+            }
+        }
         let approovUpdateResponse = ApproovService.updateRequestWithApproov(request: userRequest)
-                var sessionTaskPublisher:URLSession.DataTaskPublisher?
-                switch approovUpdateResponse.decision {
-                    case .ShouldProceed:
-                        // Go ahead and make the API call with the provided request object
-                        sessionTaskPublisher = self.pinnedURLSession.dataTaskPublisher(for: approovUpdateResponse.request)
-                    case .ShouldRetry:
-                         // We create a task and cancel it immediately
-                        sessionTaskPublisher = self.pinnedURLSession.dataTaskPublisher(for: approovUpdateResponse.request)
-                        // We should retry doing a fetch after a user driven event
-                        // Tell the delagate we are marking the session as invalid
-                        self.pinnedURLSessionDelegate?.urlSession?(self.pinnedURLSession, didBecomeInvalidWithError: approovUpdateResponse.error)
-                    default:
-                        // We create a task and cancel it immediately
-                        sessionTaskPublisher = self.pinnedURLSession.dataTaskPublisher(for: approovUpdateResponse.request)
-                        sessionTaskPublisher?.session.invalidateAndCancel()
-                        // Tell the delagate we are marking the session as invalid
-                        self.pinnedURLSessionDelegate?.urlSession?(self.pinnedURLSession, didBecomeInvalidWithError: approovUpdateResponse.error)
-                }// switch
-                return sessionTaskPublisher!
+        
+        switch approovUpdateResponse.decision {
+            case .ShouldProceed:
+                // Go ahead and make the API call with the provided request object
+                return self.pinnedURLSession.dataTaskPublisher(for: approovUpdateResponse.request)
+            case .ShouldRetry:
+                 // We create a task and cancel it immediately
+                let sessionTaskPublisher = self.pinnedURLSession.dataTaskPublisher(for: approovUpdateResponse.request)
+                // We should retry doing a fetch after a user driven event
+                // Tell the delagate we are marking the session as invalid
+                self.pinnedURLSessionDelegate?.urlSession?(self.pinnedURLSession, didBecomeInvalidWithError: approovUpdateResponse.error)
+                return sessionTaskPublisher
+            default:
+                // We create a task and cancel it immediately
+                let sessionTaskPublisher = self.pinnedURLSession.dataTaskPublisher(for: approovUpdateResponse.request)
+                sessionTaskPublisher.session.invalidateAndCancel()
+                // Tell the delagate we are marking the session as invalid
+                self.pinnedURLSessionDelegate?.urlSession?(self.pinnedURLSession, didBecomeInvalidWithError: approovUpdateResponse.error)
+                return sessionTaskPublisher
+        }// switch
     }
     
     
@@ -745,7 +800,7 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
         return nil
     }
     
-    /* 
+    /*
      * SHA256 of given input bytes
      */
     func sha256(data: Data) -> Data {
@@ -777,7 +832,7 @@ func stringFromApproovTokenFetchStatus(status: ApproovTokenFetchStatus) -> Strin
     return Approov.string(from: status)
 }
 
-/* 
+/*
  * Host component only gets resolved if the string includes the protocol used
  * This is not always the case when making requests so a convenience method is needed
  */
@@ -938,3 +993,4 @@ public class ApproovSessionTaskObserver : NSObject {
     }
     
 }
+
