@@ -19,9 +19,10 @@ import Approov
 import os.log
 
 public enum ApproovFetchDecision {
-    case ShouldProceed
-    case ShouldRetry
-    case ShouldFail
+    case ShouldProceed      // Proceed with request
+    case ShouldRetry        // User can retry request
+    case ShouldFail         // Request should not be made
+    case ShouldIgnore       // Do not process request
 }
 public struct ApproovUpdateResponse {
     var request:URLRequest
@@ -54,7 +55,9 @@ public class ApproovService {
     /* The dispatch queue to manage serial access to the substitution headers dictionary */
     private static let substitutionQueue = DispatchQueue(label: "ApproovService.substitution")
     /** Set of URL regexs that should be excluded from any Approov protection, mapped to the compiled Pattern */
-    private static var exclusionURLRegexs: Dictionary<String, NSRegularExpression> = Dictionary<String, NSRegularExpression>();
+    private static var exclusionURLRegexs: Dictionary<String, NSRegularExpression> = Dictionary();
+    /* set of query parameters that may be substituted, specified by the key name */
+    private static var substitutionQueryParams: Set<String> = Set()
     
     /* Initializer: config is obtained using `approov sdk -getConfigString`
      * Note the initializer function should only ever be called once. Subsequent calls will be ignored
@@ -168,8 +171,13 @@ public class ApproovService {
      * @return ApproovUpdateResponse providing an updated requets, plus an errors and status
      */
     public static func updateRequestWithApproov(request: URLRequest) -> ApproovUpdateResponse {
-        // Check if the URL matches one of the exclusion regexs and just proceed
-        
+        // Check if the URL matches one of the exclusion regexs and just return if it does
+        if let url = request.url {
+            if ApproovService.checkURLIsExcluded(url:url, dict: ApproovService.exclusionURLRegexs) {
+                return ApproovUpdateResponse(request: request, decision: .ShouldIgnore, sdkMessage: "", error: nil)
+            }
+            
+        }
         var returnData = ApproovUpdateResponse(request: request, decision: .ShouldFail, sdkMessage: "", error: nil)
         // Check if Bind Header is set to a non empty String
         if ApproovService.bindHeader != "" {
@@ -199,11 +207,17 @@ public class ApproovService {
             case ApproovTokenFetchStatus.noNetwork,
                  ApproovTokenFetchStatus.poorNetwork,
                  ApproovTokenFetchStatus.mitmDetected:
-                 // Must not proceed with network request and inform user a retry is needed
-                returnData.decision = .ShouldRetry
-                let error = ApproovError.networkingError(message: returnData.sdkMessage)
-                returnData.error = error
-                return returnData
+                /* We are unable to get the secure string due to network conditions so the request can
+                *  be retried by the user later
+                *  We are unable to get the secure string due to network conditions, so - unless this is
+                *  overridden - we must not proceed. The request can be retried by the user later.
+                */
+                if !proceedOnNetworkFail {
+                    returnData.decision = .ShouldRetry
+                    let error = ApproovError.networkingError(message: returnData.sdkMessage)
+                    returnData.error = error
+                    return returnData
+                }
             case ApproovTokenFetchStatus.unprotectedURL,
                  ApproovTokenFetchStatus.unknownURL,
                  ApproovTokenFetchStatus.noApproovService:
@@ -258,11 +272,16 @@ public class ApproovService {
                             } else if approovResults.status == ApproovTokenFetchStatus.noNetwork ||
                                         approovResults.status == ApproovTokenFetchStatus.poorNetwork ||
                                         approovResults.status == ApproovTokenFetchStatus.mitmDetected {
-                                // we are unable to get the secure string due to network conditions so the request can
-                                // be retried by the user later
-                                let error = ApproovError.networkingError(message: "Header substitution: network issue, retry needed")
-                                returnData.error = error
-                                return returnData
+                                /* We are unable to get the secure string due to network conditions so the request can
+                                *  be retried by the user later
+                                *  We are unable to get the secure string due to network conditions, so - unless this is
+                                *  overridden - we must not proceed. The request can be retried by the user later.
+                                */
+                                if !proceedOnNetworkFail {
+                                    let error = ApproovError.networkingError(message: "Header substitution: network issue, retry needed")
+                                    returnData.error = error
+                                    return returnData
+                                }
                             } else if approovResults.status != ApproovTokenFetchStatus.unknownKey {
                                 // we have failed to get a secure string with a more serious permanent error
                                 let error = ApproovError.permanentError(message: "Header substitution: " + Approov.string(from: approovResults.status))
@@ -277,6 +296,79 @@ public class ApproovService {
             returnData.request = replacementRequest
         }// if let
         
+        /* we now deal with any query parameter substitutions, which may require further fetches but these
+         * should be using cached results
+         */
+        if let currentURL = request.url {
+            for entry in substitutionQueryParams {
+                var urlString = currentURL.absoluteString
+                let urlStringRange = NSRange(urlString.startIndex..<urlString.endIndex, in: urlString)
+                let regex = try! NSRegularExpression(pattern: #"[\\?&]"# + entry + #"=([^&;]+)"#, options: [])
+                let matches: [NSTextCheckingResult] = regex.matches(in: urlString, options: [], range: urlStringRange)
+                for match: NSTextCheckingResult in matches {
+                    // We skip the range at index 0 as this is the match (e.g. ?Api-Key=api_key_placeholder) for the whole
+                    // regex, but we only want to replace the query parameter value part (e.g. api_key_placeholder)
+                    for rangeIndex in 1..<match.numberOfRanges {
+                        // We have found an occurrence of the query parameter to be replaced so we look up the existing
+                        // value as a key for a secure string
+                        let matchRange = match.range(at: rangeIndex)
+                        if let substringRange = Range(matchRange, in: urlString) {
+                                let queryValue = String(urlString[substringRange])
+                                let approovResults = Approov.fetchSecureStringAndWait(String(queryValue), nil)
+                                os_log("Approov: Substituting query parameter: %@, %@", entry,
+                                    Approov.string(from: approovResults.status));
+                                // Process the result of the secure string fetch operation
+                                switch approovResults.status {
+                                case .success:
+                                    // perform a query substitution
+                                    if let secureStringResult = approovResults.secureString {
+                                        urlString.replaceSubrange(Range(matchRange, in: urlString)!, with: secureStringResult)
+                                        if let newURL = URL(string: urlString) {
+                                            returnData.request.url = newURL
+                                            return returnData
+                                        } else {
+                                            returnData.error =  ApproovError.permanentError(
+                                                message: "Query parameter substitution for \(entry): malformed URL \(urlString)")
+                                            return returnData
+                                        }
+                                    }
+                                case .rejected:
+                                    // If the request is rejected then we provide a special exception with additional information
+                                    returnData.error = ApproovError.rejectionError(
+                                        message: "Query parameter substitution for \(entry): rejected",
+                                        ARC: approovResults.arc,
+                                        rejectionReasons: approovResults.rejectionReasons
+                                    )
+                                    return returnData
+                                case .noNetwork,
+                                     .poorNetwork,
+                                     .mitmDetected:
+                                    /* We are unable to get the secure string due to network conditions so the request can
+                                    *  be retried by the user later
+                                    *  We are unable to get the secure string due to network conditions, so - unless this is
+                                    *  overridden - we must not proceed. The request can be retried by the user later.
+                                    */
+                                    if !proceedOnNetworkFail {
+                                        returnData.error =  ApproovError.networkingError(message: "Query parameter substitution for " +
+                                            "\(entry): network issue, retry needed")
+                                        return returnData
+                                    }
+                                case .unknownKey:
+                                    // Do not modify the URL
+                                    break
+                                default:
+                                    // We have failed to get a secure string with a more serious permanent error
+                                    returnData.error =  ApproovError.permanentError(
+                                        message: "Query parameter substitution for \(entry): " +
+                                        Approov.string(from: approovResults.status)
+                                    )
+                                    return returnData
+                                }
+                            }
+                    }// for rangeIndex
+                }// for match
+            }
+        }
         return returnData
     }
     
@@ -312,6 +404,43 @@ public class ApproovService {
                     ApproovService.substitutionHeaders.removeValue(forKey: header)
                 }
             }
+        }
+    }
+    
+    /**
+     * Adds a key name for a query parameter that should be subject to secure strings substitution.
+     * This means that if the query parameter is present in a URL then the value will be used as a
+     * key to look up a secure string value which will be substituted as the query parameter value
+     * instead. This allows easy migration to the use of secure strings. Note that this function
+     * should be called on initialization rather than for every request as it will require a new
+     * OkHttpClient to be built.
+     *
+     * @param key is the query parameter key name to be added for substitution
+     */
+    public static func addSubstitutionQueryParam(key: String) {
+
+        do {
+            objc_sync_enter(ApproovService.substitutionQueryParams)
+            defer { objc_sync_exit(ApproovService.substitutionQueryParams) }
+            let regex = try NSRegularExpression(pattern: "[\\?&]" + key + "=([^&;]+)", options: [])
+            ApproovService.exclusionURLRegexs[key] = regex
+            os_log("Approov: addExclusionURLRegex: %@", type: .debug, key)
+        } catch {
+            // TODO wouldn't we rather throw?
+            os_log("Approov: addExclusionURLRegex: %@ error: %@", type: .debug, key, error.localizedDescription)
+        }
+    }
+    
+    /**
+     * Removes a query parameter key name previously added using addSubstitutionQueryParam.
+     *
+     * @param key is the query parameter key name to be removed for substitution
+     */
+    public static func removeSubstitutionQueryParam(key: String) {
+        do {
+            objc_sync_enter(ApproovService.substitutionQueryParams)
+            defer { objc_sync_exit(ApproovService.substitutionQueryParams) }
+            substitutionQueryParams.remove(key)
         }
     }
     
@@ -438,16 +567,15 @@ public class ApproovService {
      * Checks if the url matches one of the exclusion regexs
      *
      * @param headers is the collection of headers to be updated
-     * @return headers passed in, or modified by adding an Approov token header and new header values if required
-     * @throws ApproovError if it is not possible to obtain secure strings for substitution
+     * @return  Bool true if url matches preset pattern in Dictionary
      */
 
-    public static func checkURLIsExcluded(url: URL) -> Bool {
+    public static func checkURLIsExcluded(url: URL, dict: Dictionary<String, NSRegularExpression>) -> Bool {
         do {
             objc_sync_enter(ApproovService.exclusionURLRegexs)
             defer { objc_sync_exit(ApproovService.exclusionURLRegexs) }
-            // Check if the URL matches one of the exclusion regexs and just return original headers if so
-            for (_, regex) in ApproovService.exclusionURLRegexs {
+            // Check if the URL matches one of the exclusion regexs
+            for (_, regex) in dict {
                 let urlString = url.absoluteString
                 let urlStringRange = NSRange(urlString.startIndex..<urlString.endIndex, in: urlString)
                 let matches: [NSTextCheckingResult] = regex.matches(in: urlString, options: [], range: urlStringRange)
