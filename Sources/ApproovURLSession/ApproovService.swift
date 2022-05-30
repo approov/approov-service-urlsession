@@ -230,6 +230,13 @@ public class ApproovService {
                 return returnData
         }// switch
         
+        // We only continue additional processing if we had a valid status from Approov, to prevent additional delays
+        // by trying to fetch from Approov again and this also protects against header substitutions in domains not
+        // protected by Approov and therefore are potentially subject to a MitM.
+        if (approovResult.status != .success) && (approovResult.status != .unprotectedURL) {
+            return returnData;
+        }
+        
         // we now deal with any header substitutions, which may require further fetches but these
         // should be using cached results
         let isIllegalSubstitution = (approovResult.status == ApproovTokenFetchStatus.unknownURL)
@@ -237,7 +244,9 @@ public class ApproovService {
         if let requestHeaders = returnData.request.allHTTPHeaderFields {
             // Make a copy of the original request so we can modify it
             var replacementRequest = returnData.request
-            for (key, _) in substitutionHeaders {
+            // Make a copy of original dictionary
+            let headerDictionaryCopy = substitutionHeaders
+            for (key, _) in headerDictionaryCopy {
                 let header = key
                 if let prefix = substitutionHeaders[key] {
                     if let value = requestHeaders[header]{
@@ -300,7 +309,9 @@ public class ApproovService {
          * should be using cached results
          */
         if let currentURL = request.url {
-            for entry in substitutionQueryParams {
+            // Make a copy of original substitutionQuery set
+            let substitutionQueryCopy = substitutionQueryParams
+            for entry in substitutionQueryCopy {
                 var urlString = currentURL.absoluteString
                 let urlStringRange = NSRange(urlString.startIndex..<urlString.endIndex, in: urlString)
                 let regex = try! NSRegularExpression(pattern: #"[\\?&]"# + entry + #"=([^&;]+)"#, options: [])
@@ -418,16 +429,11 @@ public class ApproovService {
      * @param key is the query parameter key name to be added for substitution
      */
     public static func addSubstitutionQueryParam(key: String) {
-
         do {
             objc_sync_enter(ApproovService.substitutionQueryParams)
             defer { objc_sync_exit(ApproovService.substitutionQueryParams) }
-            let regex = try NSRegularExpression(pattern: "[\\?&]" + key + "=([^&;]+)", options: [])
-            ApproovService.exclusionURLRegexs[key] = regex
-            os_log("Approov: addExclusionURLRegex: %@", type: .debug, key)
-        } catch {
-            // TODO wouldn't we rather throw?
-            os_log("Approov: addExclusionURLRegex: %@ error: %@", type: .debug, key, error.localizedDescription)
+            ApproovService.substitutionQueryParams.insert(key)
+            os_log("Approov: addSubstitutionQueryParam: %@", type: .debug, key)
         }
     }
     
@@ -440,6 +446,7 @@ public class ApproovService {
         do {
             objc_sync_enter(ApproovService.substitutionQueryParams)
             defer { objc_sync_exit(ApproovService.substitutionQueryParams) }
+            os_log("Approov: removeSubstitutionQueryParam: %@", type: .debug, key)
             substitutionQueryParams.remove(key)
         }
     }
@@ -638,7 +645,9 @@ public class ApproovService {
      * @return String of the device ID or nil in case of an error
      */
     public static func getDeviceID() -> String? {
-        return Approov.getDeviceID()
+        let deviceId = Approov.getDeviceID()
+        os_log("Approov: getDeviceID", type: .debug)
+        return deviceId
     }
     
     /**
@@ -651,24 +660,8 @@ public class ApproovService {
      * @param data is the data to be hashed and set in the token
      */
     public static func setDataHashInToken(data: String) {
+        os_log("Approov: setDataHashInToken", type: .debug)
         Approov.setDataHashInToken(data)
-    }
-    
-    /**
-     * Performs an Approov token fetch for the given URL. This should be used in situations where it
-     * is not possible to use the networking interception to add the token. This will
-     * likely require network access so may take some time to complete. If the attestation fails
-     * for any reason then an ApproovException is thrown. This will be ApproovNetworkException for
-     * networking issues wher a user initiated retry of the operation should be allowed. Note that
-     * the returned token should NEVER be cached by your app, you should call this function when
-     * it is needed.
-     *
-     * @param url is the URL giving the domain for the token fetch
-     * @return String of the fetched token
-     */
-    public static func fetchToken(url: String) -> String {
-        let result = Approov.fetchTokenAndWait(url)
-        return result.token
     }
     
     /**
@@ -684,7 +677,43 @@ public class ApproovService {
      * @return String of the base64 encoded message signature
      */
     public static func getMessageSignature(message: String) -> String? {
-        return Approov.getMessageSignature(message)
+        let signature = Approov.getMessageSignature(message)
+        os_log("Approov: getMessageSignature", type: .debug)
+        return signature
+    }
+    
+    /**
+     * Performs an Approov token fetch for the given URL. This should be used in situations where it
+     * is not possible to use the networking interception to add the token. This will
+     * likely require network access so may take some time to complete. If the attestation fails
+     * for any reason then an ApproovError is thrown. This will be ApproovNetworkException for
+     * networking issues wher a user initiated retry of the operation should be allowed. Note that
+     * the returned token should NEVER be cached by your app, you should call this function when
+     * it is needed.
+     *
+     * @param url is the URL giving the domain for the token fetch
+     * @return String of the fetched token
+     * @throws ApproovError if there was a problem
+     */
+    public static func fetchToken(url: String) throws -> String {
+        // Fetch the Approov token
+        let result: ApproovTokenFetchResult = Approov.fetchTokenAndWait(url)
+        os_log("ApproovService: fetchToken: %@", type: .debug, Approov.string(from: result.status))
+
+        // Process the status
+        switch result.status {
+        case .success:
+            // Provide the Approov token result
+            return result.token
+        case .noNetwork,
+             .poorNetwork,
+             .mitmDetected:
+            // We are unable to get an Approov token due to network conditions
+            throw ApproovError.networkingError(message: "fetchToken: " + Approov.string(from: result.status))
+        default:
+            // We have failed to get an Approov token due to a more permanent error
+            throw ApproovError.permanentError(message: "fetchToken: " + Approov.string(from: result.status))
+        }
     }
 } // ApproovService class
 

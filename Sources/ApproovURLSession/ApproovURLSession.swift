@@ -240,6 +240,9 @@ public class ApproovURLSession: NSObject {
                 // Tell the delagate we are marking the session as invalid
                 self.pinnedURLSessionDelegate?.urlSession?(self.pinnedURLSession, didBecomeInvalidWithError: approovUpdateResponse.error)
                 return sessionTaskPublisher
+            case .ShouldIgnore:
+                // We should ignore the ApproovService request response: use the session modified headers
+                return self.pinnedURLSession.dataTaskPublisher(for: userRequest)
             default:
                 // We create a task and cancel it immediately
                 let sessionTaskPublisher = self.pinnedURLSession.dataTaskPublisher(for: approovUpdateResponse.request)
