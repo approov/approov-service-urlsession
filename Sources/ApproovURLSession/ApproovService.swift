@@ -71,7 +71,7 @@ public class ApproovService {
             if (approovServiceInitialised) {
                 if (config != configString) {
                     // Throw exception indicating we are attempting to use different config
-                    os_log("Approov: Attempting to initialize with different configuration", type: .error)
+                    os_log("ApproovService: Attempting to initialize with different configuration", type: .error)
                     throw ApproovError.configurationError(message: "Attempting to initialize with a different configuration")
                 }
                 return
@@ -87,7 +87,7 @@ public class ApproovService {
                 Approov.setUserProperty("approov-service-urlsession")
             } catch let error {
                 // Log error and throw exception
-                os_log("Approov: Error initializing Approov SDK: %@", type: .error, error.localizedDescription)
+                os_log("ApproovService: Error initializing Approov SDK: %@", type: .error, error.localizedDescription)
                 throw ApproovError.initializationFailure(message: "Error initializing Approov SDK: \(error.localizedDescription)")
             }
         }
@@ -107,7 +107,7 @@ public class ApproovService {
         do {
             objc_sync_enter(ApproovService.proceedOnNetworkFail)
             defer { objc_sync_exit(ApproovService.proceedOnNetworkFail) }
-            os_log("Approov: setProceedOnNetworkFailure ", type: .info, proceed)
+            os_log("ApproovService: setProceedOnNetworkFailure ", type: .info, proceed)
             proceedOnNetworkFail = proceed
         }
     }
@@ -195,7 +195,7 @@ public class ApproovService {
         let approovResult = Approov.fetchTokenAndWait(request.url!.absoluteString)
         // Log result of token fetch
         let aHostname = hostnameFromURL(url: request.url!)
-        os_log("Approov: updateRequest %@: %@", type: .info, aHostname, approovResult.loggableToken())
+        os_log("ApproovService: updateRequest %@: %@", type: .info, aHostname, approovResult.loggableToken())
         // Update the message
         returnData.sdkMessage = Approov.string(from: approovResult.status)
         switch approovResult.status {
@@ -237,16 +237,18 @@ public class ApproovService {
             return returnData;
         }
         
-        // we now deal with any header substitutions, which may require further fetches but these
-        // should be using cached results
-        let isIllegalSubstitution = (approovResult.status == ApproovTokenFetchStatus.unknownURL)
         // Check for the presence of headers
         if let requestHeaders = returnData.request.allHTTPHeaderFields {
             // Make a copy of the original request so we can modify it
             var replacementRequest = returnData.request
-            // Make a copy of original dictionary
-            let headerDictionaryCopy = substitutionHeaders
-            for (key, _) in headerDictionaryCopy {
+            var headerDictionaryCopy:Dictionary<String,String>?
+            do {
+                objc_sync_enter(ApproovService.substitutionHeaders)
+                defer { objc_sync_exit(ApproovService.substitutionHeaders) }
+                // Make a copy of original dictionary
+                headerDictionaryCopy = substitutionHeaders
+            }
+            for (key, _) in headerDictionaryCopy! {
                 let header = key
                 if let prefix = substitutionHeaders[key] {
                     if let value = requestHeaders[header]{
@@ -254,16 +256,9 @@ public class ApproovService {
                         if ((value.hasPrefix(prefix)) && (value.count > prefix.count)){
                             let index = prefix.index(prefix.startIndex, offsetBy: prefix.count)
                             let approovResults = Approov.fetchSecureStringAndWait(String(value.suffix(from:index)), nil)
-                            os_log("Approov: Substituting header: %@, %@", type: .info, header, Approov.string(from: approovResults.status))
+                            os_log("ApproovService: Substituting header: %@, %@", type: .info, header, Approov.string(from: approovResults.status))
                             // Process the result of the token fetch operation
                             if approovResults.status == ApproovTokenFetchStatus.success {
-                                if isIllegalSubstitution {
-                                    // don't allow substitutions on unadded API domains to prevent them accidentally being
-                                    // subject to a Man-in-the-Middle (MitM) attack
-                                    let error = ApproovError.configurationError(message: "Header substitution: API domain unknown")
-                                    returnData.error = error
-                                    return returnData
-                                }
                                 // We add the modified header to the new copy of request
                                 if let secureStringResult = approovResults.secureString {
                                     replacementRequest.setValue(prefix + secureStringResult, forHTTPHeaderField: key)
@@ -310,8 +305,14 @@ public class ApproovService {
          */
         if let currentURL = request.url {
             // Make a copy of original substitutionQuery set
-            let substitutionQueryCopy = substitutionQueryParams
-            for entry in substitutionQueryCopy {
+            var substitutionQueryCopy:Set<String>?
+            do {
+                objc_sync_enter(ApproovService.substitutionQueryParams)
+                defer { objc_sync_exit(ApproovService.substitutionQueryParams) }
+                // Make a copy of original dictionary
+                substitutionQueryCopy = substitutionQueryParams
+            }
+            for entry in substitutionQueryCopy! {
                 var urlString = currentURL.absoluteString
                 let urlStringRange = NSRange(urlString.startIndex..<urlString.endIndex, in: urlString)
                 let regex = try! NSRegularExpression(pattern: #"[\\?&]"# + entry + #"=([^&;]+)"#, options: [])
@@ -326,7 +327,7 @@ public class ApproovService {
                         if let substringRange = Range(matchRange, in: urlString) {
                                 let queryValue = String(urlString[substringRange])
                                 let approovResults = Approov.fetchSecureStringAndWait(String(queryValue), nil)
-                                os_log("Approov: Substituting query parameter: %@, %@", entry,
+                                os_log("ApproovService: Substituting query parameter: %@, %@", entry,
                                     Approov.string(from: approovResults.status));
                                 // Process the result of the secure string fetch operation
                                 switch approovResults.status {
@@ -433,7 +434,7 @@ public class ApproovService {
             objc_sync_enter(ApproovService.substitutionQueryParams)
             defer { objc_sync_exit(ApproovService.substitutionQueryParams) }
             ApproovService.substitutionQueryParams.insert(key)
-            os_log("Approov: addSubstitutionQueryParam: %@", type: .debug, key)
+            os_log("ApproovService: addSubstitutionQueryParam: %@", type: .debug, key)
         }
     }
     
@@ -446,7 +447,7 @@ public class ApproovService {
         do {
             objc_sync_enter(ApproovService.substitutionQueryParams)
             defer { objc_sync_exit(ApproovService.substitutionQueryParams) }
-            os_log("Approov: removeSubstitutionQueryParam: %@", type: .debug, key)
+            os_log("ApproovService: removeSubstitutionQueryParam: %@", type: .debug, key)
             substitutionQueryParams.remove(key)
         }
     }
@@ -478,7 +479,7 @@ public class ApproovService {
         }
         // invoke fetch secure string
         let approovResult = Approov.fetchSecureStringAndWait(key, newDef)
-        os_log("Approov: fetchSecureString: %@: %@", type: .info, type, Approov.string(from: approovResult.status))
+        os_log("ApproovService: fetchSecureString: %@: %@", type: .info, type, Approov.string(from: approovResult.status))
         // process the returned Approov status
         if approovResult.status == ApproovTokenFetchStatus.disabled {
             throw ApproovError.configurationError(message: "fetchSecureString: secure string feature disabled")
@@ -519,7 +520,7 @@ public class ApproovService {
         // fetch the custom JWT
         let approovResult = Approov.fetchCustomJWTAndWait(payload)
         // log result of token fetch operation but do not log the value
-        os_log("Approov: fetchCustomJWT: %@", type: .info, Approov.string(from: approovResult.status))
+        os_log("ApproovService: fetchCustomJWT: %@", type: .info, Approov.string(from: approovResult.status))
         // process the returned Approov status
         if approovResult.status == ApproovTokenFetchStatus.badPayload {
             throw ApproovError.permanentError(message: "fetchCustomJWT: malformed JSON")
@@ -614,10 +615,10 @@ public class ApproovService {
             defer { objc_sync_exit(ApproovService.exclusionURLRegexs) }
             let regex = try NSRegularExpression(pattern: urlRegex, options: [])
             ApproovService.exclusionURLRegexs[urlRegex] = regex
-            os_log("Approov: addExclusionURLRegex: %@", type: .debug, urlRegex)
+            os_log("ApproovService: addExclusionURLRegex: %@", type: .debug, urlRegex)
         } catch {
             // TODO wouldn't we rather throw?
-            os_log("Approov: addExclusionURLRegex: %@ error: %@", type: .debug, urlRegex, error.localizedDescription)
+            os_log("ApproovService: addExclusionURLRegex: %@ error: %@", type: .debug, urlRegex, error.localizedDescription)
         }
     }
 
@@ -631,7 +632,7 @@ public class ApproovService {
             objc_sync_enter(ApproovService.exclusionURLRegexs)
             defer { objc_sync_exit(ApproovService.exclusionURLRegexs) }
             if ApproovService.exclusionURLRegexs[urlRegex] != nil {
-                os_log("Approov: removeExclusionURLRegex: %@", type: .debug, urlRegex)
+                os_log("ApproovService: removeExclusionURLRegex: %@", type: .debug, urlRegex)
                 ApproovService.exclusionURLRegexs.removeValue(forKey: urlRegex)
             }
         }
@@ -646,7 +647,7 @@ public class ApproovService {
      */
     public static func getDeviceID() -> String? {
         let deviceId = Approov.getDeviceID()
-        os_log("Approov: getDeviceID", type: .debug)
+        os_log("ApproovService: getDeviceID %@", type: .debug, deviceId)
         return deviceId
     }
     
@@ -660,7 +661,7 @@ public class ApproovService {
      * @param data is the data to be hashed and set in the token
      */
     public static func setDataHashInToken(data: String) {
-        os_log("Approov: setDataHashInToken", type: .debug)
+        os_log("ApproovService: setDataHashInToken", type: .debug)
         Approov.setDataHashInToken(data)
     }
     
@@ -678,7 +679,7 @@ public class ApproovService {
      */
     public static func getMessageSignature(message: String) -> String? {
         let signature = Approov.getMessageSignature(message)
-        os_log("Approov: getMessageSignature", type: .debug)
+        os_log("ApproovService: getMessageSignature", type: .debug)
         return signature
     }
     
