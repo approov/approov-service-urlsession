@@ -19,40 +19,34 @@ import Foundation
 import Approov
 import CommonCrypto
 import os.log
-
-fileprivate enum ApproovFetchDecision {
-    case ShouldProceed
-    case ShouldRetry
-    case ShouldFail
-}
-fileprivate struct ApproovUpdateResponse {
-    var request:URLRequest
-    var decision:ApproovFetchDecision
-    var sdkMessage:String
-    var error:Error?
-}
+import Combine
 
 public class ApproovURLSession: NSObject {
     
     // URLSession
-    var urlSession:URLSession
+    var pinnedURLSession:URLSession
     // URLSessionConfiguration
     var urlSessionConfiguration:URLSessionConfiguration
-    // URLSessionDelegate
-    var urlSessionDelegate:URLSessionDelegate?
+    // Pinned URLSessionDelegate; this could be/is of type PinningURLSessionDelegate but this way avoids explicit cast
+    var pinnedURLSessionDelegate:URLSessionDelegate?
     // The delegate queue
     var delegateQueue:OperationQueue?
-    
+    // The observer object
+    var taskObserver:ApproovSessionTaskObserver?
+    /* Use log subsystem for info/error */
+    let log = OSLog(subsystem: "approov-service-urlsession", category: "network")
+
     /*
      *  URLSession initializer
      *  https://developer.apple.com/documentation/foundation/urlsession/1411597-init
      */
     public init(configuration: URLSessionConfiguration, delegate: URLSessionDelegate?, delegateQueue: OperationQueue?) {
         self.urlSessionConfiguration = configuration
-        self.urlSessionDelegate = ApproovURLSessionDataDelegate(with: delegate)
+        self.pinnedURLSessionDelegate = PinningURLSessionDelegate(with: delegate)
         self.delegateQueue = delegateQueue
         // Set as URLSession delegate our implementation
-        self.urlSession = URLSession(configuration: configuration, delegate: urlSessionDelegate, delegateQueue: delegateQueue)
+        self.pinnedURLSession = URLSession(configuration: configuration, delegate: pinnedURLSessionDelegate, delegateQueue: delegateQueue)
+        taskObserver = ApproovSessionTaskObserver(session: pinnedURLSession, delegate: pinnedURLSessionDelegate!)
         super.init()
     }
     
@@ -77,27 +71,11 @@ public class ApproovURLSession: NSObject {
      */
     public func dataTask(with request: URLRequest) -> URLSessionDataTask {
         let userRequest = addUserHeadersToRequest(request: request)
-        let approovUpdateResponse = ApproovService.updateRequestWithApproov(request: userRequest)
-        var sessionDataTask:URLSessionDataTask?
-        switch approovUpdateResponse.decision {
-            case .ShouldProceed:
-                // Go ahead and make the API call with the provided request object
-                sessionDataTask = self.urlSession.dataTask(with: approovUpdateResponse.request)
-            case .ShouldRetry:
-                 // We create a task and cancel it immediately
-                 sessionDataTask = self.urlSession.dataTask(with: approovUpdateResponse.request)
-                 sessionDataTask!.cancel()
-                // We should retry doing a fetch after a user driven event
-                // Tell the delagate we are marking the session as invalid
-                 self.urlSessionDelegate?.urlSession?(self.urlSession, didBecomeInvalidWithError: approovUpdateResponse.error)
-            default:
-                // We create a task and cancel it immediately
-                 sessionDataTask = self.urlSession.dataTask(with: approovUpdateResponse.request)
-                 sessionDataTask!.cancel()
-                // Tell the delagate we are marking the session as invalid
-                 self.urlSessionDelegate?.urlSession?(self.urlSession, didBecomeInvalidWithError: approovUpdateResponse.error)
-        }// switch
-        return sessionDataTask!
+        // Create the return object
+        let task = self.pinnedURLSession.dataTask(with: userRequest)
+        // Add observer
+        task.addObserver(taskObserver!, forKeyPath: "state", options: NSKeyValueObservingOptions.new, context: nil)
+        return task
     }
     
     /*  Creates a task that retrieves the contents of the specified URL, then calls a handler upon completion
@@ -112,34 +90,11 @@ public class ApproovURLSession: NSObject {
      */
     public func dataTask(with request: URLRequest, completionHandler: @escaping (Data?, URLResponse?, Error?) -> Void) -> URLSessionDataTask {
         let userRequest = addUserHeadersToRequest(request: request)
-        let approovUpdateResponse = ApproovService.updateRequestWithApproov(request: userRequest)
-        // The returned task
-        var task:URLSessionDataTask?
-        switch approovUpdateResponse.decision {
-            case .ShouldProceed:
-                // Go ahead and make the API call with the provided request object
-                task = self.urlSession.dataTask(with: approovUpdateResponse.request) { (data, response, error) -> Void in
-                    // Invoke completition handler
-                    completionHandler(data,response,error)
-                }
-            case .ShouldRetry:
-                // We should retry doing a fetch after a user driven event
-                completionHandler(nil,nil,approovUpdateResponse.error)
-                // Initialize a URLSessionDataTask object
-                task = self.urlSession.dataTask(with: approovUpdateResponse.request) { (data, response, error) -> Void in
-                }
-                // We cancel the connection and return the task object at end of function
-                task?.cancel()
-            default:
-                completionHandler(nil,nil,approovUpdateResponse.error)
-                // Initialize a URLSessionDataTask object
-                task = self.urlSession.dataTask(with: approovUpdateResponse.request) { (data, response, error) -> Void in
-                }
-                // We cancel the connection and return the task object at end of function
-                task?.cancel()
-        }// switch
-    return task!
-    }// func
+        let task = self.pinnedURLSession.dataTask(with: userRequest, completionHandler: completionHandler)
+        task.addObserver(taskObserver!, forKeyPath: "state", options: NSKeyValueObservingOptions.new, context: nil)
+        taskObserver?.addCompletionHandlerTaskToDictionary(taskId: task.taskIdentifier, handler: completionHandler)
+        return task
+    }
     
     // MARK: URLSession downloadTask
     /*  Creates a download task that retrieves the contents of the specified URL and saves the results to a file
@@ -155,27 +110,11 @@ public class ApproovURLSession: NSObject {
      */
     public func downloadTask(with request: URLRequest) -> URLSessionDownloadTask {
         let userRequest = addUserHeadersToRequest(request: request)
-        let approovUpdateResponse = ApproovService.updateRequestWithApproov(request: userRequest)
-        var sessionDownloadTask:URLSessionDownloadTask?
-        switch approovUpdateResponse.decision {
-            case .ShouldProceed:
-                // Go ahead and make the API call with the provided request object
-                sessionDownloadTask = self.urlSession.downloadTask(with: approovUpdateResponse.request)
-            case .ShouldRetry:
-                 // We create a task and cancel it immediately
-                 sessionDownloadTask = self.urlSession.downloadTask(with: approovUpdateResponse.request)
-                 sessionDownloadTask!.cancel()
-                // We should retry doing a fetch after a user driven event
-                // Tell the delagate we are marking the session as invalid
-                self.urlSessionDelegate?.urlSession?(self.urlSession, didBecomeInvalidWithError: approovUpdateResponse.error)
-            default:
-                // We create a task and cancel it immediately
-                 sessionDownloadTask = self.urlSession.downloadTask(with: approovUpdateResponse.request)
-                 sessionDownloadTask!.cancel()
-                // Tell the delagate we are marking the session as invalid
-                self.urlSessionDelegate?.urlSession?(self.urlSession, didBecomeInvalidWithError: approovUpdateResponse.error)
-        }// switch
-        return sessionDownloadTask!
+        // The return object
+        let task = self.pinnedURLSession.downloadTask(with: userRequest)
+        // Add observer
+        task.addObserver(taskObserver!, forKeyPath: "state", options: NSKeyValueObservingOptions.new, context: nil)
+        return task
     }
     
     /*  Creates a download task that retrieves the contents of the specified URL, saves the results to a file,
@@ -192,34 +131,12 @@ public class ApproovURLSession: NSObject {
      */
     public func downloadTask(with request: URLRequest, completionHandler: @escaping (URL?, URLResponse?, Error?) -> Void) -> URLSessionDownloadTask {
         let userRequest = addUserHeadersToRequest(request: request)
-        let approovUpdateResponse = ApproovService.updateRequestWithApproov(request: userRequest)
-        // The returned task
-        var task:URLSessionDownloadTask?
-        switch approovUpdateResponse.decision {
-            case .ShouldProceed:
-                // Go ahead and make the API call with the provided request object
-                task = self.urlSession.downloadTask(with: approovUpdateResponse.request) { (data, response, error) -> Void in
-                    // Invoke completition handler
-                    completionHandler(data,response,error)
-                }
-            case .ShouldRetry:
-                // We should retry doing a fetch after a user driven event
-                // Create the early response and invoke callback with custom error
-                completionHandler(nil,nil,approovUpdateResponse.error)
-                // Initialize a URLSessionDataTask object
-                task = self.urlSession.downloadTask(with: approovUpdateResponse.request) { (data, response, error) -> Void in
-                }
-                // We cancel the connection and return the task object at end of function
-                task?.cancel()
-            default:
-                completionHandler(nil,nil,approovUpdateResponse.error)
-                // Initialize a URLSessionDataTask object
-                task = self.urlSession.downloadTask(with: approovUpdateResponse.request) { (data, response, error) -> Void in
-                }
-                // We cancel the connection and return the task object at end of function
-                task?.cancel()
-        }// switch
-    return task!
+        // The return object
+        let task = self.pinnedURLSession.downloadTask(with: userRequest, completionHandler: completionHandler)
+        // Add observer
+        task.addObserver(taskObserver!, forKeyPath: "state", options: NSKeyValueObservingOptions.new, context: nil)
+        taskObserver?.addCompletionHandlerTaskToDictionary(taskId: task.taskIdentifier, handler: completionHandler)
+        return task
     }
     
     /*  Creates a download task to resume a previously canceled or failed download
@@ -227,7 +144,7 @@ public class ApproovURLSession: NSObject {
      *  NOTE: this call is not protected by Approov
      */
     public func downloadTask(withResumeData: Data) -> URLSessionDownloadTask {
-        return self.urlSession.downloadTask(withResumeData: withResumeData)
+        return self.pinnedURLSession.downloadTask(withResumeData: withResumeData)
     }
     
     /*  Creates a download task to resume a previously canceled or failed download and calls a handler upon completion
@@ -235,7 +152,7 @@ public class ApproovURLSession: NSObject {
      *  NOTE: this call is not protected by Approov
      */
     public func downloadTask(withResumeData: Data, completionHandler: @escaping (URL?, URLResponse?, Error?) -> Void) -> URLSessionDownloadTask {
-        return self.urlSession.downloadTask(withResumeData: withResumeData, completionHandler: completionHandler)
+        return self.pinnedURLSession.downloadTask(withResumeData: withResumeData, completionHandler: completionHandler)
     }
     
     // MARK: Upload Tasks
@@ -244,27 +161,11 @@ public class ApproovURLSession: NSObject {
      */
     public func uploadTask(with request: URLRequest, from: Data) -> URLSessionUploadTask {
         let userRequest = addUserHeadersToRequest(request: request)
-        let approovUpdateResponse = ApproovService.updateRequestWithApproov(request: userRequest)
-        var sessionUploadTask:URLSessionUploadTask?
-        switch approovUpdateResponse.decision {
-            case .ShouldProceed:
-                // Go ahead and make the API call with the provided request object
-                sessionUploadTask = self.urlSession.uploadTask(with: approovUpdateResponse.request, from: from)
-            case .ShouldRetry:
-                 // We create a task and cancel it immediately
-                 sessionUploadTask = self.urlSession.uploadTask(with: approovUpdateResponse.request, from: from)
-                 sessionUploadTask!.cancel()
-                // We should retry doing a fetch after a user driven event
-                // Tell the delagate we are marking the session as invalid
-                self.urlSessionDelegate?.urlSession?(self.urlSession, didBecomeInvalidWithError: approovUpdateResponse.error)
-            default:
-                // We create a task and cancel it immediately
-                 sessionUploadTask = self.urlSession.uploadTask(with: approovUpdateResponse.request, from: from)
-                 sessionUploadTask!.cancel()
-                // Tell the delagate we are marking the session as invalid
-                self.urlSessionDelegate?.urlSession?(self.urlSession, didBecomeInvalidWithError: approovUpdateResponse.error)
-        }// switch
-        return sessionUploadTask!
+        // The return object
+        let task = pinnedURLSession.uploadTask(with: userRequest, from: from)
+        // Add observer
+        task.addObserver(taskObserver!, forKeyPath: "state", options: NSKeyValueObservingOptions.new, context: nil)
+        return task
     }
     
     /*  Creates a task that performs an HTTP request for the specified URL request object, uploads the provided data,
@@ -273,34 +174,12 @@ public class ApproovURLSession: NSObject {
      */
     public func uploadTask(with request: URLRequest, from: Data?, completionHandler: @escaping (Data?, URLResponse?, Error?) -> Void) -> URLSessionUploadTask {
         let userRequest = addUserHeadersToRequest(request: request)
-        let approovUpdateResponse = ApproovService.updateRequestWithApproov(request: userRequest)
-        // The returned task
-        var task:URLSessionUploadTask?
-        switch approovUpdateResponse.decision {
-            case .ShouldProceed:
-                // Go ahead and make the API call with the provided request object
-                task = self.urlSession.uploadTask(with: approovUpdateResponse.request, from: from) { (data, response, error) -> Void in
-                    // Invoke completition handler
-                    completionHandler(data,response,error)
-                }
-            case .ShouldRetry:
-                // We should retry doing a fetch after a user driven event
-                // Create the early response and invoke callback with custom error
-                completionHandler(nil,nil,approovUpdateResponse.error)
-                // Initialize a URLSessionDataTask object
-                task = self.urlSession.uploadTask(with: approovUpdateResponse.request, from: from) { (data, response, error) -> Void in
-                }
-                // We cancel the connection and return the task object at end of function
-                task?.cancel()
-            default:
-                completionHandler(nil,nil,approovUpdateResponse.error)
-                // Initialize a URLSessionDataTask object
-                task = self.urlSession.uploadTask(with: approovUpdateResponse.request, from: from) { (data, response, error) -> Void in
-                }
-                // We cancel the connection and return the task object at end of function
-                task?.cancel()
-        }// switch
-        return task!
+        // The return object
+        let task = self.pinnedURLSession.uploadTask(with: userRequest, from: from, completionHandler:  completionHandler)
+        // Add observer
+        task.addObserver(taskObserver!, forKeyPath: "state", options: NSKeyValueObservingOptions.new, context: nil)
+        taskObserver?.addCompletionHandlerTaskToDictionary(taskId: task.taskIdentifier, handler: completionHandler)
+        return task
     }
     
     /*  Creates a task that performs an HTTP request for uploading the specified file
@@ -308,27 +187,11 @@ public class ApproovURLSession: NSObject {
      */
     public func uploadTask(with request: URLRequest, fromFile: URL) -> URLSessionUploadTask {
         let userRequest = addUserHeadersToRequest(request: request)
-        let approovUpdateResponse = ApproovService.updateRequestWithApproov(request: userRequest)
-        var sessionUploadTask:URLSessionUploadTask?
-        switch approovUpdateResponse.decision {
-            case .ShouldProceed:
-                // Go ahead and make the API call with the provided request object
-                sessionUploadTask = self.urlSession.uploadTask(with: approovUpdateResponse.request, fromFile: fromFile)
-            case .ShouldRetry:
-                 // We create a task and cancel it immediately
-                 sessionUploadTask = self.urlSession.uploadTask(with: approovUpdateResponse.request, fromFile: fromFile)
-                 sessionUploadTask!.cancel()
-                // We should retry doing a fetch after a user driven event
-                // Tell the delagate we are marking the session as invalid
-                self.urlSessionDelegate?.urlSession?(self.urlSession, didBecomeInvalidWithError: approovUpdateResponse.error)
-            default:
-                // We create a task and cancel it immediately
-                 sessionUploadTask = self.urlSession.uploadTask(with: approovUpdateResponse.request, fromFile: fromFile)
-                 sessionUploadTask!.cancel()
-                // Tell the delagate we are marking the session as invalid
-                self.urlSessionDelegate?.urlSession?(self.urlSession, didBecomeInvalidWithError: approovUpdateResponse.error)
-        }// switch
-        return sessionUploadTask!
+        // The return object
+        let task = self.pinnedURLSession.uploadTask(with: userRequest, fromFile: fromFile)
+        // Add observer
+        task.addObserver(taskObserver!, forKeyPath: "state", options: NSKeyValueObservingOptions.new, context: nil)
+        return task
     }
     
     /*  Creates a task that performs an HTTP request for the specified URL request object, uploads the provided data,
@@ -337,34 +200,12 @@ public class ApproovURLSession: NSObject {
      */
     public func uploadTask(with request: URLRequest, fromFile: URL, completionHandler: @escaping (Data?, URLResponse?, Error?) -> Void) -> URLSessionUploadTask {
         let userRequest = addUserHeadersToRequest(request: request)
-        let approovUpdateResponse = ApproovService.updateRequestWithApproov(request: userRequest)
-        // The returned task
-        var task:URLSessionUploadTask?
-        switch approovUpdateResponse.decision {
-            case .ShouldProceed:
-                // Go ahead and make the API call with the provided request object
-                task = self.urlSession.uploadTask(with: approovUpdateResponse.request, fromFile: fromFile) { (data, response, error) -> Void in
-                    // Invoke completition handler
-                    completionHandler(data,response,error)
-                }
-            case .ShouldRetry:
-                // We should retry doing a fetch after a user driven event
-                // Create the early response and invoke callback with custom error
-                completionHandler(nil,nil,approovUpdateResponse.error)
-                // Initialize a URLSessionDataTask object
-                task = self.urlSession.uploadTask(with: approovUpdateResponse.request, fromFile: fromFile) { (data, response, error) -> Void in
-                }
-                // We cancel the connection and return the task object at end of function
-                task?.cancel()
-            default:
-                completionHandler(nil,nil,approovUpdateResponse.error)
-                // Initialize a URLSessionDataTask object
-                task = self.urlSession.uploadTask(with: approovUpdateResponse.request, fromFile: fromFile) { (data, response, error) -> Void in
-                }
-                // We cancel the connection and return the task object at end of function
-                task?.cancel()
-        }// switch
-        return task!
+        // The return object
+        let task = self.pinnedURLSession.uploadTask(with: userRequest, fromFile: fromFile, completionHandler: completionHandler)
+        // Add observer
+        task.addObserver(taskObserver!, forKeyPath: "state", options: NSKeyValueObservingOptions.new, context: nil)
+        taskObserver?.addCompletionHandlerTaskToDictionary(taskId: task.taskIdentifier, handler: completionHandler)
+        return task
     }
     
     /*  Creates a task that performs an HTTP request for uploading data based on the specified URL request
@@ -372,31 +213,14 @@ public class ApproovURLSession: NSObject {
      */
     public func uploadTask(withStreamedRequest: URLRequest) -> URLSessionUploadTask {
         let userRequest = addUserHeadersToRequest(request: withStreamedRequest)
-        let approovUpdateResponse = ApproovService.updateRequestWithApproov(request: userRequest)
-        var sessionUploadTask:URLSessionUploadTask?
-        switch approovUpdateResponse.decision {
-            case .ShouldProceed:
-                // Go ahead and make the API call with the provided request object
-                sessionUploadTask = self.urlSession.uploadTask(withStreamedRequest: approovUpdateResponse.request)
-            case .ShouldRetry:
-                 // We create a task and cancel it immediately
-                 sessionUploadTask = self.urlSession.uploadTask(withStreamedRequest: approovUpdateResponse.request)
-                 sessionUploadTask!.cancel()
-                // We should retry doing a fetch after a user driven event
-                // Tell the delagate we are marking the session as invalid
-                self.urlSessionDelegate?.urlSession?(self.urlSession, didBecomeInvalidWithError: approovUpdateResponse.error)
-            default:
-                // We create a task and cancel it immediately
-                 sessionUploadTask = self.urlSession.uploadTask(withStreamedRequest: approovUpdateResponse.request)
-                 sessionUploadTask!.cancel()
-                // Tell the delagate we are marking the session as invalid
-                self.urlSessionDelegate?.urlSession?(self.urlSession, didBecomeInvalidWithError: approovUpdateResponse.error)
-        }// switch
-        return sessionUploadTask!
+        // The return object
+        let task = self.pinnedURLSession.uploadTask(withStreamedRequest: userRequest)
+        // Add observer
+        task.addObserver(taskObserver!, forKeyPath: "state", options: NSKeyValueObservingOptions.new, context: nil)
+        return task
     }
     
     // MARK: Combine Publisher Tasks
-    
     /*  Returns a publisher that wraps a URL session data task for a given URL request.
      *  https://developer.apple.com/documentation/foundation/urlsession
      */
@@ -404,33 +228,29 @@ public class ApproovURLSession: NSObject {
     public func dataTaskPublisher(for request: URLRequest) -> URLSession.DataTaskPublisher {
         let userRequest = addUserHeadersToRequest(request: request)
         let approovUpdateResponse = ApproovService.updateRequestWithApproov(request: userRequest)
-        var sessionTaskPublisher:URLSession.DataTaskPublisher?
+        
         switch approovUpdateResponse.decision {
             case .ShouldProceed:
                 // Go ahead and make the API call with the provided request object
-                sessionTaskPublisher = self.urlSession.dataTaskPublisher(for: approovUpdateResponse.request)
+                return self.pinnedURLSession.dataTaskPublisher(for: approovUpdateResponse.request)
             case .ShouldRetry:
                  // We create a task and cancel it immediately
-                sessionTaskPublisher = self.urlSession.dataTaskPublisher(for: approovUpdateResponse.request)
+                let sessionTaskPublisher = self.pinnedURLSession.dataTaskPublisher(for: approovUpdateResponse.request)
                 // We should retry doing a fetch after a user driven event
                 // Tell the delagate we are marking the session as invalid
-                self.urlSessionDelegate?.urlSession?(self.urlSession, didBecomeInvalidWithError: approovUpdateResponse.error)
+                self.pinnedURLSessionDelegate?.urlSession?(self.pinnedURLSession, didBecomeInvalidWithError: approovUpdateResponse.error)
+                return sessionTaskPublisher
+            case .ShouldIgnore:
+                // We should ignore the ApproovService request response: use the session modified headers
+                return self.pinnedURLSession.dataTaskPublisher(for: userRequest)
             default:
                 // We create a task and cancel it immediately
-                sessionTaskPublisher = self.urlSession.dataTaskPublisher(for: approovUpdateResponse.request)
-                sessionTaskPublisher?.session.invalidateAndCancel()
+                let sessionTaskPublisher = self.pinnedURLSession.dataTaskPublisher(for: approovUpdateResponse.request)
+                sessionTaskPublisher.session.invalidateAndCancel()
                 // Tell the delagate we are marking the session as invalid
-                self.urlSessionDelegate?.urlSession?(self.urlSession, didBecomeInvalidWithError: approovUpdateResponse.error)
+                self.pinnedURLSessionDelegate?.urlSession?(self.pinnedURLSession, didBecomeInvalidWithError: approovUpdateResponse.error)
+                return sessionTaskPublisher
         }// switch
-        return sessionTaskPublisher!
-    }
-    
-    /*  Returns a publisher that wraps a URL session data task for a given URL request.
-     *  https://developer.apple.com/documentation/foundation/urlsession
-     */
-    @available(iOS 13.0, *)
-    public func dataTaskPublisher(for url: URL) -> URLSession.DataTaskPublisher {
-        return dataTaskPublisher(for: URLRequest(url: url))
     }
     
     
@@ -439,7 +259,7 @@ public class ApproovURLSession: NSObject {
      *  https://developer.apple.com/documentation/foundation/urlsession/1407428-finishtasksandinvalidate
      */
     public func finishTasksAndInvalidate(){
-        self.urlSession.finishTasksAndInvalidate()
+        self.pinnedURLSession.finishTasksAndInvalidate()
     }
     
     /*  Flushes cookies and credentials to disk, clears transient caches, and ensures that future requests
@@ -447,28 +267,28 @@ public class ApproovURLSession: NSObject {
      *  https://developer.apple.com/documentation/foundation/urlsession/1411622-flush
      */
     public func flush(completionHandler: @escaping () -> Void){
-        self.urlSession.flush(completionHandler: completionHandler)
+        self.pinnedURLSession.flush(completionHandler: completionHandler)
     }
     
     /*  Asynchronously calls a completion callback with all data, upload, and download tasks in a session
      *  https://developer.apple.com/documentation/foundation/urlsession/1411578-gettaskswithcompletionhandler
      */
     public func getTasksWithCompletionHandler(_ completionHandler: @escaping ([URLSessionDataTask], [URLSessionUploadTask], [URLSessionDownloadTask]) -> Void) {
-        self.urlSession.getTasksWithCompletionHandler(completionHandler)
+        self.pinnedURLSession.getTasksWithCompletionHandler(completionHandler)
     }
     
     /*  Asynchronously calls a completion callback with all tasks in a session
      *  https://developer.apple.com/documentation/foundation/urlsession/1411618-getalltasks
      */
     public func getAllTasks(completionHandler: @escaping ([URLSessionTask]) -> Void) {
-        self.urlSession.getAllTasks(completionHandler: completionHandler)
+        self.pinnedURLSession.getAllTasks(completionHandler: completionHandler)
     }
     
     /*  Cancels all outstanding tasks and then invalidates the session
      *  https://developer.apple.com/documentation/foundation/urlsession/1411538-invalidateandcancel
      */
     public func invalidateAndCancel() {
-        self.urlSession.invalidateAndCancel()
+        self.pinnedURLSession.invalidateAndCancel()
     }
     
     /*  Empties all cookies, caches and credential stores, removes disk files, flushes in-progress downloads to disk,
@@ -476,7 +296,7 @@ public class ApproovURLSession: NSObject {
      *  https://developer.apple.com/documentation/foundation/urlsession/1411479-reset
      */
     public func reset(completionHandler: @escaping () -> Void) {
-        self.urlSession.reset(completionHandler: completionHandler)
+        self.pinnedURLSession.reset(completionHandler: completionHandler)
     }
     
     // MARK: Instance methods
@@ -486,7 +306,7 @@ public class ApproovURLSession: NSObject {
      */
     @available(iOS 13.0, *)
     public func webSocketTask(with: URL) -> URLSessionWebSocketTask {
-        self.urlSession.webSocketTask(with: with)
+        self.pinnedURLSession.webSocketTask(with: with)
     }
     
     /*  Creates a WebSocket task for the provided URL request
@@ -494,7 +314,7 @@ public class ApproovURLSession: NSObject {
      */
     @available(iOS 13.0, *)
     public func webSocketTask(with: URLRequest) -> URLSessionWebSocketTask {
-        self.urlSession.webSocketTask(with: with)
+        self.pinnedURLSession.webSocketTask(with: with)
     }
     
     /*  Creates a WebSocket task given a URL and an array of protocols
@@ -502,7 +322,7 @@ public class ApproovURLSession: NSObject {
      */
     @available(iOS 13.0, *)
     public func webSocketTask(with: URL, protocols: [String]) -> URLSessionWebSocketTask {
-        self.urlSession.webSocketTask(with: with, protocols: protocols)
+        self.pinnedURLSession.webSocketTask(with: with, protocols: protocols)
     }
     
     /*  Add any user defined headers to a URLRequest object
@@ -525,9 +345,9 @@ public class ApproovURLSession: NSObject {
 /*
  *  Delegate class implementing all available URLSessionDelegate types
  */
-class ApproovURLSessionDataDelegate: NSObject, URLSessionDelegate, URLSessionTaskDelegate, URLSessionDataDelegate, URLSessionDownloadDelegate {
+class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDelegate, URLSessionDataDelegate, URLSessionDownloadDelegate {
     
-    var approovURLDelegate:URLSessionDelegate?
+    var optionalURLDelegate:URLSessionDelegate?
     
     struct Constants {
         static let rsa2048SPKIHeader:[UInt8] = [
@@ -564,8 +384,8 @@ class ApproovURLSessionDataDelegate: NSObject, URLSessionDelegate, URLSessionTas
         pkiHeaders[kSecAttrKeyTypeECSECPrimeRandom as String] = eccDict
     }
     init(with delegate: URLSessionDelegate?){
-        ApproovURLSessionDataDelegate.initializePKI()
-        self.approovURLDelegate = delegate
+        PinningURLSessionDelegate.initializePKI()
+        self.optionalURLDelegate = delegate
     }
     
     // MARK: URLSessionDelegate
@@ -580,14 +400,14 @@ class ApproovURLSessionDataDelegate: NSObject, URLSessionDelegate, URLSessionTas
      *  https://developer.apple.com/documentation/foundation/urlsessiondelegate/1407776-urlsession
      */
     func urlSession(_ session: URLSession, didBecomeInvalidWithError error: Error?) {
-        approovURLDelegate?.urlSession?(session, didBecomeInvalidWithError: error)
+        optionalURLDelegate?.urlSession?(session, didBecomeInvalidWithError: error)
     }
     
     /*  Tells the delegate that all messages enqueued for a session have been delivered
      *  https://developer.apple.com/documentation/foundation/urlsessiondelegate/1617185-urlsessiondidfinishevents
      */
     func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
-        approovURLDelegate?.urlSessionDidFinishEvents?(forBackgroundURLSession: session)
+        optionalURLDelegate?.urlSessionDidFinishEvents?(forBackgroundURLSession: session)
     }
     
     /*  Requests credentials from the delegate in response to a session-level authentication request from the remote server
@@ -596,14 +416,14 @@ class ApproovURLSessionDataDelegate: NSObject, URLSessionDelegate, URLSessionTas
     func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
         // We are only interested in server trust requests
         if !challenge.protectionSpace.authenticationMethod.isEqual(NSURLAuthenticationMethodServerTrust) {
-            approovURLDelegate?.urlSession?(session, didReceive: challenge, completionHandler: completionHandler)
+            optionalURLDelegate?.urlSession?(session, didReceive: challenge, completionHandler: completionHandler)
             return
         }
         do {
             if let serverTrust = try shouldAcceptAuthenticationChallenge(challenge: challenge){
                 completionHandler(.useCredential,
                                   URLCredential.init(trust: serverTrust));
-                approovURLDelegate?.urlSession?(session, didReceive: challenge, completionHandler: completionHandler)
+                optionalURLDelegate?.urlSession?(session, didReceive: challenge, completionHandler: completionHandler)
                 return
             }
         } catch {
@@ -623,7 +443,7 @@ class ApproovURLSessionDataDelegate: NSObject, URLSessionDelegate, URLSessionTas
      *  https://developer.apple.com/documentation/foundation/urlsessiontaskdelegate/1411595-urlsession
      */
     func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
-        if let delegate = approovURLDelegate as? URLSessionTaskDelegate {
+        if let delegate = optionalURLDelegate as? URLSessionTaskDelegate {
             // We are only interested in server trust requests
             if !challenge.protectionSpace.authenticationMethod.isEqual(NSURLAuthenticationMethodServerTrust) {
                 delegate.urlSession?(session, task: task, didReceive: challenge, completionHandler: completionHandler)
@@ -648,7 +468,7 @@ class ApproovURLSessionDataDelegate: NSObject, URLSessionDelegate, URLSessionTas
      *  https://developer.apple.com/documentation/foundation/urlsessiontaskdelegate/1411610-urlsession
      */
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        if let delegate = approovURLDelegate as? URLSessionTaskDelegate {
+        if let delegate = optionalURLDelegate as? URLSessionTaskDelegate {
             delegate.urlSession?(session, task: task, didCompleteWithError: error)
         }
     }
@@ -657,7 +477,7 @@ class ApproovURLSessionDataDelegate: NSObject, URLSessionDelegate, URLSessionTas
      *  https://developer.apple.com/documentation/foundation/urlsessiontaskdelegate/1411626-urlsession
      */
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
-        if let delegate = approovURLDelegate as? URLSessionTaskDelegate {
+        if let delegate = optionalURLDelegate as? URLSessionTaskDelegate {
             delegate.urlSession?(session, task: task, willPerformHTTPRedirection: response, newRequest: request, completionHandler: completionHandler)
         }
     }
@@ -666,7 +486,7 @@ class ApproovURLSessionDataDelegate: NSObject, URLSessionDelegate, URLSessionTas
      *  https://developer.apple.com/documentation/foundation/urlsessiontaskdelegate/1410001-urlsession
      */
     func urlSession(_ session: URLSession, task: URLSessionTask, needNewBodyStream completionHandler: @escaping (InputStream?) -> Void) {
-        if let delegate = approovURLDelegate as? URLSessionTaskDelegate {
+        if let delegate = optionalURLDelegate as? URLSessionTaskDelegate {
             delegate.urlSession?(session, task: task, needNewBodyStream: completionHandler)
         }
     }
@@ -675,7 +495,7 @@ class ApproovURLSessionDataDelegate: NSObject, URLSessionDelegate, URLSessionTas
      *  https://developer.apple.com/documentation/foundation/urlsessiontaskdelegate/1408299-urlsession
      */
     func urlSession(_ session: URLSession, task: URLSessionTask, didSendBodyData bytesSent: Int64, totalBytesSent: Int64, totalBytesExpectedToSend: Int64) {
-        if let delegate = approovURLDelegate as? URLSessionTaskDelegate {
+        if let delegate = optionalURLDelegate as? URLSessionTaskDelegate {
             delegate.urlSession?(session, task: task, didSendBodyData: bytesSent, totalBytesSent: totalBytesSent, totalBytesExpectedToSend: totalBytesExpectedToSend)
         }
     }
@@ -685,7 +505,7 @@ class ApproovURLSessionDataDelegate: NSObject, URLSessionDelegate, URLSessionTas
      */
     @available(iOS 11.0, *)
     func urlSession(_ session: URLSession, task: URLSessionTask, willBeginDelayedRequest request: URLRequest, completionHandler: @escaping (URLSession.DelayedRequestDisposition, URLRequest?) -> Void) {
-        if let delegate = approovURLDelegate as? URLSessionTaskDelegate {
+        if let delegate = optionalURLDelegate as? URLSessionTaskDelegate {
             delegate.urlSession?(session, task:task, willBeginDelayedRequest: request, completionHandler: completionHandler)
         }
     }
@@ -694,7 +514,7 @@ class ApproovURLSessionDataDelegate: NSObject, URLSessionDelegate, URLSessionTas
      *  https://developer.apple.com/documentation/foundation/urlsessiontaskdelegate/1643148-urlsession
      */
     func urlSession(_ session: URLSession, task: URLSessionTask, didFinishCollecting metrics: URLSessionTaskMetrics) {
-        if let delegate = approovURLDelegate as? URLSessionTaskDelegate {
+        if let delegate = optionalURLDelegate as? URLSessionTaskDelegate {
             delegate.urlSession?(session, task: task, didFinishCollecting: metrics)
         }
     }
@@ -704,7 +524,7 @@ class ApproovURLSessionDataDelegate: NSObject, URLSessionDelegate, URLSessionTas
      */
     @available(iOS 11.0, *)
     func urlSession(_ session: URLSession, taskIsWaitingForConnectivity task: URLSessionTask) {
-        if let delegate = approovURLDelegate as? URLSessionTaskDelegate {
+        if let delegate = optionalURLDelegate as? URLSessionTaskDelegate {
             delegate.urlSession?(session, taskIsWaitingForConnectivity: task)
         }
     }
@@ -723,7 +543,7 @@ class ApproovURLSessionDataDelegate: NSObject, URLSessionDelegate, URLSessionTas
      */
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse, completionHandler: @escaping (URLSession.ResponseDisposition) -> Void)
     {
-        if let delegate = approovURLDelegate as? URLSessionDataDelegate {
+        if let delegate = optionalURLDelegate as? URLSessionDataDelegate {
             delegate.urlSession?(session, dataTask: dataTask, didReceive: response, completionHandler: completionHandler)
         }
     }
@@ -732,7 +552,7 @@ class ApproovURLSessionDataDelegate: NSObject, URLSessionDelegate, URLSessionTas
      *  https://developer.apple.com/documentation/foundation/urlsessiondatadelegate/1409936-urlsession
      */
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didBecome downloadTask: URLSessionDownloadTask) {
-        if let delegate = approovURLDelegate as? URLSessionDataDelegate {
+        if let delegate = optionalURLDelegate as? URLSessionDataDelegate {
             delegate.urlSession?(session, dataTask: dataTask, didBecome: downloadTask)
         }
     }
@@ -741,7 +561,7 @@ class ApproovURLSessionDataDelegate: NSObject, URLSessionDelegate, URLSessionTas
      *  https://developer.apple.com/documentation/foundation/urlsessiondatadelegate/1411648-urlsession
      */
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didBecome streamTask: URLSessionStreamTask) {
-        if let delegate = approovURLDelegate as? URLSessionDataDelegate {
+        if let delegate = optionalURLDelegate as? URLSessionDataDelegate {
             delegate.urlSession?(session, dataTask: dataTask, didBecome: streamTask)
         }
     }
@@ -750,7 +570,7 @@ class ApproovURLSessionDataDelegate: NSObject, URLSessionDelegate, URLSessionTas
      *  https://developer.apple.com/documentation/foundation/urlsessiondatadelegate/1411528-urlsession
      */
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
-        if let delegate = approovURLDelegate as? URLSessionDataDelegate {
+        if let delegate = optionalURLDelegate as? URLSessionDataDelegate {
             delegate.urlSession?(session,dataTask: dataTask, didReceive: data)
         }
     }
@@ -759,7 +579,7 @@ class ApproovURLSessionDataDelegate: NSObject, URLSessionDelegate, URLSessionTas
      *  https://developer.apple.com/documentation/foundation/urlsessiondatadelegate/1411612-urlsession
      */
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, willCacheResponse proposedResponse: CachedURLResponse, completionHandler: @escaping (CachedURLResponse?) -> Void) {
-        if let delegate = approovURLDelegate as? URLSessionDataDelegate {
+        if let delegate = optionalURLDelegate as? URLSessionDataDelegate {
             delegate.urlSession?(session, dataTask: dataTask, willCacheResponse: proposedResponse, completionHandler: completionHandler)
         }
     }
@@ -775,7 +595,7 @@ class ApproovURLSessionDataDelegate: NSObject, URLSessionDelegate, URLSessionTas
      *  https://developer.apple.com/documentation/foundation/urlsessiondownloaddelegate/1411575-urlsession
      */
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
-        if let delegate = approovURLDelegate as? URLSessionDownloadDelegate {
+        if let delegate = optionalURLDelegate as? URLSessionDownloadDelegate {
             delegate.urlSession(session, downloadTask: downloadTask, didFinishDownloadingTo: location)
         }
     }
@@ -784,7 +604,7 @@ class ApproovURLSessionDataDelegate: NSObject, URLSessionDelegate, URLSessionTas
      *  https://developer.apple.com/documentation/foundation/urlsessiondownloaddelegate/1408142-urlsession
      */
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didResumeAtOffset: Int64, expectedTotalBytes: Int64) {
-        if let delegate = approovURLDelegate as? URLSessionDownloadDelegate {
+        if let delegate = optionalURLDelegate as? URLSessionDownloadDelegate {
             delegate.urlSession?(session, downloadTask: downloadTask, didResumeAtOffset: didResumeAtOffset, expectedTotalBytes: expectedTotalBytes)
         }
     }
@@ -793,7 +613,7 @@ class ApproovURLSessionDataDelegate: NSObject, URLSessionDelegate, URLSessionTas
      *  https://developer.apple.com/documentation/foundation/urlsessiondownloaddelegate/1409408-urlsession
      */
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData: Int64, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
-        if let delegate = approovURLDelegate as? URLSessionDownloadDelegate {
+        if let delegate = optionalURLDelegate as? URLSessionDownloadDelegate {
             delegate.urlSession?(session, downloadTask: downloadTask, didWriteData: didWriteData, totalBytesWritten: totalBytesWritten, totalBytesExpectedToWrite: totalBytesExpectedToWrite)
         }
     }
@@ -922,7 +742,7 @@ class ApproovURLSessionDataDelegate: NSObject, URLSessionDelegate, URLSessionTas
         if let keyType = (publicKeyAttributes as NSDictionary).value(forKey: kSecAttrKeyType as String) {
             if let keyLength = (publicKeyAttributes as NSDictionary).value(forKey: kSecAttrKeySizeInBits as String) {
                 // Find the header
-                if let spkiHeader:Data = ApproovURLSessionDataDelegate.pkiHeaders[keyType as! String]?[keyLength as! Int] {
+                if let spkiHeader:Data = PinningURLSessionDelegate.pkiHeaders[keyType as! String]?[keyLength as! Int] {
                     return spkiHeader
                 }
             }
@@ -930,7 +750,7 @@ class ApproovURLSessionDataDelegate: NSObject, URLSessionDelegate, URLSessionTas
         return nil
     }
     
-    /* 
+    /*
      * SHA256 of given input bytes
      */
     func sha256(data: Data) -> Data {
@@ -942,384 +762,6 @@ class ApproovURLSessionDataDelegate: NSObject, URLSessionDelegate, URLSessionTas
     }
 
 }// class
-
-
-public class ApproovService {
-    /* Private initializer */
-    fileprivate init(){}
-    /* Status of Approov SDK initialisation */
-    private static var approovServiceInitialised = false
-    /* The singleton object */
-    fileprivate static let shared = ApproovService()
-    /* The initial config string used to initialize */
-    private static var configString:String?
-    /* The dispatch queue to manage serial access to intializer modified variables */
-    private static let initializerQueue = DispatchQueue(label: "ApproovService.initializer")
-    /* map of headers that should have their values substituted for secure strings, mapped to their
-     * required prefixes
-     */
-    private static var substitutionHeaders:Dictionary<String,String> = Dictionary<String,String>()
-    /* The dispatch queue to manage serial access to the substitution headers dictionary */
-    private static let substitutionQueue = DispatchQueue(label: "ApproovService.substitution")
-    /* Use log subsystem for info/error */
-    let log = OSLog(subsystem: "approov-service-urlsession", category: "network")
-    /* Singleton: config is obtained using `approov sdk -getConfigString`
-     * Note the initializer function should only ever be called once. Subsequent calls will be ignored
-     * since the ApproovSDK can only be intialized once; if however, an attempt is made to initialize
-     * with a different configuration (config) we throw an ApproovException.configurationError
-     * If the Approov SDk fails to be initialized for some other reason, an .initializationFailure is raised
-     */
-    public static func initialize(config: String) throws {
-        try initializerQueue.sync  {
-            // Check if we attempt to use a different configString
-            if (approovServiceInitialised) {
-                if (config != configString) {
-                    // Throw exception indicating we are attempting to use different config
-                    os_log("Approov: Attempting to initialize with different configuration", type: .error)
-                    throw ApproovError.configurationError(message: "Attempting to initialize with a different configuration")
-                }
-                return
-            }
-            // Initialize Approov SDK
-            do {
-                try Approov.initialize(config, updateConfig: "auto", comment: nil)
-                approovServiceInitialised = true
-                Approov.setUserProperty("approov-service-urlsession")
-            } catch let error {
-                // Log error and throw exception
-                os_log("Approov: Error initializing Approov SDK: %@", type: .error, error.localizedDescription)
-                throw ApproovError.initializationFailure(message: "Error initializing Approov SDK: \(error.localizedDescription)")
-            }
-        }
-    }// initialize func
-    
-    // Dispatch queue to manage concurrent access to bindHeader variable
-    private static let bindHeaderQueue = DispatchQueue(label: "ApproovService.bindHeader", qos: .default, attributes: .concurrent, autoreleaseFrequency: .never, target: DispatchQueue.global())
-    private static var _bindHeader = ""
-    // Bind Header string
-    public static var bindHeader: String {
-        get {
-            var bindHeader = ""
-            bindHeaderQueue.sync {
-                bindHeader = _bindHeader
-            }
-            return bindHeader
-        }
-        set {
-            bindHeaderQueue.async(group: nil, qos: .default, flags: .barrier, execute: {self._bindHeader = newValue})
-        }
-    }
-    
-    // Dispatch queue to manage concurrent access to approovTokenHeader variable
-    private static let approovTokenHeaderAndPrefixQueue = DispatchQueue(label: "ApproovService.approovTokenHeader", qos: .default, attributes: .concurrent, autoreleaseFrequency: .never, target: DispatchQueue.global())
-    /* Approov token default header */
-    private static var _approovTokenHeader = "Approov-Token"
-    /* Approov token custom prefix: any prefix to be added such as "Bearer " */
-    private static var _approovTokenPrefix = ""
-    // Approov Token Header String
-    public static var approovTokenHeaderAndPrefix: (approovTokenHeader: String, approovTokenPrefix: String) {
-        get {
-            var approovTokenHeader = ""
-            var approovTokenPrefix = ""
-            approovTokenHeaderAndPrefixQueue.sync {
-                approovTokenHeader = _approovTokenHeader
-                approovTokenPrefix = _approovTokenPrefix
-        }
-        return (approovTokenHeader,approovTokenPrefix)
-        }
-        set {
-            approovTokenHeaderAndPrefixQueue.async(group: nil, qos: .default, flags: .barrier, execute: {(_approovTokenHeader,_approovTokenPrefix) = newValue})
-        }
-    }
-
-    /*
-     *  Allows token prefetch operation to be performed as early as possible. This
-     *  permits a token or secure strings to be available while an application might
-     *  be loading resources or is awaiting user input. Since the initial fetch is the
-     *  most expensive the prefetch can hide the most latency.
-     */
-    public static let prefetch: Void = {
-        initializerQueue.sync {
-            if approovServiceInitialised {
-                // We succeeded initializing Approov SDK, fetch a token
-                Approov.fetchToken({(approovResult: ApproovTokenFetchResult) in
-                    // Prefetch done, no need to process response
-                }, "approov.io")
-            }
-        }
-    }()
-    
-    /*
-     * Convenience function fetching the Approov token and updating the request with it. This will also
-     * perform header substitutions to include protected secrets.
-     *
-     * @param request is the original request to be made
-     * @return ApproovUpdateResponse providing an updated requets, plus an errors and status
-     */
-    fileprivate static func updateRequestWithApproov(request: URLRequest) -> ApproovUpdateResponse {
-        var returnData = ApproovUpdateResponse(request: request, decision: .ShouldFail, sdkMessage: "", error: nil)
-        // Check if Bind Header is set to a non empty String
-        if ApproovService.bindHeader != "" {
-            /*  Query the URLSessionConfiguration for user set headers. They would be set like so:
-             *  config.httpAdditionalHeaders = ["Authorization Bearer" : "token"]
-             *  Since the URLSessionConfiguration is part of the init call and we store its reference
-             *  we check for the presence of a user set header there.
-             */
-            if let aValue = request.value(forHTTPHeaderField: ApproovService.bindHeader) {
-                // Add the Bind Header as a data hash to Approov token
-                Approov.setDataHashInToken(aValue)
-            }
-        }
-        // Invoke fetch token sync
-        let approovResult = Approov.fetchTokenAndWait(request.url!.absoluteString)
-        // Log result of token fetch
-        let aHostname = hostnameFromURL(url: request.url!)
-        os_log("Approov: updateRequest %@: %@", type: .info, aHostname, approovResult.loggableToken())
-        // Update the message
-        returnData.sdkMessage = Approov.string(from: approovResult.status)
-        switch approovResult.status {
-            case ApproovTokenFetchStatus.success:
-                // Can go ahead and make the API call with the provided request object
-                returnData.decision = .ShouldProceed
-                // Set Approov-Token header
-                returnData.request.setValue(ApproovService.approovTokenHeaderAndPrefix.approovTokenPrefix + approovResult.token, forHTTPHeaderField: ApproovService.approovTokenHeaderAndPrefix.approovTokenHeader)
-            case ApproovTokenFetchStatus.noNetwork,
-                 ApproovTokenFetchStatus.poorNetwork,
-                 ApproovTokenFetchStatus.mitmDetected:
-                 // Must not proceed with network request and inform user a retry is needed
-                returnData.decision = .ShouldRetry
-                let error = ApproovError.networkingError(message: returnData.sdkMessage)
-                returnData.error = error
-                return returnData
-            case ApproovTokenFetchStatus.unprotectedURL,
-                 ApproovTokenFetchStatus.unknownURL,
-                 ApproovTokenFetchStatus.noApproovService:
-                // We do NOT add the Approov-Token header to the request headers
-                returnData.decision = .ShouldProceed
-            default:
-                let error = ApproovError.permanentError(message: returnData.sdkMessage)
-                returnData.error = error
-                returnData.decision = .ShouldFail
-                return returnData
-        }// switch
-        
-        // we now deal with any header substitutions, which may require further fetches but these
-        // should be using cached results
-        let isIllegalSubstitution = (approovResult.status == ApproovTokenFetchStatus.unknownURL)
-        // Check for the presence of headers
-        if let requestHeaders = returnData.request.allHTTPHeaderFields {
-            // Make a copy of the original request so we can modify it
-            var replacementRequest = returnData.request
-            for (key, _) in substitutionHeaders {
-                let header = key
-                if let prefix = substitutionHeaders[key] {
-                    if let value = requestHeaders[header]{
-                        // Check if the request contains the header we want to replace
-                        if ((value.hasPrefix(prefix)) && (value.count > prefix.count)){
-                            let index = prefix.index(prefix.startIndex, offsetBy: prefix.count)
-                            let approovResults = Approov.fetchSecureStringAndWait(String(value.suffix(from:index)), nil)
-                            os_log("Approov: Substituting header: %@, %@", type: .info, header, Approov.string(from: approovResults.status))
-                            // Process the result of the token fetch operation
-                            if approovResults.status == ApproovTokenFetchStatus.success {
-                                if isIllegalSubstitution {
-                                    // don't allow substitutions on unadded API domains to prevent them accidentally being
-                                    // subject to a Man-in-the-Middle (MitM) attack
-                                    let error = ApproovError.configurationError(message: "Header substitution: API domain unknown")
-                                    returnData.error = error
-                                    return returnData
-                                }
-                                // We add the modified header to the new copy of request
-                                if let secureStringResult = approovResults.secureString {
-                                    replacementRequest.setValue(prefix + secureStringResult, forHTTPHeaderField: key)
-                                } else {
-                                    // Secure string is nil
-                                    let error = ApproovError.permanentError(message: "Header substitution: key lookup error")
-                                    returnData.error = error
-                                    return returnData
-                                }
-                            } else if approovResults.status == ApproovTokenFetchStatus.rejected {
-                                // if the request is rejected then we provide a special exception with additional information
-                                let error = ApproovError.rejectionError(message: "Header substitution: rejected", ARC: approovResults.arc, rejectionReasons: approovResults.rejectionReasons)
-                                returnData.error = error
-                                return returnData
-                            } else if approovResults.status == ApproovTokenFetchStatus.noNetwork ||
-                                        approovResults.status == ApproovTokenFetchStatus.poorNetwork ||
-                                        approovResults.status == ApproovTokenFetchStatus.mitmDetected {
-                                // we are unable to get the secure string due to network conditions so the request can
-                                // be retried by the user later
-                                let error = ApproovError.networkingError(message: "Header substitution: network issue, retry needed")
-                                returnData.error = error
-                                return returnData
-                            } else if approovResults.status != ApproovTokenFetchStatus.unknownKey {
-                                // we have failed to get a secure string with a more serious permanent error
-                                let error = ApproovError.permanentError(message: "Header substitution: " + Approov.string(from: approovResults.status))
-                                returnData.error = error
-                                return returnData
-                            }
-                        }// if (value)
-                    } // if let value
-                }// if let prefix
-            }// for
-            // Replace the modified request headers to the request
-            returnData.request = replacementRequest
-        }// if let
-        
-        return returnData
-    }
-    
-    /*
-     * Adds the name of a header which should be subject to secure strings substitution. This
-     * means that if the header is present then the value will be used as a key to look up a
-     * secure string value which will be substituted into the header value instead. This allows
-     * easy migration to the use of secure strings. A required prefix may be specified to deal
-     * with cases such as the use of "Bearer " prefixed before values in an authorization header.
-     *
-     * @param header is the header to be marked for substitution
-     * @param prefix is any required prefix to the value being substituted or nil if not required
-     */
-    public static func addSubstitutionHeader(header: String, prefix: String?) {
-        if prefix == nil {
-            ApproovService.substitutionQueue.sync {
-                ApproovService.substitutionHeaders[header] = ""
-            }
-        } else {
-            ApproovService.substitutionQueue.sync {
-                ApproovService.substitutionHeaders[header] = prefix
-            }
-        }
-    }
-    
-    /*
-     * Removes the name of a header if it exists from the secure strings substitution dictionary.
-     */
-    public static func removeSubstitutionHeader(header: String) {
-        ApproovService.substitutionQueue.sync {
-            if ApproovService.substitutionHeaders[header] != nil {
-                ApproovService.substitutionHeaders.removeValue(forKey: header)
-            }
-        }
-    }
-    
-    /*
-     * Fetches a secure string with the given key. If newDef is not nil then a secure string for
-     * the particular app instance may be defined. In this case the new value is returned as the
-     * secure string. Use of an empty string for newDef removes the string entry. Note that this
-     * call may require network transaction and thus may block for some time, so should not be called
-     * from the UI thread. If the attestation fails for any reason then an exception is raised. Note
-     * that the returned string should NEVER be cached by your app, you should call this function when
-     * it is needed. If the fetch fails for any reason an exception is thrown with description. Exceptions
-     * could be due to the feature not being enabled from the CLI tools (ApproovError.configurationError
-     * type raised), a rejection throws an Approov.rejectionError type which might include additional
-     * information regarding the failure reason. An ApproovError.networkingError exception should allow a
-     * retry operation to be performed and finally if some other error occurs an Approov.permanentError
-     * is raised.
-     *
-     * @param key is the secure string key to be looked up
-     * @param newDef is any new definition for the secure string, or nil for lookup only
-     * @return secure string (should not be cached by your app) or nil if it was not defined or an error ocurred
-     * @throws exception with description of cause
-     */
-    public static func fetchSecureString(key: String, newDef: String?) throws -> String? {
-        // determine the type of operation as the values themselves cannot be logged
-        var type = "lookup"
-        if newDef == nil {
-            type = "definition"
-        }
-        // invoke fetch secure string
-        let approovResult = Approov.fetchSecureStringAndWait(key, newDef)
-        os_log("Approov: fetchSecureString: %@: %@", type: .info, type, Approov.string(from: approovResult.status))
-        // process the returned Approov status
-        if approovResult.status == ApproovTokenFetchStatus.disabled {
-            throw ApproovError.configurationError(message: "fetchSecureString: secure string feature disabled")
-        } else if  approovResult.status == ApproovTokenFetchStatus.badKey {
-            throw ApproovError.permanentError(message: "fetchSecureString: secure string unknown key")
-        } else if approovResult.status == ApproovTokenFetchStatus.rejected {
-            // if the request is rejected then we provide a special exception with additional information
-            throw ApproovError.rejectionError(message: "fetchSecureString: rejected", ARC: approovResult.arc, rejectionReasons: approovResult.rejectionReasons)
-        } else if approovResult.status == ApproovTokenFetchStatus.noNetwork ||
-                    approovResult.status == ApproovTokenFetchStatus.poorNetwork ||
-                    approovResult.status == ApproovTokenFetchStatus.mitmDetected {
-            // we are unable to get the secure string due to network conditions so the request can
-            // be retried by the user later
-            throw ApproovError.networkingError(message: "fetchSecureString: network issue, retry needed")
-        } else if ((approovResult.status != ApproovTokenFetchStatus.success) && (approovResult.status != ApproovTokenFetchStatus.unknownKey)){
-            // we are unable to get the secure string due to a more permanent error
-            throw ApproovError.permanentError(message: "fetchSecureString: " + Approov.string(from: approovResult.status))
-
-        }
-        return approovResult.secureString
-    }// fetchSecureString
-    
-    /*
-     * Fetches a custom JWT with the given payload. Note that this call will require network
-     * transaction and thus will block for some time, so should not be called from the UI thread.
-     * If the fetch fails for any reason an exception will be thrown. Exceptions could be due to
-     * malformed JSON string provided (then a ApproovError.permanentError is raised), the feature not
-     * being enabled from the CLI tools (ApproovError.configurationError type raised), a rejection throws
-     * a ApproovError.rejectionError type which might include additional information regarding the failure
-     * reason. An Approov.networkingError exception should allow a retry operation to be performed. Finally
-     * if some other error occurs an Approov.permanentError is raised.
-     * 
-     * @param payload is the marshaled JSON object for the claims to be included
-     * @return custom JWT string or nil if an error occurred
-     * @throws exception with description of cause
-     */
-    public static func fetchCustomJWT(payload: String) throws -> String? {
-        // fetch the custom JWT
-        let approovResult = Approov.fetchCustomJWTAndWait(payload)
-        // log result of token fetch operation but do not log the value
-        os_log("Approov: fetchCustomJWT: %@", type: .info, Approov.string(from: approovResult.status))
-        // process the returned Approov status
-        if approovResult.status == ApproovTokenFetchStatus.badPayload {
-            throw ApproovError.permanentError(message: "fetchCustomJWT: malformed JSON")
-        } else if  approovResult.status == ApproovTokenFetchStatus.disabled {
-            throw ApproovError.configurationError(message: "fetchCustomJWT: feature not enabled")
-        } else if approovResult.status == ApproovTokenFetchStatus.rejected {
-            // if the request is rejected then we provide a special exception with additional information
-            throw ApproovError.rejectionError(message: "fetchCustomJWT: rejected", ARC: approovResult.arc, rejectionReasons: approovResult.rejectionReasons)
-        } else if approovResult.status == ApproovTokenFetchStatus.noNetwork ||
-                    approovResult.status == ApproovTokenFetchStatus.poorNetwork ||
-                    approovResult.status == ApproovTokenFetchStatus.mitmDetected {
-            // we are unable to get the custom JWT due to network conditions so the request can
-            // be retried by the user later
-            throw ApproovError.networkingError(message: "fetchCustomJWT: network issue, retry needed")
-        } else if (approovResult.status != ApproovTokenFetchStatus.success){
-            // we are unable to get the custom JWT due to a more permanent error
-            throw ApproovError.permanentError(message: "fetchCustomJWT: " + Approov.string(from: approovResult.status))
-        }
-        return approovResult.token
-    }
-    
-    /*
-     * Performs a precheck to determine if the app will pass attestation. This requires secure
-     * strings to be enabled for the account, although no strings need to be set up. This will
-     * likely require network access so may take some time to complete. It may throw an exception
-     * if the precheck fails or if there is some other problem. Exceptions could be due to
-     * a rejection (throws a ApproovError.rejectionError) type which might include additional
-     * information regarding the rejection reason. An ApproovError.networkingError exception should
-     * allow a retry operation to be performed and finally if some other error occurs an
-     * ApproovError.permanentError is raised.
-     */
-    public static func precheck() throws {
-        // try to fetch a non-existent secure string in order to check for a rejection
-        let approovResults = Approov.fetchSecureStringAndWait("precheck-dummy-key", nil)
-        // process the returned Approov status
-        if approovResults.status == ApproovTokenFetchStatus.rejected {
-            // if the request is rejected then we provide a special exception with additional information
-            throw ApproovError.rejectionError(message: "precheck: rejected", ARC: approovResults.arc, rejectionReasons: approovResults.rejectionReasons)
-        } else if approovResults.status == ApproovTokenFetchStatus.noNetwork ||
-                    approovResults.status == ApproovTokenFetchStatus.poorNetwork ||
-                    approovResults.status == ApproovTokenFetchStatus.mitmDetected {
-            // we are unable to get the secure string due to network conditions so the request can
-            // be retried by the user later
-            throw ApproovError.networkingError(message: "precheck: network issue, retry needed")
-        } else if (approovResults.status != ApproovTokenFetchStatus.success) && (approovResults.status != ApproovTokenFetchStatus.unknownKey){
-            // we are unable to get the secure string due to a more permanent error
-            throw ApproovError.permanentError(message: "precheck: " + Approov.string(from: approovResults.status))
-        }
-    }
-} // ApproovService class
-
 
 /*
  * Approov error conditions
@@ -1340,7 +782,7 @@ func stringFromApproovTokenFetchStatus(status: ApproovTokenFetchStatus) -> Strin
     return Approov.string(from: status)
 }
 
-/* 
+/*
  * Host component only gets resolved if the string includes the protocol used
  * This is not always the case when making requests so a convenience method is needed
  */
@@ -1357,3 +799,152 @@ func hostnameFromURL(url: URL) -> String {
         }
     }
 }
+
+/* The ApproovSessionTask observer */
+public class ApproovSessionTaskObserver : NSObject {
+    // The KVO object we are intersted in
+    static let stateString = "state"
+    // Handler specific to Data type
+    typealias CompletionHandlerData = ((Data?,URLResponse?,Error?)->Void)?
+    // Handler specific to URL type
+    typealias CompletionHandlerURL = ((URL?,URLResponse?,Error?)->Void)?
+    // Dictionary to hold completion handlers to their mapped UUID task id
+    var completionHandlers: Dictionary<Int,Any> = Dictionary()
+    /* The dispatch queue to manage serial access to the dictionary */
+    private let handlersQueue = DispatchQueue(label: "ApproovSessionTaskObserver")
+    /* Reference to the pinning session and pinning delegate objects */
+    private var pinningSessionReference: URLSession?
+    private var pinningDelegatereference: PinningURLSessionDelegate
+    
+    init(session: URLSession, delegate: URLSessionDelegate) {
+        pinningSessionReference = session
+        pinningDelegatereference = delegate as! PinningURLSessionDelegate
+        super.init()
+    }
+    
+    /*  Adds a task UUID mapped to a function to be invoked as a callback in case of error
+     *  after cancelling the task
+     */
+    func addCompletionHandlerTaskToDictionary(taskId: Int, handler: Any) -> Void {
+        handlersQueue.sync {
+            completionHandlers[taskId] = handler;
+        }
+    }
+    
+    /*
+     * It is necessary to use KVO and observe the task returned to the user in order to modify the original request
+     * Since we do not want to block the task in order to contact the Approov servers, we have to perform the Approov
+     * network connection asynchronously and depending on the result, modify the header and resume the request or
+     * cancel the task after informing the caller of the error
+     */
+    public override func observeValue(forKeyPath keyPath: String?,
+                             of object: Any?,
+                         change: [NSKeyValueChangeKey : Any]?,
+                             context: UnsafeMutableRawPointer?) {
+        /*
+            NSURLSessionTaskStateRunning = 0,
+            NSURLSessionTaskStateSuspended = 1,
+            NSURLSessionTaskStateCanceling = 2,
+            NSURLSessionTaskStateCompleted = 3,
+         */
+        if keyPath == ApproovSessionTaskObserver.stateString {
+            let newC = change![NSKeyValueChangeKey.newKey] as! NSNumber
+            let newState = getURLSessionState(state: newC.uint32Value)
+            
+            // The task at hand; we simply cast to superclass from which specific Data/Download ... etc classes inherit
+            let task = object as! URLSessionTask
+            /*  If the new state is Cancelling or Completed we must remove ourselves as observers and return
+             *  because the user is either cancelling or the connection has simply terminated
+             */
+            if ((newState == URLSessionTask.State.completed) || (newState == URLSessionTask.State.canceling)) {
+                os_log("task id %lu is cancelling or has completed; removing observer", task.taskIdentifier)
+                task.removeObserver(self, forKeyPath: ApproovSessionTaskObserver.stateString)
+                // If the completionHandler is in dictionary, remove it since it will not be needed
+                handlersQueue.sync {
+                    if completionHandlers.keys.contains(task.taskIdentifier) {
+                        completionHandlers.removeValue(forKey: task.taskIdentifier)
+                    }
+                }
+                return
+            }
+            
+            /*  We detect the initial switch from when the task is created in Suspended state to when the user
+             *  triggers the Resume state. We immediately pause the task by suspending it again and doing the background
+             *  Approov network connection before considering if the actual connection should be resumed or terminated.
+             *  Note that this is meant to only happen during the initial resume call since we remove ourselves as observers
+             *  at the first ever resume call
+             */
+            if newState == URLSessionTask.State.running {
+                // Suspend immediately the task: Note this is optional since the current callback is executed before another one being invoked
+                task.suspend()
+                // We do not need any information about further changes; we are done since we only need the furst ever resume call
+                // Remove observer
+                task.removeObserver(self, forKeyPath: ApproovSessionTaskObserver.stateString)
+                // If the completion handler is in dictionary, remove it since it will not be needed (no error condition)
+                handlersQueue.sync {
+                    if completionHandlers.keys.contains(task.taskIdentifier) {
+                        completionHandlers.removeValue(forKey: task.taskIdentifier)
+                    }
+                }
+                // Contact Approov service
+                let resultData = ApproovService.updateRequestWithApproov(request: task.currentRequest!)
+                if resultData.decision == .ShouldProceed {
+                    // Modify original request
+                    let sel = NSSelectorFromString("updateCurrentRequest:")
+                    if task.responds(to: sel) {
+                        task.perform(sel, with: resultData.request)
+                    } else {
+                        // This means that URLRequest has removed the `updateCurrentRequest` method or we are observing an object that
+                        // is not an instance of URLRequest. Both are fatal errors.
+                        os_log("Fatal ApproovSession error: Unable to modify NSURLRequest headers; object instance is of type %@", type: .error, type(of: task).description())
+                    }
+                    task.resume()
+                    return
+                } else if resultData.decision == .ShouldIgnore {
+                    // We should ignore the request and not modify the headers in any way
+                    task.resume()
+                    return
+                } else {
+                    // Error handling
+                    handlersQueue.sync {
+                        // Call the delegate
+                        pinningDelegatereference.urlSession(pinningSessionReference!, didBecomeInvalidWithError: resultData.error)
+                        if completionHandlers.keys.contains(task.taskIdentifier) {
+                            // Completion handler invocation
+                            if let handler = completionHandlers[task.taskIdentifier] as! CompletionHandlerData {
+                                handler(nil,nil, resultData.error)
+                            } else if let handler = completionHandlers[task.taskIdentifier] as! CompletionHandlerURL {
+                                handler(nil,nil, resultData.error)
+                            }
+                            // We have invoked the original handler with error message; remove it from dictionary
+                            completionHandlers.removeValue(forKey: task.taskIdentifier)
+                        }
+                    }
+                    task.cancel()
+                }
+            }
+        }
+    } // func
+    
+    
+    func getURLSessionState(state: UInt32) -> URLSessionTask.State {
+        /*
+            NSURLSessionTaskStateRunning = 0,
+            NSURLSessionTaskStateSuspended = 1,
+            NSURLSessionTaskStateCanceling = 2,
+            NSURLSessionTaskStateCompleted = 3,
+         */
+        switch state {
+        case 0:
+            return URLSessionTask.State.running
+        case 1:
+            return URLSessionTask.State.suspended
+        case 2:
+            return URLSessionTask.State.canceling
+        default:
+            return URLSessionTask.State.completed
+        }
+    }
+    
+}
+
