@@ -702,7 +702,7 @@ public class ApproovService {
         }
         for (key, _) in headerDictionaryCopy! {
             let header = key
-            if let prefix = substitutionHeaders[key] {
+            if let prefix = headerDictionaryCopy![key] {
                 if let value = allHeaders[header] {
                     // check if the request contains the header we want to replace
                     if ((value.hasPrefix(prefix)) && (value.count > prefix.count)) {
