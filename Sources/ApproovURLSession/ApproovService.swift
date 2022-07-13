@@ -101,7 +101,7 @@ public class ApproovService {
     // the dispatch queue to manage serial access to the substitution headers dictionary
     private static let substitutionQueue = DispatchQueue(label: "ApproovService.substitution")
     
-    // set of URL regexs that should be excluded from any Approov protection, mapped to the compiled Pattern
+    // map of URL regexs that should be excluded from any Approov protection, mapped to the compiled Pattern
     private static var exclusionURLRegexs: Dictionary<String, NSRegularExpression> = Dictionary();
     
     // set of query parameters that may be substituted, specified by the key name
@@ -115,7 +115,7 @@ public class ApproovService {
      * ApproovException.configurationError If the Approov SDk fails to be initialized for some other
      * reason, an .initializationFailure is raised
      *
-     *@param config is the configuration to be used
+     * @param config is the configuration to be used
      */
     public static func initialize(config: String) throws {
         try initializerQueue.sync  {
@@ -227,7 +227,7 @@ public class ApproovService {
     /**
      * Removes the name of a header if it exists from the secure strings substitution dictionary.
      *
-     *@param header is the header to tbe removed for substitution
+     * @param header is the header to tbe removed for substitution
      */
     public static func removeSubstitutionHeader(header: String) {
         substitutionQueue.sync {
@@ -589,7 +589,7 @@ public class ApproovService {
      * @return ApproovUpdateResponse providing an updated requets, plus an errors and status
      */
     public static func updateRequestWithApproov(request: URLRequest, sessionConfig: URLSessionConfiguration?) -> ApproovUpdateResponse {
-        // Check if the SDK is not initialized or if the URL matches one of the exclusion regexs and just return if it does
+        // check if the SDK is not initialized or if the URL matches one of the exclusion regexs and just return if it does
         if let url = request.url {
             if !isInitialized {
                 os_log("ApproovService: not initialized, forwarding: %@", type: .info, url.absoluteString)
@@ -648,7 +648,7 @@ public class ApproovService {
             NSLog("ApproovService: dynamic configuration update received")
         }
         
-        // handle he Approov token fetch response
+        // handle the Approov token fetch response
         response.sdkMessage = Approov.string(from: approovResult.status)
         switch approovResult.status {
             case ApproovTokenFetchStatus.success:
