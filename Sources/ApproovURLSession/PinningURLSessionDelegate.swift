@@ -443,16 +443,16 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
         var pinsForHost: [String]
         let host = challenge.protectionSpace.host
         if let pins = approovPins[host] {
-            // if we have no pins defined for this host, accept connection (unpinned)
+            // the host pinning is managed by Approov
             pinsForHost = pins
             if pinsForHost.count == 0 {
-                // if there are no pins and no managed trust allow connection
+                // there are no pins set for the host so use managed trust roots if available
                 if approovPins["*"] == nil {
-                    // we do not pin connection explicitly setting no pins for the host
+                    // there are no managed trust roots so the host is truly unpinned
                     NSLog("ApproovService: pin verification \(host) no pins")
                     return serverTrust
                 } else {
-                    // there are no pins for current host, then we try and use any managed trust roots since "*" is available
+                    // use the managed trust roots for pinning
                     pinsForHost = approovPins["*"]!
                 }
             }

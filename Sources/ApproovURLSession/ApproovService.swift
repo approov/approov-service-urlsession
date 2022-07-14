@@ -752,7 +752,6 @@ public class ApproovService {
         // we now deal with any query parameter substitutions, which may require further fetches but these
         // should be using cached results
         if let currentURL = request.url {
-            // make a copy of original substitutionQuery set
             var substitutionQueryCopy:Set<String>?
             do {
                 objc_sync_enter(substitutionQueryParams)
@@ -765,10 +764,10 @@ public class ApproovService {
                 let regex = try! NSRegularExpression(pattern: #"[\\?&]"# + entry + #"=([^&;]+)"#, options: [])
                 let matches: [NSTextCheckingResult] = regex.matches(in: urlString, options: [], range: urlStringRange)
                 for match: NSTextCheckingResult in matches {
-                    // We skip the range at index 0 as this is the match (e.g. ?Api-Key=api_key_placeholder) for the whole
+                    // we skip the range at index 0 as this is the match (e.g. ?Api-Key=api_key_placeholder) for the whole
                     // regex, but we only want to replace the query parameter value part (e.g. api_key_placeholder)
                     for rangeIndex in 1..<match.numberOfRanges {
-                        // We have found an occurrence of the query parameter to be replaced so we look up the existing
+                        // we have found an occurrence of the query parameter to be replaced so we look up the existing
                         // value as a key for a secure string
                         let matchRange = match.range(at: rangeIndex)
                         if let substringRange = Range(matchRange, in: urlString) {
