@@ -435,7 +435,7 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
         
         // get the dynamic pins from Approov
         guard let approovPins = Approov.getPins("public-key-sha256") else {
-            NSLog("ApproovService: pin verification no Approov pins")
+            os_log("ApproovService: pin verification no Approov pins")
             return serverTrust
         }
         
@@ -449,7 +449,7 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
                 // there are no pins set for the host so use managed trust roots if available
                 if approovPins["*"] == nil {
                     // there are no managed trust roots so the host is truly unpinned
-                    NSLog("ApproovService: pin verification \(host) no pins")
+                    os_log("ApproovService: pin verification %@ no pins", host)
                     return serverTrust
                 } else {
                     // use the managed trust roots for pinning
@@ -458,7 +458,7 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
             }
         } else {
             // host is not pinned
-            NSLog("ApproovService: pin verification \(host) unpinned")
+            os_log("ApproovService: pin verification %@ unpinned", host)
             return serverTrust
         }
         
@@ -485,7 +485,7 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
             // see if we have a match on a pin for this certificate in the chain
             for pin in pinsForHost {
                 if publicKeyHashBase64 == pin {
-                    NSLog("ApproovService: matched pin \(pin) for \(host) from \(pinsForHost.count) pins")
+                    os_log("ApproovService: matched pin %@ for %@ from %d pins", pin, host, pinsForHost.count)
                     return serverTrust
                 }
             }
@@ -495,7 +495,7 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
         }
         
         // we return nil if no match in current set of pins from Approov SDK and certificate chain seen during the TLS handshake
-        NSLog("ApproovService: pin verification failed for \(host) with no match for \(pinsForHost.count) pins")
+        os_log("ApproovService: pin verification failed for %@ with no match for %d pins", host, pinsForHost.count)
         return nil
     }
 }

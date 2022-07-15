@@ -25,7 +25,7 @@ public enum ApproovError: Error, LocalizedError {
     case pinningError(message: String)
     case networkingError(message: String)
     case permanentError(message: String)
-    case rejectionError(message: String, ARC: String?, rejectionReasons: String?)
+    case rejectionError(message: String, ARC: String, rejectionReasons: String)
     public var localizedDescription: String {
         get {
             switch self {
@@ -37,11 +37,11 @@ public enum ApproovError: Error, LocalizedError {
                  return message
             case let .rejectionError(message, ARC, rejectionReasons):
                 var info: String = ""
-                if ARC != nil {
-                    info += ", ARC: " + ARC!
+                if ARC != "" {
+                    info += ", ARC: " + ARC
                 }
-                if rejectionReasons != nil {
-                    info += ", reasons: " + rejectionReasons!
+                if rejectionReasons != "" {
+                    info += ", reasons: " + rejectionReasons
                 }
                 return message + info
             }
@@ -73,14 +73,20 @@ public class ApproovService {
     // private initializer
     fileprivate init() {}
     
-    // status of Approov SDK initialization
-    private static var isInitialized = false
-    
-    // if we should proceed on network fail
-    private static var proceedOnNetworkFail = false
+    // the dispatch queue to manage serial access to intializer modified variables
+    private static let initializerQueue = DispatchQueue(label: "ApproovService.initializer", qos: .userInitiated)
     
     // the initial config string used to initialize
     private static var configString: String?
+    
+    // status of Approov SDK initialization
+    private static var isInitialized = false
+    
+    // the dispatch queue to manage serial access to other ApproovService state
+    private static let stateQueue = DispatchQueue(label: "ApproovService.state", qos: .userInitiated)
+    
+    // if we should proceed on network fail
+    private static var proceedOnNetworkFail = false
     
     // binding header string
     private static var bindingHeader = ""
@@ -91,21 +97,18 @@ public class ApproovService {
     // Approov token custom prefix: any prefix to be added such as "Bearer "
     private static var approovTokenPrefix = ""
     
-    // the dispatch queue to manage serial access to intializer modified variables
-    private static let initializerQueue = DispatchQueue(label: "ApproovService.initializer")
-    
     // map of headers that should have their values substituted for secure strings, mapped to their
     // required prefixes
-    private static var substitutionHeaders:Dictionary<String,String> = Dictionary<String,String>()
+    private static var substitutionHeaders:Dictionary<String, String> = Dictionary()
     
     // the dispatch queue to manage serial access to the substitution headers dictionary
     private static let substitutionQueue = DispatchQueue(label: "ApproovService.substitution")
     
-    // map of URL regexs that should be excluded from any Approov protection, mapped to the compiled Pattern
-    private static var exclusionURLRegexs: Dictionary<String, NSRegularExpression> = Dictionary();
-    
     // set of query parameters that may be substituted, specified by the key name
     private static var substitutionQueryParams: Set<String> = Set()
+    
+    // map of URL regexs that should be excluded from any Approov protection, mapped to the compiled Pattern
+    private static var exclusionURLRegexs: Dictionary<String, NSRegularExpression> = Dictionary();
     
     /**
      * Initializes the SDK with the config obtained using `approov sdk -getConfigString` or
@@ -119,7 +122,7 @@ public class ApproovService {
      */
     public static func initialize(config: String) throws {
         try initializerQueue.sync  {
-            // Check if we attempt to use a different configString
+            // check if we attempt to use a different configString
             if isInitialized {
                 if (config != configString) {
                     // throw exception indicating we are attempting to use different config
@@ -129,14 +132,14 @@ public class ApproovService {
             } else {
                 do {
                     if config.count > 0 {
-                        // Allow empty config string to initialize
+                        // only initialize with a non-empty string as empty string used to bypass this
                         try Approov.initialize(config, updateConfig: "auto", comment: nil)
                     }
                     configString = config
                     Approov.setUserProperty("approov-service-urlsession")
                     isInitialized = true
                 } catch let error {
-                    // Log error and throw exception
+                    // log error and throw exception
                     os_log("ApproovService: Error initializing Approov SDK: %@", type: .error, error.localizedDescription)
                     throw ApproovError.initializationFailure(message: "Error initializing Approov SDK: \(error.localizedDescription)")
                 }
@@ -156,9 +159,7 @@ public class ApproovService {
      * @param proceed is true if Approov networking fails should allow continuation
      */
     public static func setProceedOnNetworkFailure(proceed: Bool) {
-        do {
-            objc_sync_enter(proceedOnNetworkFail)
-            defer { objc_sync_exit(proceedOnNetworkFail) }
+        stateQueue.sync {
             proceedOnNetworkFail = proceed
             os_log("ApproovService: setProceedOnNetworkFailure ", type: .info, proceed)
         }
@@ -174,9 +175,7 @@ public class ApproovService {
      * @param header is the header to use for Approov token binding
      */
     public static func setBindingHeader(header: String) {
-        do {
-            objc_sync_enter(bindingHeader)
-            defer { objc_sync_exit(bindingHeader) }
+        stateQueue.sync {
             bindingHeader = header
             os_log("ApproovService: setBindingHeader: %@", type: .debug, header)
         }
@@ -191,9 +190,7 @@ public class ApproovService {
      * @param prefix is any prefix String for the Approov token header
      */
     public static func setApproovHeader(header: String, prefix: String) {
-        do {
-            objc_sync_enter(approovTokenHeader)
-            defer { objc_sync_exit(approovTokenHeader) }
+        stateQueue.sync {
             approovTokenHeader = header
             approovTokenPrefix = prefix
             os_log("ApproovService: setApproovHeader: %@", type: .debug, header, prefix)
@@ -211,15 +208,13 @@ public class ApproovService {
      * @param prefix is any required prefix to the value being substituted or nil if not required
      */
     public static func addSubstitutionHeader(header: String, prefix: String?) {
-        if isInitialized {
-            substitutionQueue.sync {
-                if prefix == nil {
-                    substitutionHeaders[header] = ""
-                    os_log("ApproovService: addSubstitutionHeader: %@", type: .debug, header)
-                } else {
-                    substitutionHeaders[header] = prefix
-                    os_log("ApproovService: addSubstitutionHeader: %@ %@", type: .debug, header, prefix!)
-                }
+        stateQueue.sync {
+            if prefix == nil {
+                substitutionHeaders[header] = ""
+                os_log("ApproovService: addSubstitutionHeader: %@", type: .debug, header)
+            } else {
+                substitutionHeaders[header] = prefix
+                os_log("ApproovService: addSubstitutionHeader: %@ %@", type: .debug, header, prefix!)
             }
         }
     }
@@ -230,13 +225,11 @@ public class ApproovService {
      * @param header is the header to tbe removed for substitution
      */
     public static func removeSubstitutionHeader(header: String) {
-        substitutionQueue.sync {
-            if isInitialized {
-                if substitutionHeaders[header] != nil {
-                    substitutionHeaders.removeValue(forKey: header)
-                }
-                os_log("ApproovService: removeSubstitutionHeader: %@", type: .debug, header)
+        stateQueue.sync {
+            if substitutionHeaders[header] != nil {
+                substitutionHeaders.removeValue(forKey: header)
             }
+            os_log("ApproovService: removeSubstitutionHeader: %@", type: .debug, header)
         }
     }
     
@@ -251,9 +244,7 @@ public class ApproovService {
      * @param key is the query parameter key name to be added for substitution
      */
     public static func addSubstitutionQueryParam(key: String) {
-        do {
-            objc_sync_enter(substitutionQueryParams)
-            defer { objc_sync_exit(substitutionQueryParams) }
+        stateQueue.sync {
             substitutionQueryParams.insert(key)
             os_log("ApproovService: addSubstitutionQueryParam: %@", type: .debug, key)
         }
@@ -265,11 +256,9 @@ public class ApproovService {
      * @param key is the query parameter key name to be removed for substitution
      */
     public static func removeSubstitutionQueryParam(key: String) {
-        do {
-            objc_sync_enter(substitutionQueryParams)
-            defer { objc_sync_exit(substitutionQueryParams) }
-            os_log("ApproovService: removeSubstitutionQueryParam: %@", type: .debug, key)
+        stateQueue.sync {
             substitutionQueryParams.remove(key)
+            os_log("ApproovService: removeSubstitutionQueryParam: %@", type: .debug, key)
         }
     }
     
@@ -288,14 +277,14 @@ public class ApproovService {
      * @param urlRegex is the regular expression that will be compared against URLs to exclude them
      */
     public static func addExclusionURLRegex(urlRegex: String) {
-        do {
-            objc_sync_enter(exclusionURLRegexs)
-            defer { objc_sync_exit(exclusionURLRegexs) }
-            let regex = try NSRegularExpression(pattern: urlRegex, options: [])
-            exclusionURLRegexs[urlRegex] = regex
-            os_log("ApproovService: addExclusionURLRegex: %@", type: .debug, urlRegex)
-        } catch {
-            os_log("ApproovService: addExclusionURLRegex: %@ error: %@", type: .debug, urlRegex, error.localizedDescription)
+        stateQueue.sync {
+            do {
+                let regex = try NSRegularExpression(pattern: urlRegex, options: [])
+                exclusionURLRegexs[urlRegex] = regex
+                os_log("ApproovService: addExclusionURLRegex: %@", type: .debug, urlRegex)
+            } catch {
+                os_log("ApproovService: addExclusionURLRegex: %@ error: %@", type: .debug, urlRegex, error.localizedDescription)
+            }
         }
     }
 
@@ -305,12 +294,10 @@ public class ApproovService {
      * @param urlRegex is the regular expression that will be compared against URLs to exclude them
      */
     public static func removeExclusionURLRegex(urlRegex: String) {
-        do {
-            objc_sync_enter(exclusionURLRegexs)
-            defer { objc_sync_exit(exclusionURLRegexs) }
+        stateQueue.sync {
             if exclusionURLRegexs[urlRegex] != nil {
-                os_log("ApproovService: removeExclusionURLRegex: %@", type: .debug, urlRegex)
                 exclusionURLRegexs.removeValue(forKey: urlRegex)
+                os_log("ApproovService: removeExclusionURLRegex: %@", type: .debug, urlRegex)
             }
         }
     }
@@ -565,9 +552,7 @@ public class ApproovService {
      * @return  Bool true if url matches preset pattern in Dictionary
      */
     private static func isURLExcluded(url: URL) -> Bool {
-        do {
-            objc_sync_enter(exclusionURLRegexs)
-            defer { objc_sync_exit(exclusionURLRegexs) }
+        return stateQueue.sync {
             for (_, regex) in exclusionURLRegexs {
                 let urlString = url.absoluteString
                 let urlStringRange = NSRange(urlString.startIndex..<urlString.endIndex, in: urlString)
@@ -576,8 +561,8 @@ public class ApproovService {
                     return true;
                 }
             }
+            return false
         }
-        return false
     }
     
     /**
@@ -623,16 +608,13 @@ public class ApproovService {
         }
         
         // check if Bind Header is set to a non empty String
-        var bindHeader = ""
-        do {
-            objc_sync_enter(bindingHeader)
-            defer { objc_sync_exit(bindingHeader) }
-            bindHeader = bindingHeader
+        let bindHeader = stateQueue.sync {
+            return bindingHeader
         }
         if bindHeader != "" {
             // see if the binding header is present
             if let value = allHeaders[bindHeader] {
-                // add the Bind Header as a data hash to Approov token
+                // add the binding header value as a data hash to Approov token
                 Approov.setDataHashInToken(value)
             }
         }
@@ -645,7 +627,7 @@ public class ApproovService {
         // log if a configuration update is received and call fetchConfig to clear the update state
         if approovResult.isConfigChanged {
             Approov.fetchConfig()
-            NSLog("ApproovService: dynamic configuration update received")
+            os_log("ApproovService: dynamic configuration update received")
         }
         
         // handle the Approov token fetch response
@@ -654,13 +636,11 @@ public class ApproovService {
             case ApproovTokenFetchStatus.success:
                 // go ahead and make the API call and add the Approov token header
                 response.decision = .ShouldProceed
-                var tokenHeader = ""
-                var tokenPrefix = ""
-                do {
-                    objc_sync_enter(approovTokenHeader)
-                    defer { objc_sync_exit(approovTokenHeader) }
-                    tokenHeader = approovTokenHeader
-                    tokenPrefix = approovTokenPrefix
+                let tokenHeader = stateQueue.sync {
+                    return approovTokenHeader
+                }
+                let tokenPrefix = stateQueue.sync {
+                    return approovTokenPrefix
                 }
                 response.request.setValue(tokenPrefix + approovResult.token, forHTTPHeaderField: tokenHeader)
             case ApproovTokenFetchStatus.noNetwork,
@@ -694,56 +674,50 @@ public class ApproovService {
         
         // we now deal with any headers substitutions, which may require further fetches but these
         // should be using cached results
-        var headerDictionaryCopy:Dictionary<String,String>?
-        do {
-            objc_sync_enter(substitutionHeaders)
-            defer { objc_sync_exit(substitutionHeaders) }
-            headerDictionaryCopy = substitutionHeaders
+        let subsHeadersCopy = stateQueue.sync {
+            return substitutionHeaders
         }
-        for (key, _) in headerDictionaryCopy! {
-            let header = key
-            if let prefix = headerDictionaryCopy![key] {
-                if let value = allHeaders[header] {
-                    // check if the request contains the header we want to replace
-                    if ((value.hasPrefix(prefix)) && (value.count > prefix.count)) {
-                        let index = prefix.index(prefix.startIndex, offsetBy: prefix.count)
-                        let approovResults = Approov.fetchSecureStringAndWait(String(value.suffix(from:index)), nil)
-                        os_log("ApproovService: Substituting header: %@, %@", type: .info, header, Approov.string(from: approovResults.status))
-                        
-                        // process the result of the token fetch operation
-                        if approovResults.status == ApproovTokenFetchStatus.success {
-                            // we add the modified header to the new copy of request
-                            if let secureStringResult = approovResults.secureString {
-                                response.request.setValue(prefix + secureStringResult, forHTTPHeaderField: key)
-                            } else {
-                                // secure string is nil
-                                response.decision = .ShouldFail
-                                response.error = ApproovError.permanentError(message: "Header substitution: key lookup error")
-                                return response
-                            }
-                        } else if approovResults.status == ApproovTokenFetchStatus.rejected {
-                            // if the request is rejected then we provide a special exception with additional information
+        for (header, prefix) in subsHeadersCopy {
+            if let value = allHeaders[header] {
+                // check if the request contains the header we want to replace
+                if ((value.hasPrefix(prefix)) && (value.count > prefix.count)) {
+                    let index = prefix.index(prefix.startIndex, offsetBy: prefix.count)
+                    let approovResults = Approov.fetchSecureStringAndWait(String(value.suffix(from:index)), nil)
+                    os_log("ApproovService: Substituting header: %@, %@", type: .info, header, Approov.string(from: approovResults.status))
+                    
+                    // process the result of the token fetch operation
+                    if approovResults.status == ApproovTokenFetchStatus.success {
+                        // we add the modified header to the new copy of request
+                        if let secureStringResult = approovResults.secureString {
+                            response.request.setValue(prefix + secureStringResult, forHTTPHeaderField: header)
+                        } else {
+                            // secure string is nil
                             response.decision = .ShouldFail
-                            response.error = ApproovError.rejectionError(message:
-                                    "Header substitution: rejected",
-                                    ARC: approovResults.arc, rejectionReasons: approovResults.rejectionReasons)
-                            return response
-                        } else if approovResults.status == ApproovTokenFetchStatus.noNetwork ||
-                                  approovResults.status == ApproovTokenFetchStatus.poorNetwork ||
-                                  approovResults.status == ApproovTokenFetchStatus.mitmDetected {
-                            // we are unable to get the secure string due to network conditions so the request can
-                            // be retried by the user later
-                            if !proceedOnNetworkFail {
-                                response.decision = .ShouldRetry
-                                response.error = ApproovError.networkingError(message: "Header substitution: network issue, retry needed")
-                                return response
-                            }
-                        } else if approovResults.status != ApproovTokenFetchStatus.unknownKey {
-                            // we have failed to get a secure string with a more serious permanent error
-                            response.decision = .ShouldFail
-                            response.error = ApproovError.permanentError(message: "Header substitution: " + Approov.string(from: approovResults.status))
+                            response.error = ApproovError.permanentError(message: "Header substitution: key lookup error")
                             return response
                         }
+                    } else if approovResults.status == ApproovTokenFetchStatus.rejected {
+                        // if the request is rejected then we provide a special exception with additional information
+                        response.decision = .ShouldFail
+                        response.error = ApproovError.rejectionError(message:
+                                "Header substitution: rejected",
+                                ARC: approovResults.arc, rejectionReasons: approovResults.rejectionReasons)
+                        return response
+                    } else if approovResults.status == ApproovTokenFetchStatus.noNetwork ||
+                              approovResults.status == ApproovTokenFetchStatus.poorNetwork ||
+                              approovResults.status == ApproovTokenFetchStatus.mitmDetected {
+                        // we are unable to get the secure string due to network conditions so the request can
+                        // be retried by the user later
+                        if !proceedOnNetworkFail {
+                            response.decision = .ShouldRetry
+                            response.error = ApproovError.networkingError(message: "Header substitution: network issue, retry needed")
+                            return response
+                        }
+                    } else if approovResults.status != ApproovTokenFetchStatus.unknownKey {
+                        // we have failed to get a secure string with a more serious permanent error
+                        response.decision = .ShouldFail
+                        response.error = ApproovError.permanentError(message: "Header substitution: " + Approov.string(from: approovResults.status))
+                        return response
                     }
                 }
             }
@@ -752,13 +726,10 @@ public class ApproovService {
         // we now deal with any query parameter substitutions, which may require further fetches but these
         // should be using cached results
         if let currentURL = request.url {
-            var substitutionQueryCopy:Set<String>?
-            do {
-                objc_sync_enter(substitutionQueryParams)
-                defer { objc_sync_exit(substitutionQueryParams) }
-                substitutionQueryCopy = substitutionQueryParams
+            let subsQueryParamsCopy = stateQueue.sync {
+                return substitutionQueryParams
             }
-            for entry in substitutionQueryCopy! {
+            for entry in subsQueryParamsCopy {
                 var urlString = currentURL.absoluteString
                 let urlStringRange = NSRange(urlString.startIndex..<urlString.endIndex, in: urlString)
                 let regex = try! NSRegularExpression(pattern: #"[\\?&]"# + entry + #"=([^&;]+)"#, options: [])
