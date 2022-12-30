@@ -31,6 +31,10 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
             0x30, 0x82, 0x01, 0x22, 0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01, 0x05,
             0x00, 0x03, 0x82, 0x01, 0x0f, 0x00
         ]
+        static let rsa3072SPKIHeader:[UInt8] = [
+            0x30, 0x82, 0x01, 0xa2, 0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01, 0x05,
+            0x00, 0x03, 0x82, 0x01, 0x8f, 0x00
+        ]
         static let rsa4096SPKIHeader:[UInt8]  = [
             0x30, 0x82, 0x02, 0x22, 0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01, 0x05,
             0x00, 0x03, 0x82, 0x02, 0x0f, 0x00
@@ -54,6 +58,7 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
     private static func initializeSPKI() {
         var rsaDict = [Int:Data]()
         rsaDict[2048] = Data(Constants.rsa2048SPKIHeader)
+        rsaDict[3072] = Data(Constants.rsa3072SPKIHeader)
         rsaDict[4096] = Data(Constants.rsa4096SPKIHeader)
         var eccDict = [Int:Data]()
         eccDict[256] = Data(Constants.ecdsaSecp256r1SPKIHeader)
@@ -336,7 +341,7 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
      * Gets the Subject Public Key Info (SPKI) header depending on a public key's type and size.
      *
      * @param publlcKey is the public key of the certificate
-     * @return the public key SPKI header, or nul if there was a problem
+     * @return the public key SPKI header, or nil if there was a problem
      */
     private func publicKeyInfoHeaderForKey(publicKey: SecKey) -> Data? {
         guard let publicKeyAttributes = SecKeyCopyAttributes(publicKey) else {
@@ -374,11 +379,13 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
                 return nil
             }
             
-            // get a public key reference for the certificate from the trust
+            // check the validity of the certificate
             var secTrustResultType = SecTrustResultType.invalid
             if SecTrustEvaluate(secTrust!, &secTrustResultType) != errSecSuccess {
                 return nil
             }
+            
+            // get a public key reference for the certificate from the trust
             publicKey = SecTrustCopyPublicKey(secTrust!)
             
         }
@@ -426,11 +433,18 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
         }
         
         // check the validity of the server cert
-        var trustType = SecTrustResultType.invalid
-        if (SecTrustEvaluate(serverTrust, &trustType) != errSecSuccess) {
-            throw ApproovError.pinningError(message: "Error during Certificate Trust Evaluation for host \(challenge.protectionSpace.host)")
-        } else if (trustType != SecTrustResultType.proceed) && (trustType != SecTrustResultType.unspecified) {
-            throw ApproovError.pinningError(message: "Error: Certificate Trust Evaluation failure for host \(challenge.protectionSpace.host)")
+        if #available(iOS 12.0, *) {
+            if (!SecTrustEvaluateWithError(serverTrust, nil)) {
+                throw ApproovError.pinningError(message: "Error during Certificate Trust Evaluation for host \(challenge.protectionSpace.host)")
+            }
+        }
+        else {
+            var trustType = SecTrustResultType.invalid
+            if (SecTrustEvaluate(serverTrust, &trustType) != errSecSuccess) {
+                throw ApproovError.pinningError(message: "Error during Certificate Trust Evaluation for host \(challenge.protectionSpace.host)")
+            } else if (trustType != SecTrustResultType.proceed) && (trustType != SecTrustResultType.unspecified) {
+                throw ApproovError.pinningError(message: "Error: Certificate Trust Evaluation failure for host \(challenge.protectionSpace.host)")
+            }
         }
         
         // get the dynamic pins from Approov
@@ -466,28 +480,30 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
         let certCountInChain = SecTrustGetCertificateCount(serverTrust);
         var indexCurrentCert = 0;
         while (indexCurrentCert < certCountInChain) {
-            // get the current certificate from the chain
+            // get the current certificate from the chain - not that this function is deprecated at iOS 15 but the
+            // replacement is not available until iOS 15 and has a significantly different interface so we cannot
+            // update this yet
             guard let serverCert = SecTrustGetCertificateAtIndex(serverTrust, indexCurrentCert) else {
                 throw ApproovError.pinningError(message:
                     "Error getting certificate at index \(indexCurrentCert) from chain for host \(challenge.protectionSpace.host)")
             }
             
             // get the subject public key info from the certificate
-            guard let publicKeyInfo = publicKeyInfoOfCertificate(certificate: serverCert) else {
-                throw ApproovError.pinningError(message:
-                    "Error parsing SPKI header for host \(challenge.protectionSpace.host) Unsupported certificate type, SPKI header cannot be created")
-            }
-            
-            // compute the SHA-256 hash of the public key info and base64 encode to create the pin value
-            let publicKeyHash = sha256(data: publicKeyInfo)
-            let publicKeyHashBase64 = String(data:publicKeyHash.base64EncodedData(), encoding: .utf8)
-            
-            // see if we have a match on a pin for this certificate in the chain
-            for pin in pinsForHost {
-                if publicKeyHashBase64 == pin {
-                    os_log("ApproovService: matched pin %@ for %@ from %d pins", pin, host, pinsForHost.count)
-                    return serverTrust
+            if let publicKeyInfo = publicKeyInfoOfCertificate(certificate: serverCert) {
+                // compute the SHA-256 hash of the public key info and base64 encode to create the pin value
+                let publicKeyHash = sha256(data: publicKeyInfo)
+                let publicKeyHashBase64 = String(data:publicKeyHash.base64EncodedData(), encoding: .utf8)
+                
+                // see if we have a match on a pin for this certificate in the chain
+                for pin in pinsForHost {
+                    if publicKeyHashBase64 == pin {
+                        os_log("ApproovService: matched pin %@ for %@ from %d pins", pin, host, pinsForHost.count)
+                        return serverTrust
+                    }
                 }
+            }
+            else {
+                os_log("ApproovService: skippng unsupported certificate type")
             }
             
             // move to the next certificate in the chain
