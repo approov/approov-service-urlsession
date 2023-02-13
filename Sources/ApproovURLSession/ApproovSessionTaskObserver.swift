@@ -44,10 +44,10 @@ public class ApproovSessionTaskObserver: NSObject {
     
     // the pinning session being used, so that it can be informed if it is being
     // invalidated due to any error
-    private var pinningSession: URLSession?
+    //private var pinningSession: URLSession?
     
     // the pinning delegate being used to be informed of errors
-    private var pinningDelegate: PinningURLSessionDelegate
+    //private var pinningDelegate: PinningURLSessionDelegate
     
     /**
      * Creates a new task observer. Pinning delegate information needs to be provided to allow it to
@@ -56,12 +56,13 @@ public class ApproovSessionTaskObserver: NSObject {
      * @param session is the URLSession that the observer is for
      * @param delegate is the pinning URL session delegate that the observer is for
      */
+    /*
     init(session: URLSession, delegate: PinningURLSessionDelegate) {
         pinningSession = session
         pinningDelegate = delegate
         super.init()
     }
-    
+    */
     /**
      * Adds a task UUID mapped to a function to be invoked as a callback in case of an error.
      *
@@ -124,8 +125,7 @@ public class ApproovSessionTaskObserver: NSObject {
         if keyPath == ApproovSessionTaskObserver.stateString {
             // we remove ourselves as an observer as we do not need any further state changes
             let task = object as! URLSessionTask
-            task.removeObserver(self, forKeyPath: ApproovSessionTaskObserver.stateString)
-            
+            task.removeObserver(self, forKeyPath: ApproovSessionTaskObserver.stateString)            
             // get any completion handler and session config from the dictionary and then remove it
             var completionHandler: Any?
             var sessionConfig: URLSessionConfiguration?
@@ -184,17 +184,25 @@ public class ApproovSessionTaskObserver: NSObject {
                             task.resume()
                         }
                     } else if task.state == URLSessionTask.State.suspended {
-                        // the task is still suspended and we have an error condition, first inform the pinning delegate
-                        self.pinningDelegate.urlSession(self.pinningSession!, didBecomeInvalidWithError: updateResponse.error)
-                    
-                        // call any completion handler with the error or cancel if there is no completion handler
-                        if let handler = completionHandler as! CompletionHandlerData {
-                            handler(nil, nil, updateResponse.error)
-                        } else if let handler = completionHandler as! CompletionHandlerURL {
-                            handler(nil, nil, updateResponse.error)
-                        } else {
-                            task.cancel()
-                        }
+                        if let pinningSession = context?.assumingMemoryBound(to: URLSession.self).pointee {
+                            defer {
+                                context?.deallocate()
+                            }
+                            if let pinningDelegate = pinningSession.delegate {
+                                // the task is still suspended and we have an error condition, first inform the pinning delegate
+                                pinningDelegate.urlSession!(pinningSession, didBecomeInvalidWithError: updateResponse.error)
+                                
+                                // call any completion handler with the error or cancel if there is no completion handler
+                                if let handler = completionHandler as! CompletionHandlerData {
+                                    handler(nil, nil, updateResponse.error)
+                                } else if let handler = completionHandler as! CompletionHandlerURL {
+                                    handler(nil, nil, updateResponse.error)
+                                } else {
+                                    task.cancel()
+                                }
+                            }
+                        }// .pointee
+                        
                     }
                 }
             }
