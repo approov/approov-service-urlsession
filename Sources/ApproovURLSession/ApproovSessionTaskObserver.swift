@@ -159,6 +159,10 @@ public class ApproovSessionTaskObserver: NSObject {
                 DispatchQueue.global(qos: .userInitiated).async {
                     // update the request using Approov and handler its response
                     let updateResponse = ApproovService.updateRequestWithApproov(request: task.currentRequest!, sessionConfig: sessionConfig)
+                    // We can dispose of the URLSession pointer after the execution of this block
+                    defer {
+                        context?.deallocate()
+                    }
                     if updateResponse.decision == .ShouldProceed {
                         // modify original requestby calling the "updateCurrentRequest" method in the underlying
                         // Objective-C implementation
@@ -185,9 +189,6 @@ public class ApproovSessionTaskObserver: NSObject {
                         }
                     } else if task.state == URLSessionTask.State.suspended {
                         if let pinningSession = context?.assumingMemoryBound(to: URLSession.self).pointee {
-                            defer {
-                                context?.deallocate()
-                            }
                             if let pinningDelegate = pinningSession.delegate {
                                 // the task is still suspended and we have an error condition, first inform the pinning delegate
                                 pinningDelegate.urlSession!(pinningSession, didBecomeInvalidWithError: updateResponse.error)
@@ -200,9 +201,12 @@ public class ApproovSessionTaskObserver: NSObject {
                                 } else {
                                     task.cancel()
                                 }
+                            } else {
+                                os_log("ApproovService: Pinning Delegate from url session pointer is invalid", type: .error)
                             }
-                        }// .pointee
-                        
+                        } else {
+                            os_log("ApproovService: Pinning Session pointer is invalid/ not of type URLSession %@", type: .error, context.debugDescription)
+                        }
                     }
                 }
             }
