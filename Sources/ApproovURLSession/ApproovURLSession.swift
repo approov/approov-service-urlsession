@@ -68,9 +68,9 @@ public class ApproovURLSession: URLSession {
      */
     public override func dataTask(with request: URLRequest) -> URLSessionDataTask {
         let task = self.pinnedURLSession.dataTask(with: request)
-        let aSessionPointer = UnsafeMutablePointer<URLSession>.allocate(capacity: 1)
-        aSessionPointer.pointee = pinnedURLSession
-        task.addObserver(ApproovURLSession.taskObserver, forKeyPath: "state", options: NSKeyValueObservingOptions.new, context: aSessionPointer)
+        let sessionPointer = UnsafeMutablePointer<URLSession>.allocate(capacity: 1)
+        sessionPointer.pointee = pinnedURLSession
+        task.addObserver(ApproovURLSession.taskObserver, forKeyPath: "state", options: NSKeyValueObservingOptions.new, context: sessionPointer)
         ApproovURLSession.taskObserver.addSessionConfig(taskId: task.taskIdentifier, sessionConfig: urlSessionConfiguration)
         return task
     }
@@ -91,9 +91,9 @@ public class ApproovURLSession: URLSession {
         
         let task = self.pinnedURLSession.dataTask(with: request, completionHandler: completionHandler)
         // Session pointer
-        let aSessionPointer = UnsafeMutablePointer<URLSession>.allocate(capacity: 1)
-        aSessionPointer.pointee = pinnedURLSession
-        task.addObserver(ApproovURLSession.taskObserver, forKeyPath: "state", options: NSKeyValueObservingOptions.new, context: aSessionPointer)
+        let sessionPointer = UnsafeMutablePointer<URLSession>.allocate(capacity: 1)
+        sessionPointer.pointee = pinnedURLSession
+        task.addObserver(ApproovURLSession.taskObserver, forKeyPath: "state", options: NSKeyValueObservingOptions.new, context: sessionPointer)
         ApproovURLSession.taskObserver.addCompletionHandler(taskId: task.taskIdentifier, handler: completionHandler)
         ApproovURLSession.taskObserver.addSessionConfig(taskId: task.taskIdentifier, sessionConfig: urlSessionConfiguration)
         return task
@@ -116,9 +116,9 @@ public class ApproovURLSession: URLSession {
      */
     public override func downloadTask(with request: URLRequest) -> URLSessionDownloadTask {
         let task = self.pinnedURLSession.downloadTask(with: request)
-        let aSessionPointer = UnsafeMutablePointer<URLSession>.allocate(capacity: 1)
-        aSessionPointer.pointee = pinnedURLSession
-        task.addObserver(ApproovURLSession.taskObserver, forKeyPath: "state", options: NSKeyValueObservingOptions.new, context: aSessionPointer)
+        let sessionPointer = UnsafeMutablePointer<URLSession>.allocate(capacity: 1)
+        sessionPointer.pointee = pinnedURLSession
+        task.addObserver(ApproovURLSession.taskObserver, forKeyPath: "state", options: NSKeyValueObservingOptions.new, context: sessionPointer)
         ApproovURLSession.taskObserver.addSessionConfig(taskId: task.taskIdentifier, sessionConfig: urlSessionConfiguration)
         return task
     }
@@ -139,9 +139,9 @@ public class ApproovURLSession: URLSession {
      */
     public override func downloadTask(with request: URLRequest, completionHandler: @escaping (URL?, URLResponse?, Error?) -> Void) -> URLSessionDownloadTask {
         let task = self.pinnedURLSession.downloadTask(with: request, completionHandler: completionHandler)
-        let aSessionPointer = UnsafeMutablePointer<URLSession>.allocate(capacity: 1)
-        aSessionPointer.pointee = pinnedURLSession
-        task.addObserver(ApproovURLSession.taskObserver, forKeyPath: "state", options: NSKeyValueObservingOptions.new, context: aSessionPointer)
+        let sessionPointer = UnsafeMutablePointer<URLSession>.allocate(capacity: 1)
+        sessionPointer.pointee = pinnedURLSession
+        task.addObserver(ApproovURLSession.taskObserver, forKeyPath: "state", options: NSKeyValueObservingOptions.new, context: sessionPointer)
         ApproovURLSession.taskObserver.addCompletionHandler(taskId: task.taskIdentifier, handler: completionHandler)
         ApproovURLSession.taskObserver.addSessionConfig(taskId: task.taskIdentifier, sessionConfig: urlSessionConfiguration)
         return task
@@ -172,9 +172,9 @@ public class ApproovURLSession: URLSession {
      */
     public override func uploadTask(with request: URLRequest, from: Data) -> URLSessionUploadTask {
         let task = pinnedURLSession.uploadTask(with: request, from: from)
-        let aSessionPointer = UnsafeMutablePointer<URLSession>.allocate(capacity: 1)
-        aSessionPointer.pointee = pinnedURLSession
-        task.addObserver(ApproovURLSession.taskObserver, forKeyPath: "state", options: NSKeyValueObservingOptions.new, context: aSessionPointer)
+        let sessionPointer = UnsafeMutablePointer<URLSession>.allocate(capacity: 1)
+        sessionPointer.pointee = pinnedURLSession
+        task.addObserver(ApproovURLSession.taskObserver, forKeyPath: "state", options: NSKeyValueObservingOptions.new, context: sessionPointer)
         ApproovURLSession.taskObserver.addSessionConfig(taskId: task.taskIdentifier, sessionConfig: urlSessionConfiguration)
         return task
     }
@@ -186,9 +186,9 @@ public class ApproovURLSession: URLSession {
      */
     public override func uploadTask(with request: URLRequest, from: Data?, completionHandler: @escaping (Data?, URLResponse?, Error?) -> Void) -> URLSessionUploadTask {
         let task = self.pinnedURLSession.uploadTask(with: request, from: from, completionHandler:  completionHandler)
-        let aSessionPointer = UnsafeMutablePointer<URLSession>.allocate(capacity: 1)
-        aSessionPointer.pointee = pinnedURLSession
-        task.addObserver(ApproovURLSession.taskObserver, forKeyPath: "state", options: NSKeyValueObservingOptions.new, context: aSessionPointer)
+        let sessionPointer = UnsafeMutablePointer<URLSession>.allocate(capacity: 1)
+        sessionPointer.pointee = pinnedURLSession
+        task.addObserver(ApproovURLSession.taskObserver, forKeyPath: "state", options: NSKeyValueObservingOptions.new, context: sessionPointer)
         ApproovURLSession.taskObserver.addCompletionHandler(taskId: task.taskIdentifier, handler: completionHandler)
         ApproovURLSession.taskObserver.addSessionConfig(taskId: task.taskIdentifier, sessionConfig: urlSessionConfiguration)
         return task
@@ -200,9 +200,9 @@ public class ApproovURLSession: URLSession {
      */
     public override func uploadTask(with request: URLRequest, fromFile: URL) -> URLSessionUploadTask {
         let task = self.pinnedURLSession.uploadTask(with: request, fromFile: fromFile)
-        let aSessionPointer = UnsafeMutablePointer<URLSession>.allocate(capacity: 1)
-        aSessionPointer.pointee = pinnedURLSession
-        task.addObserver(ApproovURLSession.taskObserver, forKeyPath: "state", options: NSKeyValueObservingOptions.new, context: aSessionPointer)
+        let sessionPointer = UnsafeMutablePointer<URLSession>.allocate(capacity: 1)
+        sessionPointer.pointee = pinnedURLSession
+        task.addObserver(ApproovURLSession.taskObserver, forKeyPath: "state", options: NSKeyValueObservingOptions.new, context: sessionPointer)
         ApproovURLSession.taskObserver.addSessionConfig(taskId: task.taskIdentifier, sessionConfig: urlSessionConfiguration)
         return task
     }
@@ -214,9 +214,9 @@ public class ApproovURLSession: URLSession {
      */
     public override func uploadTask(with request: URLRequest, fromFile: URL, completionHandler: @escaping (Data?, URLResponse?, Error?) -> Void) -> URLSessionUploadTask {
         let task = self.pinnedURLSession.uploadTask(with: request, fromFile: fromFile, completionHandler: completionHandler)
-        let aSessionPointer = UnsafeMutablePointer<URLSession>.allocate(capacity: 1)
-        aSessionPointer.pointee = pinnedURLSession
-        task.addObserver(ApproovURLSession.taskObserver, forKeyPath: "state", options: NSKeyValueObservingOptions.new, context: aSessionPointer)
+        let sessionPointer = UnsafeMutablePointer<URLSession>.allocate(capacity: 1)
+        sessionPointer.pointee = pinnedURLSession
+        task.addObserver(ApproovURLSession.taskObserver, forKeyPath: "state", options: NSKeyValueObservingOptions.new, context: sessionPointer)
         ApproovURLSession.taskObserver.addCompletionHandler(taskId: task.taskIdentifier, handler: completionHandler)
         ApproovURLSession.taskObserver.addSessionConfig(taskId: task.taskIdentifier, sessionConfig: urlSessionConfiguration)
         return task
@@ -228,9 +228,9 @@ public class ApproovURLSession: URLSession {
      */
     public override func uploadTask(withStreamedRequest: URLRequest) -> URLSessionUploadTask {
         let task = self.pinnedURLSession.uploadTask(withStreamedRequest: withStreamedRequest)
-        let aSessionPointer = UnsafeMutablePointer<URLSession>.allocate(capacity: 1)
-        aSessionPointer.pointee = pinnedURLSession
-        task.addObserver(ApproovURLSession.taskObserver, forKeyPath: "state", options: NSKeyValueObservingOptions.new, context: aSessionPointer)
+        let sessionPointer = UnsafeMutablePointer<URLSession>.allocate(capacity: 1)
+        sessionPointer.pointee = pinnedURLSession
+        task.addObserver(ApproovURLSession.taskObserver, forKeyPath: "state", options: NSKeyValueObservingOptions.new, context: sessionPointer)
         ApproovURLSession.taskObserver.addSessionConfig(taskId: task.taskIdentifier, sessionConfig: urlSessionConfiguration)
         return task
     }
