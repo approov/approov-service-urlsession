@@ -125,7 +125,9 @@ public class ApproovSessionTaskObserver: NSObject {
         if keyPath == ApproovSessionTaskObserver.stateString {
             // we remove ourselves as an observer as we do not need any further state changes
             let task = object as! URLSessionTask
-            task.removeObserver(self, forKeyPath: ApproovSessionTaskObserver.stateString)            
+            task.removeObserver(self, forKeyPath: ApproovSessionTaskObserver.stateString)
+            // The pinning session
+            let customPinningSession: URLSession? = context?.assumingMemoryBound(to: URLSession.self).pointee
             // get any completion handler and session config from the dictionary and then remove it
             var completionHandler: Any?
             var sessionConfig: URLSessionConfiguration?
@@ -164,7 +166,7 @@ public class ApproovSessionTaskObserver: NSObject {
                         context?.deallocate()
                     }
                     if updateResponse.decision == .ShouldProceed {
-                        // modify original requestby calling the "updateCurrentRequest" method in the underlying
+                        // modify original request by calling the "updateCurrentRequest" method in the underlying
                         // Objective-C implementation
                         let sel = NSSelectorFromString("updateCurrentRequest:")
                         if task.responds(to: sel) {
@@ -188,11 +190,10 @@ public class ApproovSessionTaskObserver: NSObject {
                             task.resume()
                         }
                     } else if task.state == URLSessionTask.State.suspended {
-                        if let pinningSession = context?.assumingMemoryBound(to: URLSession.self).pointee {
+                        if let pinningSession = customPinningSession {
                             if let pinningDelegate = pinningSession.delegate {
                                 // the task is still suspended and we have an error condition, first inform the pinning delegate
                                 pinningDelegate.urlSession!(pinningSession, didBecomeInvalidWithError: updateResponse.error)
-                                
                                 // call any completion handler with the error or cancel if there is no completion handler
                                 if let handler = completionHandler as! CompletionHandlerData {
                                     handler(nil, nil, updateResponse.error)
@@ -205,7 +206,7 @@ public class ApproovSessionTaskObserver: NSObject {
                                 os_log("ApproovService: Pinning Delegate from url session pointer is invalid", type: .error)
                             }
                         } else {
-                            os_log("ApproovService: Pinning Session pointer is invalid/ not of type URLSession %@", type: .error, context.debugDescription)
+                            os_log("ApproovService: Pinning Session pointer is invalid/not of type URLSession %@", type: .error, context.debugDescription)
                         }
                     }
                 }
