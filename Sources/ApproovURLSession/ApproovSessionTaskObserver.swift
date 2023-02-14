@@ -41,28 +41,8 @@ public class ApproovSessionTaskObserver: NSObject {
     
     // the dispatch queue to manage serial access to the dictionary
     private let handlersQueue = DispatchQueue(label: "ApproovSessionTaskObserver")
+
     
-    // the pinning session being used, so that it can be informed if it is being
-    // invalidated due to any error
-    //private var pinningSession: URLSession?
-    
-    // the pinning delegate being used to be informed of errors
-    //private var pinningDelegate: PinningURLSessionDelegate
-    
-    /**
-     * Creates a new task observer. Pinning delegate information needs to be provided to allow it to
-     * be informed if there is an error.
-     *
-     * @param session is the URLSession that the observer is for
-     * @param delegate is the pinning URL session delegate that the observer is for
-     */
-    /*
-    init(session: URLSession, delegate: PinningURLSessionDelegate) {
-        pinningSession = session
-        pinningDelegate = delegate
-        super.init()
-    }
-    */
     /**
      * Adds a task UUID mapped to a function to be invoked as a callback in case of an error.
      *
@@ -128,6 +108,10 @@ public class ApproovSessionTaskObserver: NSObject {
             task.removeObserver(self, forKeyPath: ApproovSessionTaskObserver.stateString)
             // The pinning session
             let customPinningSession: URLSession? = context?.assumingMemoryBound(to: URLSession.self).pointee
+            // We can dispose of the URLSession pointer after the execution of this block
+            defer {
+                context?.deallocate()
+            }
             // get any completion handler and session config from the dictionary and then remove it
             var completionHandler: Any?
             var sessionConfig: URLSessionConfiguration?
@@ -161,10 +145,7 @@ public class ApproovSessionTaskObserver: NSObject {
                 DispatchQueue.global(qos: .userInitiated).async {
                     // update the request using Approov and handler its response
                     let updateResponse = ApproovService.updateRequestWithApproov(request: task.currentRequest!, sessionConfig: sessionConfig)
-                    // We can dispose of the URLSession pointer after the execution of this block
-                    defer {
-                        context?.deallocate()
-                    }
+                    
                     if updateResponse.decision == .ShouldProceed {
                         // modify original request by calling the "updateCurrentRequest" method in the underlying
                         // Objective-C implementation

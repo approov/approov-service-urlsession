@@ -31,7 +31,7 @@ public class ApproovURLSession: URLSession {
     // URLSession with a delegate that applies pinning
     var pinnedURLSession: URLSession
     
-    // task observer for the session
+    // task observer used across all sessions
     static var taskObserver: ApproovSessionTaskObserver = ApproovSessionTaskObserver()
 
     /**
