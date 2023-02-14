@@ -41,26 +41,7 @@ public class ApproovSessionTaskObserver: NSObject {
     
     // the dispatch queue to manage serial access to the dictionary
     private let handlersQueue = DispatchQueue(label: "ApproovSessionTaskObserver")
-    
-    // the pinning session being used, so that it can be informed if it is being
-    // invalidated due to any error
-    private var pinningSession: URLSession?
-    
-    // the pinning delegate being used to be informed of errors
-    private var pinningDelegate: PinningURLSessionDelegate
-    
-    /**
-     * Creates a new task observer. Pinning delegate information needs to be provided to allow it to
-     * be informed if there is an error.
-     *
-     * @param session is the URLSession that the observer is for
-     * @param delegate is the pinning URL session delegate that the observer is for
-     */
-    init(session: URLSession, delegate: PinningURLSessionDelegate) {
-        pinningSession = session
-        pinningDelegate = delegate
-        super.init()
-    }
+
     
     /**
      * Adds a task UUID mapped to a function to be invoked as a callback in case of an error.
@@ -125,7 +106,12 @@ public class ApproovSessionTaskObserver: NSObject {
             // we remove ourselves as an observer as we do not need any further state changes
             let task = object as! URLSessionTask
             task.removeObserver(self, forKeyPath: ApproovSessionTaskObserver.stateString)
-            
+            // The pinning session
+            let customPinningSession: URLSession? = context?.assumingMemoryBound(to: URLSession.self).pointee
+            // We can dispose of the URLSession pointer after the execution of this block
+            defer {
+                context?.deallocate()
+            }
             // get any completion handler and session config from the dictionary and then remove it
             var completionHandler: Any?
             var sessionConfig: URLSessionConfiguration?
@@ -159,8 +145,9 @@ public class ApproovSessionTaskObserver: NSObject {
                 DispatchQueue.global(qos: .userInitiated).async {
                     // update the request using Approov and handler its response
                     let updateResponse = ApproovService.updateRequestWithApproov(request: task.currentRequest!, sessionConfig: sessionConfig)
+                    
                     if updateResponse.decision == .ShouldProceed {
-                        // modify original requestby calling the "updateCurrentRequest" method in the underlying
+                        // modify original request by calling the "updateCurrentRequest" method in the underlying
                         // Objective-C implementation
                         let sel = NSSelectorFromString("updateCurrentRequest:")
                         if task.responds(to: sel) {
@@ -184,16 +171,23 @@ public class ApproovSessionTaskObserver: NSObject {
                             task.resume()
                         }
                     } else if task.state == URLSessionTask.State.suspended {
-                        // the task is still suspended and we have an error condition, first inform the pinning delegate
-                        self.pinningDelegate.urlSession(self.pinningSession!, didBecomeInvalidWithError: updateResponse.error)
-                    
-                        // call any completion handler with the error or cancel if there is no completion handler
-                        if let handler = completionHandler as! CompletionHandlerData {
-                            handler(nil, nil, updateResponse.error)
-                        } else if let handler = completionHandler as! CompletionHandlerURL {
-                            handler(nil, nil, updateResponse.error)
+                        if let pinningSession = customPinningSession {
+                            if let pinningDelegate = pinningSession.delegate {
+                                // the task is still suspended and we have an error condition, first inform the pinning delegate
+                                pinningDelegate.urlSession!(pinningSession, didBecomeInvalidWithError: updateResponse.error)
+                                // call any completion handler with the error or cancel if there is no completion handler
+                                if let handler = completionHandler as! CompletionHandlerData {
+                                    handler(nil, nil, updateResponse.error)
+                                } else if let handler = completionHandler as! CompletionHandlerURL {
+                                    handler(nil, nil, updateResponse.error)
+                                } else {
+                                    task.cancel()
+                                }
+                            } else {
+                                os_log("ApproovService: Pinning Delegate from url session pointer is invalid", type: .error)
+                            }
                         } else {
-                            task.cancel()
+                            os_log("ApproovService: Pinning Session pointer is invalid/not of type URLSession %@", type: .error, context.debugDescription)
                         }
                     }
                 }
