@@ -42,6 +42,7 @@ public class ApproovURLSession: URLSession {
         self.urlSessionConfiguration = configuration
         self.pinningURLSessionDelegate = PinningURLSessionDelegate(with: delegate)
         self.pinnedURLSession = URLSession(configuration: configuration, delegate: pinningURLSessionDelegate, delegateQueue: delegateQueue)
+        // We now use a static task observer
         //self.taskObserver = ApproovSessionTaskObserver(session: pinnedURLSession, delegate: pinningURLSessionDelegate)
         super.init()
     }
