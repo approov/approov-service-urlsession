@@ -79,7 +79,7 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
      * @param delegate is the optional user delegate
      */
     init(with delegate: URLSessionDelegate?) {
-        pkiQueue.sync {
+        PinningURLSessionDelegate.pkiQueue.sync {
             if !PinningURLSessionDelegate.isInitialized {
                 PinningURLSessionDelegate.initializeSPKI()
                 PinningURLSessionDelegate.isInitialized = true
