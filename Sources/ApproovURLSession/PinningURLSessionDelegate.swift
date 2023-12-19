@@ -49,8 +49,14 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
         ]
     }
     
+    // the PKI queue to manage serial access to the PKI initialization
+    private static let pkiQueue = DispatchQueue(label: "ApproovService.pki", qos: .userInitiated)
+    
     // SPKI headers for both RSA and ECC
     private static var spkiHeaders = [String:[Int:Data]]()
+    
+    // Indicates if the SPKI headers have been initialized
+    private static var isInitialized = false
     
     /**
      * Initialize the SPKI dictionary.
@@ -73,7 +79,12 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
      * @param delegate is the optional user delegate
      */
     init(with delegate: URLSessionDelegate?) {
-        PinningURLSessionDelegate.initializeSPKI()
+        pkiQueue.sync {
+            if !PinningURLSessionDelegate.isInitialized {
+                PinningURLSessionDelegate.initializeSPKI()
+                PinningURLSessionDelegate.isInitialized = true
+            }
+        }
         self.optionalURLDelegate = delegate
     }
     
