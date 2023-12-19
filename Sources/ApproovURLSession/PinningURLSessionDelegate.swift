@@ -62,15 +62,20 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
      * Initialize the SPKI dictionary.
      */
     private static func initializeSPKI() {
-        var rsaDict = [Int:Data]()
-        rsaDict[2048] = Data(Constants.rsa2048SPKIHeader)
-        rsaDict[3072] = Data(Constants.rsa3072SPKIHeader)
-        rsaDict[4096] = Data(Constants.rsa4096SPKIHeader)
-        var eccDict = [Int:Data]()
-        eccDict[256] = Data(Constants.ecdsaSecp256r1SPKIHeader)
-        eccDict[384] = Data(Constants.ecdsaSecp384r1SPKIHeader)
-        spkiHeaders[kSecAttrKeyTypeRSA as String] = rsaDict
-        spkiHeaders[kSecAttrKeyTypeECSECPrimeRandom as String] = eccDict
+        pkiQueue.sync {
+            if !isInitialized {
+                var rsaDict = [Int:Data]()
+                rsaDict[2048] = Data(Constants.rsa2048SPKIHeader)
+                rsaDict[3072] = Data(Constants.rsa3072SPKIHeader)
+                rsaDict[4096] = Data(Constants.rsa4096SPKIHeader)
+                var eccDict = [Int:Data]()
+                eccDict[256] = Data(Constants.ecdsaSecp256r1SPKIHeader)
+                eccDict[384] = Data(Constants.ecdsaSecp384r1SPKIHeader)
+                spkiHeaders[kSecAttrKeyTypeRSA as String] = rsaDict
+                spkiHeaders[kSecAttrKeyTypeECSECPrimeRandom as String] = eccDict
+                isInitialized = true
+            }
+        }
     }
     
     /**
@@ -79,12 +84,7 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
      * @param delegate is the optional user delegate
      */
     init(with delegate: URLSessionDelegate?) {
-        PinningURLSessionDelegate.pkiQueue.sync {
-            if !PinningURLSessionDelegate.isInitialized {
-                PinningURLSessionDelegate.initializeSPKI()
-                PinningURLSessionDelegate.isInitialized = true
-            }
-        }
+        PinningURLSessionDelegate.initializeSPKI()
         self.optionalURLDelegate = delegate
     }
     
