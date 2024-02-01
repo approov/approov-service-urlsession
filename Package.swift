@@ -4,7 +4,7 @@ import PackageDescription
 let releaseTAG = "3.2.0"
 let package = Package(
     name: "ApproovURLSession",
-    platforms: [.iOS(.v12)],
+    platforms: [.watchOS(.v7)],
     products: [
         // Products define the executables and libraries a package produces, and make them visible to other packages.
         .library(
@@ -20,8 +20,8 @@ let package = Package(
             ),
         .binaryTarget(
             name: "Approov",
-            url: "https://github.com/approov/approov-ios-sdk/releases/download/" + releaseTAG + "/Approov.xcframework.zip",
-            checksum : "c851f845bacfa3c978d12dbf85d7688a3b93e8e25d01f03784fdcb15b8d2beb0"
+            url: "https://github.com/approov/approov-watchos-sdk/releases/download/" + releaseTAG + "/Approov.xcframework.zip",
+            checksum : "87264a95365c4833bb828f8b455f8b9edc9fc690993d97b8ddb4b72ed90ade46"
         )
     ]
 )
