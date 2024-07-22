@@ -203,10 +203,6 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
         if let delegate = optionalURLDelegate as? URLSessionTaskDelegate {
             delegate.urlSession?(session, task: task, needNewBodyStream: completionHandler)
         }
-        // TODO: need to warn users completionHandler can not be called
-        else {
-            print("You need to provide a custom delegate if you need to handle needNewBodyStream")
-        }
     }
     
     /**
@@ -253,6 +249,38 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
         }
     }
 
+    /**
+     *  Tells the delegate that a new task was created
+     *  https://developer.apple.com/documentation/foundation/urlsessiontaskdelegate/3929682-urlsession
+     */
+    @available(iOS 16.0, *)
+    func urlSession(_ session: URLSession, didCreateTask task: URLSessionTask) {
+        if let delegate = optionalURLDelegate as? URLSessionTaskDelegate {
+            delegate.urlSession?(session, didCreateTask: task)
+        }
+    }
+    
+    /**
+     *  Tells the delegate that a task received an informational response
+     *  https://developer.apple.com/documentation/foundation/urlsessiontaskdelegate/4165504-urlsession
+     */
+    @available(iOS 17.0, *)
+    func urlSession(_ session: URLSession, task: URLSessionTask, didReceiveInformationalResponse response: HTTPURLResponse) {
+        if let delegate = optionalURLDelegate as? URLSessionTaskDelegate {
+            delegate.urlSession?(session, task: task, didReceiveInformationalResponse: response)
+        }
+    }
+    
+    /**
+     *  Tells the delegate that a task received an informational response
+     *  https://developer.apple.com/documentation/foundation/urlsessiontaskdelegate/4165504-urlsession
+     */
+    @available(iOS 17.0, *)
+    func urlSession(_ session: URLSession, task: URLSessionTask, needNewBodyStreamFrom offset: Int64, completionHandler: @escaping @Sendable (InputStream?) -> Void) {
+        if let delegate = optionalURLDelegate as? URLSessionTaskDelegate {
+            delegate.urlSession?(session, task: task, needNewBodyStreamFrom: offset, completionHandler: completionHandler)
+        }
+    }
     
     // MARK: URLSessionDataDelegate
     
