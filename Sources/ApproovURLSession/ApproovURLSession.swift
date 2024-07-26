@@ -45,7 +45,7 @@ public class ApproovURLSession: URLSession {
         
         // note we are unable to initialize the URLSession base class as discussed here:
         // https://stackoverflow.com/questions/48158484/subclassing-factory-methods-of-urlsession-in-swift
-        // this means that some methods called on URLSession extensions are not pperable
+        // this means that some methods called on URLSession extensions are not operable
         super.init()
     }
     
@@ -242,7 +242,7 @@ public class ApproovURLSession: URLSession {
      *  https://developer.apple.com/documentation/foundation/urlsession
      */
     @available(iOS 13.0, *)
-    public func dataTaskPublisherApproov(for request: URLRequest) -> URLSession.DataTaskPublisher {
+    public func dataTaskPublisherWithApproov(for request: URLRequest) -> URLSession.DataTaskPublisher {
         // in this case we must perform the Approov update in the context of the caller - which may mean that the calling
         // thread experience some delay to the potential network request to Approov
         let approovUpdateResponse = ApproovService.updateRequestWithApproov(request: request, sessionConfig: urlSessionConfiguration)
@@ -260,6 +260,15 @@ public class ApproovURLSession: URLSession {
             self.pinningURLSessionDelegate.urlSession(self.pinnedURLSession, didBecomeInvalidWithError: approovUpdateResponse.error)
             return sessionTaskPublisher
         }
+    }
+    
+    /**
+     *  Returns a publisher that wraps a URL session data task for a given URL request. Previous naming of the method.
+     *  https://developer.apple.com/documentation/foundation/urlsession
+     */
+    @available(iOS 13.0, *)
+    public func dataTaskPublisherApproov(for request: URLRequest) -> URLSession.DataTaskPublisher {
+        return dataTaskPublisherWithApproov(for: request)
     }
     
     
@@ -346,21 +355,9 @@ public class ApproovURLSession: URLSession {
     /**
      * Implementation of "data(for request: URLRequest, delegate: URLSessionTaskDelegate? = nil) async throws -> (Data, URLResponse)" that is defined
      * in an extension of URLSession and therefore cannot be overridden. The URLSession version cannot be used directly because it is not possible to
-     * fully initialize the base URLSession class instance.
+     * fully initialize the base URLSession class instance.  Note that if a delegate is provided then this will override any delegate supplied during the
+     * construction of the URLSession.
      */
-    /*@available(iOS 15.0, *)
-    public func dataWithApproov(for request: URLRequest, delegate: URLSessionTaskDelegate? = nil) async throws -> (Data, URLResponse) {
-        return try await withCheckedThrowingContinuation { continuation in
-            let task = dataTask(with: request) { data, response, error in
-                if let error = error {
-                    continuation.resume(throwing: error)
-                } else {
-                    continuation.resume(returning: (data!, response!))
-                }
-            }
-            task.resume()
-        }
-    }*/
     @available(iOS 15.0, *)
     public func dataWithApproov(for request: URLRequest, delegate: URLSessionTaskDelegate? = nil) async throws -> (Data, URLResponse) {
         return try await withCheckedThrowingContinuation { continuation in
@@ -371,7 +368,11 @@ public class ApproovURLSession: URLSession {
                     continuation.resume(returning: (data!, response!))
                 }
             }
-            let urlSession = URLSession(configuration: configuration, delegate: delegate, delegateQueue: delegateQueue)
+            var urlSession = self.pinnedURLSession
+            if delegate != nil {
+                let sessionDelegate = PinningURLSessionDelegate(with: delegate)
+                urlSession = URLSession(configuration: configuration, delegate: sessionDelegate, delegateQueue: delegateQueue)
+            }
             let task = urlSession.dataTask(with: request, completionHandler: completionHandler)
             let sessionPointer = UnsafeMutablePointer<URLSession>.allocate(capacity: 1)
             sessionPointer.initialize(to: urlSession)
@@ -385,7 +386,8 @@ public class ApproovURLSession: URLSession {
     /**
      * Implementation of "data(from url: URL, delegate: URLSessionTaskDelegate? = nil) async throws -> (Data, URLResponse)" that is defined
      * in an extension of URLSession and therefore cannot be overridden. The URLSession version cannot be used directly because it is not possible to
-     * fully initialize the base URLSession class instance.
+     * fully initialize the base URLSession class instance.  Note that if a delegate is provided then this will override any delegate supplied during the
+     * construction of the URLSession.
      */
     @available(iOS 15.0, *)
     public func dataWithApproov(from url: URL, delegate: URLSessionTaskDelegate? = nil) async throws -> (Data, URLResponse) {
@@ -397,7 +399,11 @@ public class ApproovURLSession: URLSession {
                     continuation.resume(returning: (data!, response!))
                 }
             }
-            let urlSession = URLSession(configuration: configuration, delegate: delegate, delegateQueue: delegateQueue)
+            var urlSession = self.pinnedURLSession
+            if delegate != nil {
+                let sessionDelegate = PinningURLSessionDelegate(with: delegate)
+                urlSession = URLSession(configuration: configuration, delegate: sessionDelegate, delegateQueue: delegateQueue)
+            }
             let task = urlSession.dataTask(with: url, completionHandler: completionHandler)
             let sessionPointer = UnsafeMutablePointer<URLSession>.allocate(capacity: 1)
             sessionPointer.initialize(to: urlSession)
@@ -411,7 +417,8 @@ public class ApproovURLSession: URLSession {
     /**
      * Implementation of "upload(for request: URLRequest, fromFile fileURL: URL, delegate: URLSessionTaskDelegate? = nil) async throws -> (Data, URLResponse)" that is defined
      * in an extension of URLSession and therefore cannot be overridden. The URLSession version cannot be used directly because it is not possible to
-     * fully initialize the base URLSession class instance.
+     * fully initialize the base URLSession class instance.  Note that if a delegate is provided then this will override any delegate supplied during the
+     * construction of the URLSession.
      */
     @available(iOS 15.0, *)
     public func uploadWithApproov(for request: URLRequest, fromFile fileURL: URL, delegate: URLSessionTaskDelegate? = nil) async throws -> (Data, URLResponse) {
@@ -423,7 +430,11 @@ public class ApproovURLSession: URLSession {
                     continuation.resume(returning: (data!, response!))
                 }
             }
-            let urlSession = URLSession(configuration: configuration, delegate: delegate, delegateQueue: delegateQueue)
+            var urlSession = self.pinnedURLSession
+            if delegate != nil {
+                let sessionDelegate = PinningURLSessionDelegate(with: delegate)
+                urlSession = URLSession(configuration: configuration, delegate: sessionDelegate, delegateQueue: delegateQueue)
+            }
             let task = urlSession.uploadTask(with: request, fromFile: fileURL, completionHandler: completionHandler)
             let sessionPointer = UnsafeMutablePointer<URLSession>.allocate(capacity: 1)
             sessionPointer.initialize(to: urlSession)
@@ -437,7 +448,8 @@ public class ApproovURLSession: URLSession {
     /**
      * Implementation of "upload(for request: URLRequest, from bodyData: Data, delegate: URLSessionTaskDelegate? = nil) async throws -> (Data, URLResponse)" that is defined
      * in an extension of URLSession and therefore cannot be overridden. The URLSession version cannot be used directly because it is not possible to
-     * fully initialize the base URLSession class instance.
+     * fully initialize the base URLSession class instance.  Note that if a delegate is provided then this will override any delegate supplied during the
+     * construction of the URLSession.
      */
     @available(iOS 15.0, *)
     public func uploadWithApproov(for request: URLRequest, from bodyData: Data, delegate: URLSessionTaskDelegate? = nil) async throws -> (Data, URLResponse) {
@@ -449,7 +461,11 @@ public class ApproovURLSession: URLSession {
                     continuation.resume(returning: (data!, response!))
                 }
             }
-            let urlSession = URLSession(configuration: configuration, delegate: delegate, delegateQueue: delegateQueue)
+            var urlSession = self.pinnedURLSession
+            if delegate != nil {
+                let sessionDelegate = PinningURLSessionDelegate(with: delegate)
+                urlSession = URLSession(configuration: configuration, delegate: sessionDelegate, delegateQueue: delegateQueue)
+            }
             let task = urlSession.uploadTask(with: request, from: bodyData, completionHandler: completionHandler)
             let sessionPointer = UnsafeMutablePointer<URLSession>.allocate(capacity: 1)
             sessionPointer.initialize(to: urlSession)
@@ -463,7 +479,8 @@ public class ApproovURLSession: URLSession {
     /**
      * Implementation of "download(for request: URLRequest, delegate: URLSessionTaskDelegate? = nil) async throws -> (URL, URLResponse)" that is defined
      * in an extension of URLSession and therefore cannot be overridden. The URLSession version cannot be used directly because it is not possible to
-     * fully initialize the base URLSession class instance.
+     * fully initialize the base URLSession class instance.  Note that if a delegate is provided then this will override any delegate supplied during the
+     * construction of the URLSession.
      */
     @available(iOS 15.0, *)
     public func downloadWithApproov(for request: URLRequest, delegate: URLSessionTaskDelegate? = nil) async throws -> (URL, URLResponse) {
@@ -475,7 +492,11 @@ public class ApproovURLSession: URLSession {
                     continuation.resume(returning: (url!, response!))
                 }
             }
-            let urlSession = URLSession(configuration: configuration, delegate: delegate, delegateQueue: delegateQueue)
+            var urlSession = self.pinnedURLSession
+            if delegate != nil {
+                let sessionDelegate = PinningURLSessionDelegate(with: delegate)
+                urlSession = URLSession(configuration: configuration, delegate: sessionDelegate, delegateQueue: delegateQueue)
+            }
             let task = urlSession.downloadTask(with: request, completionHandler: completionHandler)
             let sessionPointer = UnsafeMutablePointer<URLSession>.allocate(capacity: 1)
             sessionPointer.initialize(to: urlSession)
@@ -489,7 +510,8 @@ public class ApproovURLSession: URLSession {
     /**
      * Implementation of "download(from url: URL, delegate: URLSessionTaskDelegate? = nil) async throws -> (URL, URLResponse)" that is defined
      * in an extension of URLSession and therefore cannot be overridden. The URLSession version cannot be used directly because it is not possible to
-     * fully initialize the base URLSession class instance.
+     * fully initialize the base URLSession class instance. Note that if a delegate is provided then this will override any delegate supplied during the
+     * construction of the URLSession.
      */
     @available(iOS 15.0, *)
     public func downloadWithApproov(from url: URL, delegate: URLSessionTaskDelegate? = nil) async throws -> (URL, URLResponse) {
@@ -501,7 +523,11 @@ public class ApproovURLSession: URLSession {
                     continuation.resume(returning: (url!, response!))
                 }
             }
-            let urlSession = URLSession(configuration: configuration, delegate: delegate, delegateQueue: delegateQueue)
+            var urlSession = self.pinnedURLSession
+            if delegate != nil {
+                let sessionDelegate = PinningURLSessionDelegate(with: delegate)
+                urlSession = URLSession(configuration: configuration, delegate: sessionDelegate, delegateQueue: delegateQueue)
+            }
             let task = urlSession.downloadTask(with: url, completionHandler: completionHandler)
             let sessionPointer = UnsafeMutablePointer<URLSession>.allocate(capacity: 1)
             sessionPointer.initialize(to: urlSession)
