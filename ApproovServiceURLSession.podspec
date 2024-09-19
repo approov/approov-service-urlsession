@@ -10,7 +10,7 @@ Pod::Spec.new do |s|
   s.author       = { 'Approov' => 'support@approov.io' }
   s.source       = { :git => 'https://github.com/approov/approov-service-urlsession.git', :branch => 'watchOS' }
   s.platform     = :watchos, '7.0'
-  s.source_files = 'ApproovServiceURLSession/**/*.{h,m,swift}'
+  s.source_files = 'Sources/ApproovURLSession/**/*.{swift}'
   s.requires_arc = true
 end
 
