@@ -18,7 +18,7 @@ Pod::Spec.new do |s|
   s.pod_target_xcconfig = {
     'EXCLUDED_ARCHS[sdk=watchos*]' => 'i386 armv7k arm64',
     'EXCLUDED_ARCHS[sdk=watchsimulator*]' => 'i386 armv7k arm64',
-    'FRAMEWORK_SEARCH_PATHS' => '$(inherited) $(PODS_ROOT)/Approov'
+    'FRAMEWORK_SEARCH_PATHS' => '$(inherited) $(PODS_ROOT)/Approov $(PODS_CONFIGURATION_BUILD_DIR)/ApproovServiceURLSession $(PODS_XCFRAMEWORKS_BUILD_DIR)/Approov/Frameworks'
   }
   # The Approov SDK dependency
   s.dependency 'Approov'
