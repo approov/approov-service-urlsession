@@ -17,7 +17,8 @@ Pod::Spec.new do |s|
    # Exclude architectures for watchOS and watchOS simulator
   s.pod_target_xcconfig = {
     'EXCLUDED_ARCHS[sdk=watchos*]' => 'i386 armv7k arm64',
-    'EXCLUDED_ARCHS[sdk=watchsimulator*]' => 'i386 armv7k arm64'
+    'EXCLUDED_ARCHS[sdk=watchsimulator*]' => 'i386 armv7k arm64',
+    'FRAMEWORK_SEARCH_PATHS' => '$(inherited) $(PODS_ROOT)/Approov'
   }
   # The Approov SDK dependency
   s.dependency 'Approov'
