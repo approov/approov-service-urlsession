@@ -20,6 +20,6 @@ Pod::Spec.new do |s|
     'EXCLUDED_ARCHS[sdk=watchsimulator*]' => 'i386 armv7k arm64'
   }
   # The Approov SDK dependency
-  pod 'Approov', :podspec => 'https://raw.githubusercontent.com/approov/approov-watchos-sdk/refs/heads/main/Approov.podspec'
+  s.dependency 'Approov', :podspec => 'https://raw.githubusercontent.com/approov/approov-watchos-sdk/refs/heads/main/Approov.podspec'
 end
 
