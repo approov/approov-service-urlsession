@@ -14,5 +14,8 @@ Pod::Spec.new do |s|
   s.swift_versions = ['5']
   s.source_files = 'Sources/ApproovURLSession/**/*.{swift}'
   s.requires_arc = true
+  s.exclude_archs = 'i386 armv7k arm64'
+  # The Approov SDK dependency
+  pod 'Approov', :podspec => 'https://raw.githubusercontent.com/approov/approov-watchos-sdk/refs/heads/main/Approov.podspec'
 end
 
