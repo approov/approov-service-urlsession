@@ -9,7 +9,9 @@ Pod::Spec.new do |s|
   s.license      = { :type => 'MIT', :file => 'LICENSE' }
   s.author       = { 'Approov' => 'support@approov.io' }
   s.source       = { :git => 'https://github.com/approov/approov-service-urlsession.git', :branch => 'watchOS' }
-  s.platform     = :watchos, '7.0'
+  s.watchos.deployment_target = '7.0'
+
+  s.swift_versions = ['5']
   s.source_files = 'Sources/ApproovURLSession/**/*.{swift}'
   s.requires_arc = true
 end
