@@ -14,7 +14,13 @@ Pod::Spec.new do |s|
   s.swift_versions = ['5']
   s.source_files = 'Sources/ApproovURLSession/**/*.{swift}'
   s.requires_arc = true
-  s.exclude_archs = 'i386 armv7k arm64'
+   # Exclude architectures for watchOS and watchOS simulator
+   s.pod_target_xcconfig = {
+    'EXCLUDED_ARCHS[sdk=watchos*]' => 'i386 armv7k arm64',
+    'EXCLUDED_ARCHS[sdk=watchsimulator*]' => 'i386 armv7k arm64',
+    'FRAMEWORK_SEARCH_PATHS' => '$(inherited) $(PODS_ROOT)/Approov $(PODS_CONFIGURATION_BUILD_DIR)/ApproovServiceURLSession $(PODS_XCFRAMEWORKS_BUILD_DIR)/Approov/Frameworks'
+  }
+  s.frameworks = 'Approov'
   # The Approov SDK dependency
   pod 'Approov', :podspec => 'https://raw.githubusercontent.com/approov/approov-watchos-sdk/refs/heads/main/Approov.podspec'
 end
