@@ -64,7 +64,7 @@ public class ApproovSessionTaskObserver: NSObject {
      * @param taskId is the ID of the task being tracked
      * @param handler is the completion handler to be called
      */
-    public func addCompletionHandler(taskId: Int, handler: Any) -> Void {
+    func addCompletionHandler(taskId: Int, handler: Any) -> Void {
         handlersQueue.sync {
             if ApproovSessionTaskObserver.enableLogging {
                 ApproovSessionTaskObserver.logMessage(
@@ -85,7 +85,7 @@ public class ApproovSessionTaskObserver: NSObject {
      * @param taskId is the ID of the task being tracked
      * @param sessionConfig is the session configuration fr the task
      */
-    public func addSessionConfig(taskId: Int, sessionConfig: URLSessionConfiguration) -> Void {
+    func addSessionConfig(taskId: Int, sessionConfig: URLSessionConfiguration) -> Void {
         handlersQueue.sync {
             //MARK: LOG_MESSAGE
             if ApproovSessionTaskObserver.enableLogging {
