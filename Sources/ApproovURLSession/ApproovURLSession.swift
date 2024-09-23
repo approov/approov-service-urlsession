@@ -32,7 +32,7 @@ public class ApproovURLSession: URLSession {
     var pinnedURLSession: URLSession
     
     // task observer used across all sessions
-    static var taskObserver: ApproovSessionTaskObserver = ApproovSessionTaskObserver()
+    public static var taskObserver: ApproovSessionTaskObserver = ApproovSessionTaskObserver()
     
     /**
      *  URLSession initializer

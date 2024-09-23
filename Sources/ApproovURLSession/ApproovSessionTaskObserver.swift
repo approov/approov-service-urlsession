@@ -55,9 +55,12 @@ public class ApproovSessionTaskObserver: NSObject {
      * @param taskId is the ID of the task being tracked
      * @param handler is the completion handler to be called
      */
-    func addCompletionHandler(taskId: Int, handler: Any) -> Void {
+    public func addCompletionHandler(taskId: Int, handler: Any) -> Void {
         handlersQueue.sync {
-            
+            logMessage(line: String(#line), 
+                    function: "addCompletionHandler",
+                    property: "taskId", 
+                    value: String(taskId))
             completionHandlers[taskId] = handler;
         }
     }
@@ -68,9 +71,21 @@ public class ApproovSessionTaskObserver: NSObject {
      * @param taskId is the ID of the task being tracked
      * @param sessionConfig is the session configuration fr the task
      */
-    func addSessionConfig(taskId: Int, sessionConfig: URLSessionConfiguration) -> Void {
+    public func addSessionConfig(taskId: Int, sessionConfig: URLSessionConfiguration) -> Void {
         handlersQueue.sync {
-            log(line: #line, object: taskId, property: "newState", value: URLSessionConfiguration.description(), tag: TAG)
+            //MARK: LOG_MESSAGE
+            if enableLogging {
+                // Pass the values as strings
+                let taskIdString = String(taskId)
+                let sessionConfigDescription = sessionConfig.description
+                
+                logMessage(
+                    line: String(#line),
+                    function: "addSessionConfig",
+                    property: "sessionConfig",
+                    value: sessionConfigDescription
+                )
+            }
             sessionConfigs[taskId] = sessionConfig;
         }
     }
@@ -96,8 +111,7 @@ public class ApproovSessionTaskObserver: NSObject {
         }
         
         // Log the raw state and the corresponding session state
-        log(line: #line, object: self, property: "state", value: state, tag: TAG)
-        log(line: #line, object: self, property: "URLSessionTask.State", value: sessionState, tag: TAG)
+        logMessage(line: String(#line), function: "getURLSessionState", property: "URLSessionTask.State", value: String(describing: sessionState))
         
         return sessionState
     }
@@ -117,15 +131,39 @@ public class ApproovSessionTaskObserver: NSObject {
                              of object: Any?,
                          change: [NSKeyValueChangeKey : Any]?,
                              context: UnsafeMutableRawPointer?) {
+        // Log the key path, object type, change, and context address
+        let objectType = String(describing: type(of: object))
+        // Prepare the context description
+        let contextDescription = context != nil ? String(describing: context!) : "nil"
+        logMessage(
+            line: String(#line),
+            function: "observeValue",
+            property: "keyPath",
+            value: keyPath ?? "nil",
+            objectDescription: "Object Type: \(objectType), Context Address: \(contextDescription)"
+        )                        
         // check if we are see a state change
         if keyPath == ApproovSessionTaskObserver.stateString {
+            logMessage(line: String(#line), function: "observeValue",property:"", value: "State change detected")
             // we remove ourselves as an observer as we do not need any further state changes
             let task = object as! URLSessionTask
             task.removeObserver(self, forKeyPath: ApproovSessionTaskObserver.stateString)
+            logMessage(
+                line: String(#line), 
+                function: "observeValue",
+                property:"task", 
+                value: "Stopped observing task with id: \(task.taskIdentifier)"
+            )
             // The pinning session
             let customPinningSession: URLSession? = context?.assumingMemoryBound(to: URLSession.self).pointee
             // We can dispose of the URLSession pointer after the execution of this block
             defer {
+                logMessage(
+                    line: String(#line), 
+                    function: "observeValue",
+                    property:"context", 
+                    value: "Deallocating context"
+                )
                 context?.deallocate()
             }
             // get any completion handler and session config from the dictionary and then remove it
@@ -135,10 +173,24 @@ public class ApproovSessionTaskObserver: NSObject {
                 if completionHandlers.keys.contains(task.taskIdentifier) {
                     completionHandler = completionHandlers[task.taskIdentifier]
                     completionHandlers.removeValue(forKey: task.taskIdentifier)
+                    logMessage(
+                        line: String(#line),
+                        function: "observeValue",
+                        property: "completionHandlers.keys.contains",
+                        value: String(task.taskIdentifier),
+                        objectDescription: "Removed completion handler from dictionary"
+                    )
                 }
                 if sessionConfigs.keys.contains(task.taskIdentifier) {
                     sessionConfig = sessionConfigs[task.taskIdentifier]
                     sessionConfigs.removeValue(forKey: task.taskIdentifier)
+                    logMessage(
+                        line: String(#line),
+                        function: "observeValue",
+                        property: "sessionConfigs.keys.contains",
+                        value: String(task.taskIdentifier),
+                        objectDescription: "Removed sessionConfig from dictionary"
+                    )
                 }
             }
             
@@ -153,8 +205,22 @@ public class ApproovSessionTaskObserver: NSObject {
             // at the first ever resume call
             if newState == URLSessionTask.State.running {
                 // immediately suspend the task so that it cannot make progress
+                logMessage(
+                    line: String(#line),
+                        function: "observeValue",
+                        property: "newState",
+                        value: String(describing: newState),
+                        objectDescription: "Will suspend task with ID: \(task.taskIdentifier)"
+                )
                 task.suspend()
-                
+                logMessage(
+                    line: String(#line),
+                        function: "observeValue",
+                        property: "task.suspend()",
+                        // Get the current state of the task
+                        value: String(describing: task.state),
+                        objectDescription: "Suspended task state with ID: \(task.taskIdentifier)"
+                )
                 // execute the Approov processing in a background thread since it may need network access and thus take
                 // some time to complete and we cannot do this in the context of the task resume caller (which might be the
                 // main UI thread, for instance)
@@ -178,6 +244,16 @@ public class ApproovSessionTaskObserver: NSObject {
                         // still suspended and thus hasn't been cancelled)
                         if task.state == URLSessionTask.State.suspended {
                             task.resume()
+                            self.logMessage(
+                                line: String(#line),
+                                    function: "observeValue",
+                                    property: "task.resume()",
+                                    // Get the current state of the task
+                                    value: String(describing: task.state),
+                                    objectDescription: "Resumed task state with ID: \(task.taskIdentifier)"
+                            )
+                        } else {
+                            os_log("ApproovService: Task was not in suspended state after Approov processing", type: .error)
                         }
                         return
                     } else if updateResponse.decision == .ShouldIgnore {
@@ -185,8 +261,24 @@ public class ApproovSessionTaskObserver: NSObject {
                         // already cancelled
                         if task.state == URLSessionTask.State.suspended {
                             task.resume()
+                            self.logMessage(
+                                line: String(#line),
+                                    function: "observeValue",
+                                    property: "task.resume()",
+                                    // Get the current state of the task
+                                    value: String(describing: task.state),
+                                    objectDescription: "Resumed task state with ID: \(task.taskIdentifier)"
+                            )
                         }
                     } else if task.state == URLSessionTask.State.suspended {
+                        self.logMessage(
+                                line: String(#line),
+                                    function: "observeValue",
+                                    property: "task.state == URLSessionTask.State.suspended",
+                                    // Get the current state of the task
+                                    value: String(describing: task.state),
+                                    objectDescription: "Will process custom delegate for task with ID: \(task.taskIdentifier)"
+                            )
                         if let pinningSession = customPinningSession {
                             if let pinningDelegate = pinningSession.delegate {
                                 // the task is still suspended and we have an error condition, first inform the pinning delegate
@@ -194,10 +286,34 @@ public class ApproovSessionTaskObserver: NSObject {
                                 // call any completion handler with the error or cancel if there is no completion handler
                                 if let handler = completionHandler as! CompletionHandlerData {
                                     handler(nil, nil, updateResponse.error)
+                                    self.logMessage(
+                                    line: String(#line),
+                                    function: "observeValue",
+                                    property: "completionHandler as! CompletionHandlerData",
+                                    // Get the current state of the task
+                                    value: updateResponse.error?.localizedDescription ?? "error with no message",
+                                    objectDescription: "Delegate handler with error message for task with ID: \(task.taskIdentifier)"
+                                )
                                 } else if let handler = completionHandler as! CompletionHandlerURL {
                                     handler(nil, nil, updateResponse.error)
+                                    self.logMessage(
+                                    line: String(#line),
+                                    function: "observeValue",
+                                    property: "completionHandler as! CompletionHandlerURL",
+                                    // Get the current state of the task
+                                    value: updateResponse.error?.localizedDescription ?? "error with no message",
+                                    objectDescription: "Delegate handler with error message for task with ID: \(task.taskIdentifier)"
+                                )
                                 } else {
                                     task.cancel()
+                                    self.logMessage(
+                                    line: String(#line),
+                                    function: "observeValue",
+                                    property: "task.cancel()",
+                                    // Get the current state of the task
+                                    value: String(describing: task.state),
+                                    objectDescription: "Invoked cancel for task with ID: \(task.taskIdentifier)"
+                                )
                                 }
                             } else {
                                 os_log("ApproovService: Pinning Delegate from url session pointer is invalid", type: .error)
@@ -206,8 +322,27 @@ public class ApproovSessionTaskObserver: NSObject {
                             os_log("ApproovService: Pinning Session pointer is invalid/not of type URLSession %@", type: .error, context.debugDescription)
                         }
                     }
+                    self.logMessage(
+                        line: String(#line),
+                        function: "observeValue",
+                        property: "No decision from token fetch and no completion handler invoked",
+                        // Get the current state of the task
+                        value: String(describing: task.state),
+                        objectDescription: "Error for task with ID: \(task.taskIdentifier)"
+                    )
                 }
             }
         }
     }
+
+    // DEBUG function to log additional messages
+    func logMessage(line: String, function: String, property: String, value: String, objectDescription: String? = nil) {
+        var message = "\(TAG) - Line: \(line), Function: \(function), Property: \(property), Value: \(value)"
+        if let description = objectDescription {
+            message += ", Object Description: \(description)"
+        }
+        print(message)
+    }
+  
+
 }
