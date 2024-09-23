@@ -24,6 +24,12 @@ import os.log
 // mechanism avoids any networking operations being executed in the context of the original calling thread, since this might
 // legitimately be from the main UI thread.
 public class ApproovSessionTaskObserver: NSObject {
+    // Additional logging can be used during development to troubleshoot any issues
+    // DO NOT ENABLE IN PRODUCTION
+    private var enableLogging = false
+    // String prefix to use during logging
+    private var TAG = "ApproovSessionTaskObserver: "
+    
     // the KVO object we are intersted in
     static let stateString = "state"
     
@@ -51,6 +57,7 @@ public class ApproovSessionTaskObserver: NSObject {
      */
     func addCompletionHandler(taskId: Int, handler: Any) -> Void {
         handlersQueue.sync {
+            
             completionHandlers[taskId] = handler;
         }
     }
@@ -63,6 +70,7 @@ public class ApproovSessionTaskObserver: NSObject {
      */
     func addSessionConfig(taskId: Int, sessionConfig: URLSessionConfiguration) -> Void {
         handlersQueue.sync {
+            log(line: #line, object: taskId, property: "newState", value: URLSessionConfiguration.description(), tag: TAG)
             sessionConfigs[taskId] = sessionConfig;
         }
     }
@@ -74,16 +82,24 @@ public class ApproovSessionTaskObserver: NSObject {
      * @return the enumerated value
      */
     func getURLSessionState(state: UInt32) -> URLSessionTask.State {
+        let sessionState: URLSessionTask.State
+            
         switch state {
         case 0:
-            return URLSessionTask.State.running
+            sessionState = .running
         case 1:
-            return URLSessionTask.State.suspended
+            sessionState = .suspended
         case 2:
-            return URLSessionTask.State.canceling
+            sessionState = .canceling
         default:
-            return URLSessionTask.State.completed
+            sessionState = .completed
         }
+        
+        // Log the raw state and the corresponding session state
+        log(line: #line, object: self, property: "state", value: state, tag: TAG)
+        log(line: #line, object: self, property: "URLSessionTask.State", value: sessionState, tag: TAG)
+        
+        return sessionState
     }
     
     /**
