@@ -384,8 +384,7 @@ public class ApproovSessionTaskObserver: NSObject {
                                 // the task is still suspended and we have an error condition, first inform the pinning delegate
                                 pinningDelegate.urlSession!(pinningSession, didBecomeInvalidWithError: updateResponse.error)
                                 // call any completion handler with the error or cancel if there is no completion handler
-                                if let handler = completionHandler as! CompletionHandlerData {
-                                    handler(nil, nil, updateResponse.error)
+                                if let handler = completionHandler as? CompletionHandlerData {
                                     //MARK: LOG_MESSAGE
                                     if ApproovSessionTaskObserver.enableLogging {
                                         ApproovSessionTaskObserver.logMessage(
@@ -397,8 +396,9 @@ public class ApproovSessionTaskObserver: NSObject {
                                             objectDescription: "Delegate handler with error message for task with ID: \(task.taskIdentifier)"
                                         )
                                     }
-                                } else if let handler = completionHandler as! CompletionHandlerURL {
-                                    handler(nil, nil, updateResponse.error)
+                                    handler!(nil, nil, updateResponse.error)
+                                } else if let handler = completionHandler as? CompletionHandlerURL {
+                                    handler!(nil, nil, updateResponse.error)
                                     //MARK: LOG_MESSAGE
                                     if ApproovSessionTaskObserver.enableLogging {
                                         ApproovSessionTaskObserver.logMessage(
@@ -411,7 +411,6 @@ public class ApproovSessionTaskObserver: NSObject {
                                         )
                                     }
                                 } else {
-                                    task.cancel()
                                     //MARK: LOG_MESSAGE
                                     if ApproovSessionTaskObserver.enableLogging {
                                         ApproovSessionTaskObserver.logMessage(
@@ -423,6 +422,7 @@ public class ApproovSessionTaskObserver: NSObject {
                                             objectDescription: "Invoked cancel for task with ID: \(task.taskIdentifier)"
                                         )
                                     }
+                                    task.cancel()
                                 }
                             } else {
                                 os_log("ApproovService: Pinning Delegate from url session pointer is invalid", type: .error)
