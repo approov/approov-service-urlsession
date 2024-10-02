@@ -18,26 +18,20 @@ let package = Package(
         )
     ],
     targets: [
-        // iOS-specific target using shared code with explicit file list
+        // iOS-specific target using the common code
         .target(
             name: "ApproovURLSession-iOS",
             dependencies: [.target(name: "Approov-iOS")],
-            path: "Sources/iOS",  // Custom path
-            sources: ["ApproovService.swift",
-                      "ApproovSessionTaskObserver.swift",
-                      "PinningURLSessionDelegate.swift",
-                      "ApproovURLSession.swift"]
+            path: "Sources/iOS",  // Shared code path
+            exclude: ["README.md", "LICENSE"]
         ),
         
-        // watchOS-specific target using shared code with explicit file list
+        // watchOS-specific target using the common code
         .target(
             name: "ApproovURLSession-watchOS",
             dependencies: [.target(name: "Approov-watchOS")],
-            path: "Sources/watchOS",  // Custom path
-            sources: ["ApproovService.swift",
-                      "ApproovSessionTaskObserver.swift",
-                      "PinningURLSessionDelegate.swift",
-                      "ApproovURLSession.swift"]
+            path: "Sources/watchOS",  // Shared code path
+            exclude: ["README.md", "LICENSE"]
         ),
         
         // iOS Binary target
