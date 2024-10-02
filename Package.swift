@@ -21,16 +21,20 @@ let package = Package(
         // iOS-specific target using the common code
         .target(
             name: "ApproovURLSession-iOS",
-            dependencies: [.target(name: "Approov-iOS")],
-            path: "Sources/iOS",  // Shared code path
+            dependencies: [
+                .target(name: "Approov-iOS")
+            ],
+            path: "Sources/iOS",  // Path for iOS-specific sources
             exclude: ["README.md", "LICENSE"]
         ),
         
         // watchOS-specific target using the common code
         .target(
             name: "ApproovURLSession-watchOS",
-            dependencies: [.target(name: "Approov-watchOS")],
-            path: "Sources/watchOS",  // Shared code path
+            dependencies: [
+                .target(name: "Approov-watchOS")
+            ],
+            path: "Sources/watchOS",  // Path for watchOS-specific sources
             exclude: ["README.md", "LICENSE"]
         ),
         
@@ -49,3 +53,4 @@ let package = Package(
         )
     ]
 )
+
