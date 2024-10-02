@@ -1,11 +1,8 @@
 // swift-tools-version: 6.0
 import PackageDescription
 
-// The release tag for the branch
 let releaseTAG = "3.2.3"
-// iOS SDK package version
 let sdkVersioniOS = "3.2.3"
-// watchOS SDK package version
 let sdkVersionWatchOS = "3.2.0"
 
 let package = Package(
@@ -15,38 +12,42 @@ let package = Package(
         .watchOS(.v7)
     ],
     products: [
-        // iOS Library
         .library(
-            name: "ApproovURLSession-iOS",
-            targets: ["ApproovURLSession-iOS"]
-        ),
-        // watchOS Library
-        .library(
-            name: "ApproovURLSession-watchOS",
-            targets: ["ApproovURLSession-watchOS"]
+            name: "ApproovURLSession",
+            targets: ["ApproovURLSession-iOS", "ApproovURLSession-watchOS"]
         )
     ],
     targets: [
-        // iOS Target
+        // iOS-specific target using shared code with explicit file list
         .target(
             name: "ApproovURLSession-iOS",
-            dependencies: ["Approov-iOS"],
-            path: "Sources/iOS",  // Set the custom source path for iOS
-            exclude: ["README.md", "LICENSE"]
+            dependencies: [.target(name: "Approov-iOS")],
+            path: "Sources/iOS",  // Custom path
+            sources: ["ApproovService.swift",
+                      "ApproovSessionTaskObserver.swift",
+                      "PinningURLSessionDelegate.swift",
+                      "ApproovURLSession.swift"]
         ),
+        
+        // watchOS-specific target using shared code with explicit file list
+        .target(
+            name: "ApproovURLSession-watchOS",
+            dependencies: [.target(name: "Approov-watchOS")],
+            path: "Sources/watchOS",  // Custom path
+            sources: ["ApproovService.swift",
+                      "ApproovSessionTaskObserver.swift",
+                      "PinningURLSessionDelegate.swift",
+                      "ApproovURLSession.swift"]
+        ),
+        
+        // iOS Binary target
         .binaryTarget(
             name: "Approov-iOS",
             url: "https://github.com/approov/approov-ios-sdk/releases/download/\(sdkVersioniOS)/Approov.xcframework.zip",
             checksum: "8382b5ec920f8fbe7a41dd6b32a35a6289ed4a6a2ab7e2ed146ca4b669c8abf4"
         ),
         
-        // watchOS Target
-        .target(
-            name: "ApproovURLSession-watchOS",
-            dependencies: ["Approov-watchOS"],
-            path: "Sources/watchOS",  // Set the custom source path for watchOS
-            exclude: ["README.md", "LICENSE"]
-        ),
+        // watchOS Binary target
         .binaryTarget(
             name: "Approov-watchOS",
             url: "https://github.com/approov/approov-watchos-sdk/releases/download/\(sdkVersionWatchOS)/Approov.xcframework.zip",
