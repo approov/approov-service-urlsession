@@ -17,7 +17,8 @@ let package = Package(
         .library(
             name: "ApproovURLSession",
             targets: ["ApproovURLSession"]
-        )
+        ),
+        .library(name: "ApproovURLSessionDynamic", type: .dynamic, targets: ["ApproovURLSession"])
     ],
     targets: [
         // Single target for both platforms
