@@ -24,11 +24,20 @@ import os.log
 // mechanism avoids any networking operations being executed in the context of the original calling thread, since this might
 // legitimately be from the main UI thread.
 public class ApproovSessionTaskObserver: NSObject {
-    // Additional logging can be used during development to troubleshoot any issues
+    // The dispatch queue to safely manage access to the enableLogging
+    private static let loggingQueue = DispatchQueue(label: "io.approov.ApproovService.loggingQueue", qos: .userInitiated)
     // DO NOT ENABLE IN PRODUCTION
-    private static var enableLogging = false
+    // Thread-safe accessor and mutator for enableLogging
+    public static var enableLogging: Bool {
+        get {
+            return loggingQueue.sync { self.enableLogging }
+        }
+        set {
+            loggingQueue.sync { self.enableLogging = newValue }
+        }
+    }
     // String prefix to use during logging
-    private static var TAG = "ApproovSessionTaskObserver: "
+    private let TAG = "ApproovSession: "
     
     // the KVO object we are intersted in
     static let stateString = "state"
@@ -48,16 +57,6 @@ public class ApproovSessionTaskObserver: NSObject {
     // the dispatch queue to manage serial access to the dictionary
     private let handlersQueue = DispatchQueue(label: "ApproovSessionTaskObserver")
 
-    
-    /**
-     * Method to set the logging flag
-     *
-     * @param true if logging is needed, false otherwise
-     */
-    public static func setLoggingEnabled(_ enabled: Bool) {
-        ApproovSessionTaskObserver.enableLogging = enabled
-    }
-
     /**
      * Adds a task UUID mapped to a function to be invoked as a callback in case of an error.
      *
@@ -67,7 +66,7 @@ public class ApproovSessionTaskObserver: NSObject {
     func addCompletionHandler(taskId: Int, handler: Any) -> Void {
         handlersQueue.sync {
             if ApproovSessionTaskObserver.enableLogging {
-                ApproovSessionTaskObserver.logMessage(
+                self.logMessage(
                     line: String(#line),
                     taskId: taskId,
                     property: "taskId",
@@ -92,9 +91,9 @@ public class ApproovSessionTaskObserver: NSObject {
                 // Pass the values as strings
                 let taskIdString = String(taskId)
                 // Add the session configuration description or nil if it is nil
-                let sessionConfigDescription = sessionConfig.description ?? "nil"
+                let sessionConfigDescription = sessionConfig.description
                 
-                ApproovSessionTaskObserver.logMessage(
+                self.logMessage(
                     line: String(#line),
                     taskId: taskId,
                     property: "sessionConfig",
@@ -126,12 +125,6 @@ public class ApproovSessionTaskObserver: NSObject {
             sessionState = .completed
         }
         
-        // Log the raw state and the corresponding session state
-        //MARK: LOG_MESSAGE
-        //if ApproovSessionTaskObserver.enableLogging {
-            //ApproovSessionTaskObserver.logMessage(line: String(#line), function: "getURLSessionState", property: "URLSessionTask.State", value: String(describing: sessionState))
-        //}
-        
         return sessionState
     }
     
@@ -160,7 +153,7 @@ public class ApproovSessionTaskObserver: NSObject {
             let objectDescription = object.map { String(describing: $0) } ?? "nil"
             // Prepare the context description
             let contextDescription = context != nil ? String(describing: context!) : "nil"
-            ApproovSessionTaskObserver.logMessage(
+            self.logMessage(
                 line: String(#line),
                 taskId: taskId.taskIdentifier,
                 property: "keyPath",
@@ -174,12 +167,12 @@ public class ApproovSessionTaskObserver: NSObject {
             let task = object as! URLSessionTask
             //MARK: LOG_MESSAGE
             if ApproovSessionTaskObserver.enableLogging {
-                ApproovSessionTaskObserver.logMessage(line: String(#line), taskId: task.taskIdentifier,property:"", value: "State change detected")
+                self.logMessage(line: String(#line), taskId: task.taskIdentifier,property:"", value: "State change detected")
             }
             task.removeObserver(self, forKeyPath: ApproovSessionTaskObserver.stateString)
             //MARK: LOG_MESSAGE
             if ApproovSessionTaskObserver.enableLogging {
-                ApproovSessionTaskObserver.logMessage(
+                self.logMessage(
                     line: String(#line),
                     taskId: task.taskIdentifier,
                     property:"task",
@@ -192,7 +185,7 @@ public class ApproovSessionTaskObserver: NSObject {
             defer {
                 //MARK: LOG_MESSAGE
                 if ApproovSessionTaskObserver.enableLogging {
-                    ApproovSessionTaskObserver.logMessage(
+                    self.logMessage(
                         line: String(#line),
                         taskId: task.taskIdentifier,
                         property:"context",
@@ -210,7 +203,7 @@ public class ApproovSessionTaskObserver: NSObject {
                     completionHandlers.removeValue(forKey: task.taskIdentifier)
                     //MARK: LOG_MESSAGE
                     if ApproovSessionTaskObserver.enableLogging {
-                        ApproovSessionTaskObserver.logMessage(
+                        self.logMessage(
                             line: String(#line),
                             taskId: task.taskIdentifier,
                             property: "completionHandlers.keys.contains",
@@ -221,7 +214,7 @@ public class ApproovSessionTaskObserver: NSObject {
                 } else {
                     //MARK: LOG_MESSAGE
                     if ApproovSessionTaskObserver.enableLogging {
-                        ApproovSessionTaskObserver.logMessage(
+                        self.logMessage(
                             line: String(#line),
                             taskId: task.taskIdentifier,
                             property: "completionHandlers.keys.contains",
@@ -235,7 +228,7 @@ public class ApproovSessionTaskObserver: NSObject {
                     sessionConfigs.removeValue(forKey: task.taskIdentifier)
                     //MARK: LOG_MESSAGE
                     if ApproovSessionTaskObserver.enableLogging {
-                        ApproovSessionTaskObserver.logMessage(
+                        self.logMessage(
                             line: String(#line),
                             taskId: task.taskIdentifier,
                             property: "sessionConfigs.keys.contains",
@@ -246,7 +239,7 @@ public class ApproovSessionTaskObserver: NSObject {
                 } else {
                     //MARK: LOG_MESSAGE
                     if ApproovSessionTaskObserver.enableLogging {
-                        ApproovSessionTaskObserver.logMessage(
+                        self.logMessage(
                             line: String(#line),
                             taskId: task.taskIdentifier,
                             property: "sessionConfigs.keys.contains",
@@ -270,7 +263,7 @@ public class ApproovSessionTaskObserver: NSObject {
                 // immediately suspend the task so that it cannot make progress
                 //MARK: LOG_MESSAGE
                 if ApproovSessionTaskObserver.enableLogging {
-                    ApproovSessionTaskObserver.logMessage(
+                    self.logMessage(
                         line: String(#line),
                         taskId: task.taskIdentifier,
                         property: "task.state",
@@ -281,7 +274,7 @@ public class ApproovSessionTaskObserver: NSObject {
                 task.suspend()
                 //MARK: LOG_MESSAGE
                 if ApproovSessionTaskObserver.enableLogging {
-                    ApproovSessionTaskObserver.logMessage(
+                    self.logMessage(
                         line: String(#line),
                         taskId: task.taskIdentifier,
                         property: "task.newState",
@@ -305,7 +298,7 @@ public class ApproovSessionTaskObserver: NSObject {
                             task.perform(sel, with: updateResponse.request)
                             //MARK: LOG_MESSAGE
                             if ApproovSessionTaskObserver.enableLogging {
-                                ApproovSessionTaskObserver.logMessage(
+                                self.logMessage(
                                     line: String(#line),
                                     taskId: task.taskIdentifier,
                                     property: "task.perform(sel, with: updateResponse.request)",
@@ -325,7 +318,7 @@ public class ApproovSessionTaskObserver: NSObject {
                         if task.state == URLSessionTask.State.suspended {
                             //MARK: LOG_MESSAGE
                             if ApproovSessionTaskObserver.enableLogging {
-                                ApproovSessionTaskObserver.logMessage(
+                                self.logMessage(
                                     line: String(#line),
                                     taskId: task.taskIdentifier,
                                     property: "task.resume() will be called",
@@ -337,7 +330,7 @@ public class ApproovSessionTaskObserver: NSObject {
                             task.resume()
                             //MARK: LOG_MESSAGE
                             if ApproovSessionTaskObserver.enableLogging {
-                                ApproovSessionTaskObserver.logMessage(
+                                self.logMessage(
                                     line: String(#line),
                                     taskId: task.taskIdentifier,
                                     property: "task.resume() called",
@@ -357,7 +350,7 @@ public class ApproovSessionTaskObserver: NSObject {
                             task.resume()
                             //MARK: LOG_MESSAGE
                             if ApproovSessionTaskObserver.enableLogging {
-                                ApproovSessionTaskObserver.logMessage(
+                                self.logMessage(
                                     line: String(#line),
                                     taskId: task.taskIdentifier,
                                     property: "task.resume()",
@@ -370,7 +363,7 @@ public class ApproovSessionTaskObserver: NSObject {
                     } else if task.state == URLSessionTask.State.suspended {
                         //MARK: LOG_MESSAGE
                         if ApproovSessionTaskObserver.enableLogging {
-                            ApproovSessionTaskObserver.logMessage(
+                            self.logMessage(
                                 line: String(#line),
                                 taskId: task.taskIdentifier,
                                 property: "task.state == URLSessionTask.State.suspended",
@@ -387,7 +380,7 @@ public class ApproovSessionTaskObserver: NSObject {
                                 if let handler = completionHandler as? CompletionHandlerData {
                                     //MARK: LOG_MESSAGE
                                     if ApproovSessionTaskObserver.enableLogging {
-                                        ApproovSessionTaskObserver.logMessage(
+                                        self.logMessage(
                                             line: String(#line),
                                             taskId: task.taskIdentifier,
                                             property: "completionHandler as! CompletionHandlerData",
@@ -401,7 +394,7 @@ public class ApproovSessionTaskObserver: NSObject {
                                     handler!(nil, nil, updateResponse.error)
                                     //MARK: LOG_MESSAGE
                                     if ApproovSessionTaskObserver.enableLogging {
-                                        ApproovSessionTaskObserver.logMessage(
+                                        self.logMessage(
                                             line: String(#line),
                                             taskId: task.taskIdentifier,
                                             property: "completionHandler as! CompletionHandlerURL",
@@ -413,7 +406,7 @@ public class ApproovSessionTaskObserver: NSObject {
                                 } else {
                                     //MARK: LOG_MESSAGE
                                     if ApproovSessionTaskObserver.enableLogging {
-                                        ApproovSessionTaskObserver.logMessage(
+                                        self.logMessage(
                                             line: String(#line),
                                             taskId: task.taskIdentifier,
                                             property: "task.cancel()",
@@ -428,12 +421,12 @@ public class ApproovSessionTaskObserver: NSObject {
                                 os_log("ApproovService: Pinning Delegate from url session pointer is invalid", type: .error)
                             }
                         } else {
-                            os_log("ApproovService: Pinning Session pointer is invalid/not of type URLSession %@", type: .error, context.debugDescription)
+                            os_log("ApproovService: Pinning Session pointer is invalid/not of type URLSession ", type: .error)
                         }
                     }
                     //MARK: LOG_MESSAGE
                     if ApproovSessionTaskObserver.enableLogging {
-                        ApproovSessionTaskObserver.logMessage(
+                        self.logMessage(
                             line: String(#line),
                             taskId: task.taskIdentifier,
                             property: "No decision from token fetch and no completion handler invoked",
@@ -448,7 +441,7 @@ public class ApproovSessionTaskObserver: NSObject {
     }
 
     // DEBUG function to log additional messages
-    static func logMessage(line: String, taskId: Int, property: String, value: String, objectDescription: String? = nil) {
+    func logMessage(line: String, taskId: Int, property: String, value: String, objectDescription: String? = nil) {
         if let description = objectDescription {
             os_log("%{public}@ - Line: %{public}@, TaskID: %{public}d, Property: %{public}@, Value: %{public}@, Object Description: %{public}@",
                 TAG, line, taskId, property, value, description)

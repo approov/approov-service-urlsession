@@ -1,27 +1,39 @@
 // swift-tools-version:5.3
-// The swift-tools-version declares the minimum version of Swift required to build this package.
 import PackageDescription
-let releaseTAG = "3.2.3"
+
+// The release tag for the branch
+let releaseTAG = "3.2.7"
+// SDK package version (used for both iOS and watchOS)
+let sdkVersion = "3.2.4"
+
 let package = Package(
     name: "ApproovURLSession",
-    platforms: [.iOS(.v12)],
+    platforms: [
+        .iOS(.v11),
+        .watchOS(.v7)
+    ],
     products: [
-        // Products define the executables and libraries a package produces, and make them visible to other packages.
+        // Combined library for iOS and watchOS
         .library(
             name: "ApproovURLSession",
-            targets: ["ApproovURLSession", "Approov"]),
+            targets: ["ApproovURLSession"]
+        ),
+        .library(name: "ApproovURLSessionDynamic", type: .dynamic, targets: ["ApproovURLSession"])
     ],
     targets: [
-        // Targets are the basic building blocks of a package. A target can define a module or a test suite.
-        // Targets can depend on other targets in this package, and on products in packages this package depends on.
+        // Single target for both platforms
         .target(
             name: "ApproovURLSession",
+            dependencies: ["Approov"],
+            path: "Sources/ApproovURLSession",  // Point to the shared source code
             exclude: ["README.md", "LICENSE"]
-            ),
+        ),
+        // Binary target for the merged xcframework
         .binaryTarget(
             name: "Approov",
-            url: "https://github.com/approov/approov-ios-sdk/releases/download/" + releaseTAG + "/Approov.xcframework.zip",
-            checksum : "8382b5ec920f8fbe7a41dd6b32a35a6289ed4a6a2ab7e2ed146ca4b669c8abf4"
+            url: "https://github.com/approov/approov-ios-sdk/releases/download/\(sdkVersion)/Approov.xcframework.zip",
+            checksum: "063426d969310bb5e6c4d8efd1009178c3e9cb003105085fabf55be0bf551f13"
         )
     ]
 )
+
