@@ -24,9 +24,6 @@ import os.log
 // mechanism avoids any networking operations being executed in the context of the original calling thread, since this might
 // legitimately be from the main UI thread.
 public class ApproovSessionTaskObserver: NSObject {
-    // Additional logging can be used during development to troubleshoot any issues
-    
-
     // The dispatch queue to safely manage access to the enableLogging
     private static let loggingQueue = DispatchQueue(label: "io.approov.ApproovService.loggingQueue", qos: .userInitiated)
     // DO NOT ENABLE IN PRODUCTION
@@ -63,7 +60,7 @@ public class ApproovSessionTaskObserver: NSObject {
     
     /**
      * Method to set the logging flag
-     *
+     * // DO NOT ENABLE IN PRODUCTION
      * @param true if logging is needed, false otherwise
      */
     public static func setLoggingEnabled(_ enabled: Bool) {
