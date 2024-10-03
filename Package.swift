@@ -1,4 +1,4 @@
-// swift-tools-version: 6.0
+// swift-tools-version: 5.0
 import PackageDescription
 
 // The release tag for the branch
@@ -32,7 +32,7 @@ let package = Package(
         .binaryTarget(
             name: "Approov",
             url: "https://github.com/approov/approov-ios-sdk/releases/download/\(sdkVersion)/Approov.xcframework.zip",
-            checksum: "0f332d1421fffe1072dfecc3616547d34484b4886008de6fd1db1a3c83881f99"
+            checksum: "063426d969310bb5e6c4d8efd1009178c3e9cb003105085fabf55be0bf551f13"
         )
     ]
 )
