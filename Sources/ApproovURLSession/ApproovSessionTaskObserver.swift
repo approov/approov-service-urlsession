@@ -57,16 +57,6 @@ public class ApproovSessionTaskObserver: NSObject {
     // the dispatch queue to manage serial access to the dictionary
     private let handlersQueue = DispatchQueue(label: "ApproovSessionTaskObserver")
 
-    
-    /**
-     * Method to set the logging flag
-     * // DO NOT ENABLE IN PRODUCTION
-     * @param true if logging is needed, false otherwise
-     */
-    public static func setLoggingEnabled(_ enabled: Bool) {
-        ApproovSessionTaskObserver.enableLogging = enabled
-    }
-
     /**
      * Adds a task UUID mapped to a function to be invoked as a callback in case of an error.
      *
