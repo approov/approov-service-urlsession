@@ -27,13 +27,14 @@ public class ApproovSessionTaskObserver: NSObject {
     // The dispatch queue to safely manage access to the enableLogging
     private static let loggingQueue = DispatchQueue(label: "io.approov.ApproovService.loggingQueue", qos: .userInitiated)
     // DO NOT ENABLE IN PRODUCTION
+    private static var _enableLogging: Bool = false
     // Thread-safe accessor and mutator for enableLogging
     public static var enableLogging: Bool {
         get {
-            return loggingQueue.sync { self.enableLogging }
+            return loggingQueue.sync { _enableLogging }
         }
         set {
-            loggingQueue.sync { self.enableLogging = newValue }
+            loggingQueue.sync { _enableLogging = newValue }
         }
     }
     // String prefix to use during logging
