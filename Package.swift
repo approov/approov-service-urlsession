@@ -2,7 +2,7 @@
 import PackageDescription
 
 // The release tag for the branch
-let releaseTAG = "3.2.3"
+let releaseTAG = "3.2.7"
 // SDK package version (used for both iOS and watchOS)
 let sdkVersion = "3.2.4"
 
