@@ -554,7 +554,7 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
                 }
             }
             else {
-                os_log("ApproovService: skippng unsupported certificate type")
+                os_log("ApproovService: skipping unsupported certificate type")
             }
             
             // move to the next certificate in the chain
