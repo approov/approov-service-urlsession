@@ -79,6 +79,9 @@ public class ApproovService {
     // the initial config string used to initialize
     private static var configString: String?
     
+    // the comment used during initialization
+    private static var initialComment: String?
+    
     // status of Approov SDK initialization
     private static var isInitialized = false
     
@@ -119,8 +122,10 @@ public class ApproovService {
      * reason, an .initializationFailure is raised
      *
      * @param config is the configuration to be used
+     * @param comment is an optional comment used during initialization. It is safe to use null
+     * @throws ApproovException if the provided configuration is not valid
      */
-    public static func initialize(config: String) throws {
+    public static func initialize(config: String, comment: String?) throws {
         try initializerQueue.sync  {
             // check if we attempt to use a different configString
             if isInitialized {
@@ -133,9 +138,14 @@ public class ApproovService {
                 do {
                     if config.count > 0 {
                         // only initialize with a non-empty string as empty string used to bypass this
-                        try Approov.initialize(config, updateConfig: "auto", comment: nil)
+                        try Approov.initialize(config, updateConfig: "auto", comment: comment)
                     }
                     configString = config
+                    initialComment = comment
+                    // Use the comment if not null to immediately initialize with comment as argument
+                    if (initialComment != nil) {
+                        try Approov.initialize(config, updateConfig: "auto", comment: comment)
+                    }
                     Approov.setUserProperty("approov-service-urlsession")
                     isInitialized = true
                 } catch let error {
