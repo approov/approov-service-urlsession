@@ -122,10 +122,10 @@ public class ApproovService {
      * reason, an .initializationFailure is raised
      *
      * @param config is the configuration to be used
-     * @param comment is an optional comment used during initialization. It is safe to use null
+     * @param comment is an optional comment used during initialization. It is safe to use null.
      * @throws ApproovException if the provided configuration is not valid
      */
-    public static func initialize(config: String, comment: String?) throws {
+    public static func initialize(config: String, comment: String? = nil) throws {
         try initializerQueue.sync  {
             // check if we attempt to use a different configString
             if isInitialized {
