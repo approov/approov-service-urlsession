@@ -24,10 +24,6 @@ Pod::Spec.new do |s|
     unzip -o Approov.xcframework.zip
     rm -f Approov.xcframework.zip
   CMD
-  
-  # Approov dependency - pulling the binary from GitHub release
-  ## Should be removed and not be a direct dependency
-  #s.dependency "Approov", "~> 3.2.4"  # Specify the version here if a podspec exists
 
   # Pod target xcconfig settings if required
   s.pod_target_xcconfig = {
