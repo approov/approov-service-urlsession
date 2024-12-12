@@ -18,10 +18,12 @@ Pod::Spec.new do |s|
   s.source_files = "Sources/ApproovURLSession/**/*.{swift,h}"
 
   # Vendored frameworks for both iOS and watchOS
-  #s.vendored_frameworks = 'https://github.com/approov/approov-ios-sdk/releases/download/3.2.4/Approov.xcframework.zip'
-
-  # Approov dependency - pulling the binary from GitHub release
-  s.dependency "Approov", "~> 3.2.4"  # Specify the version here if a podspec exists
+  s.vendored_frameworks = 'Approov.xcframework'
+  s.prepare_command = <<-CMD
+    curl -L https://github.com/approov/approov-ios-sdk/releases/download/3.2.4/Approov.xcframework.zip > Approov.xcframework.zip
+    unzip -o Approov.xcframework.zip
+    rm -f Approov.xcframework.zip
+  CMD
 
   # Pod target xcconfig settings if required
   s.pod_target_xcconfig = {

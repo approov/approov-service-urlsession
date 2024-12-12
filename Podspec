@@ -16,9 +16,6 @@ Pod::Spec.new do |s|
 
   # Specify the source code paths for the combined target
   s.source_files = "Sources/ApproovURLSession/**/*.{swift,h}"
-
-  # Approov dependency - pulling the binary from GitHub release
-  s.dependency "Approov"
   
   s.watchos.vendored_frameworks = 'https://github.com/approov/approov-ios-sdk/releases/download/3.2.4/Approov.xcframework.zip'
   s.ios.vendored_frameworks = 'https://github.com/approov/approov-ios-sdk/releases/download/3.2.4/Approov.xcframework.zip'
