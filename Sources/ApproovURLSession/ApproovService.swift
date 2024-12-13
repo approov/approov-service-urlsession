@@ -138,7 +138,7 @@ public class ApproovService {
                 do {
                     if config.count > 0 {
                         // only initialize with a non-empty string as empty string used to bypass this
-                        try Approov.initialize(config, updateConfig: "auto", comment: comment)
+                        try Approov.initialize(config, updateConfig: "auto", comment: nil)
                     }
                     configString = config
                     initialComment = comment
