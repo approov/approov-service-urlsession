@@ -1,6 +1,6 @@
 Pod::Spec.new do |s|
   s.name         = "ApproovURLSession"
-  s.version      = "3.2.7"
+  s.version      = "3.3.0"
   s.summary      = "Approov mobile attestation SDK"
   s.description  = <<-DESC
     Approov SDK integrates security attestation and secure string fetching for both iOS and watchOS apps.

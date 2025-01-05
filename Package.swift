@@ -2,9 +2,9 @@
 import PackageDescription
 
 // The release tag for the branch
-let releaseTAG = "3.2.7"
+let releaseTAG = "3.3.0"
 // SDK package version (used for both iOS and watchOS)
-let sdkVersion = "3.2.4"
+let sdkVersion = "3.3.0"
 
 let package = Package(
     name: "ApproovURLSession",
@@ -32,7 +32,7 @@ let package = Package(
         .binaryTarget(
             name: "Approov",
             url: "https://github.com/approov/approov-ios-sdk/releases/download/\(sdkVersion)/Approov.xcframework.zip",
-            checksum: "063426d969310bb5e6c4d8efd1009178c3e9cb003105085fabf55be0bf551f13"
+            checksum: "8c8737a2cea95e7101f6e05114c37f3f45a600abd196aca05d2c58edb90634dd"
         )
     ]
 )
