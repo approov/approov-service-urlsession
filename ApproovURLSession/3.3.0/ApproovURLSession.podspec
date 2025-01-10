@@ -1,5 +1,5 @@
 Pod::Spec.new do |s|
-  s.name         = "approov-service-urlsession"
+  s.name         = "ApproovURLSession"
   s.version      = "3.3.0"
   s.summary      = "Approov mobile attestation SDK"
   s.description  = <<-DESC
