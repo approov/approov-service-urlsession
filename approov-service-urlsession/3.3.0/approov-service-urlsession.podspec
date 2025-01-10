@@ -1,5 +1,5 @@
 Pod::Spec.new do |s|
-  s.name         = "ApproovURLSession"
+  s.name         = "approov-service-urlsession"
   s.version      = "3.3.0"
   s.summary      = "Approov mobile attestation SDK"
   s.description  = <<-DESC
@@ -8,14 +8,14 @@ Pod::Spec.new do |s|
   s.homepage     = "https://approov.io"
   s.license      = { type: "Commercial", file: "LICENSE" }
   s.authors      = { "CriticalBlue, Ltd." => "support@approov.io" }
-  s.source       = { git: "https://github.com/approov/approov-ios-sdk.git", tag: s.version }
+  s.source       = { git: "https://github.com/approov/approov-service-urlsession.git", tag: s.version }
 
   # Supported platforms
-  s.ios.deployment_target = '11.0'
+  s.ios.deployment_target = '12.0'
   s.watchos.deployment_target = '7.0'
 
   # Specify the source code paths for the combined target
-  s.source_files = "Sources/ApproovURLSession/**/*.{swift,h}"
+  s.source_files = 'Sources/ApproovURLSession/**/*'
 
   # Vendored frameworks for both iOS and watchOS
   s.vendored_frameworks = 'Approov.xcframework'
@@ -30,4 +30,3 @@ Pod::Spec.new do |s|
     'VALID_ARCHS' => 'arm64 x86_64 arm64_32 x86_64'  # Combine valid architectures
   }
 end
-
