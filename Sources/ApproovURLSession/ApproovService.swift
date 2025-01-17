@@ -26,31 +26,67 @@ public enum ApproovError: Error, LocalizedError {
     case networkingError(message: String)
     case permanentError(message: String)
     case rejectionError(message: String, ARC: String, rejectionReasons: String)
+
+    // Localized description for backward compatibility
     public var localizedDescription: String {
-        get {
-            switch self {
-            case let .initializationFailure(message),
-                 let .configurationError(message),
-                 let .pinningError(message),
-                 let .networkingError(message),
-                 let .permanentError(message):
-                 return message
-            case let .rejectionError(message, ARC, rejectionReasons):
-                var info: String = ""
-                if ARC != "" {
-                    info += ", ARC: " + ARC
-                }
-                if rejectionReasons != "" {
-                    info += ", reasons: " + rejectionReasons
-                }
-                return message + info
+        switch self {
+        case let .initializationFailure(message),
+             let .configurationError(message),
+             let .pinningError(message),
+             let .networkingError(message),
+             let .permanentError(message):
+            return message
+        case let .rejectionError(message, ARC, rejectionReasons):
+            var info: String = ""
+            if !ARC.isEmpty {
+                info += ", ARC: \(ARC)"
             }
+            if !rejectionReasons.isEmpty {
+                info += ", reasons: \(rejectionReasons)"
+            }
+            return message + info
         }
     }
+
+    // Error description for compatibility with LocalizedError
     public var errorDescription: String? {
         return localizedDescription
     }
+
+    // Accessors for granular error handling
+    public var isInitializationFailure: Bool {
+        if case .initializationFailure = self { return true }
+        return false
+    }
+
+    public var isConfigurationError: Bool {
+        if case .configurationError = self { return true }
+        return false
+    }
+
+    public var isPinningError: Bool {
+        if case .pinningError = self { return true }
+        return false
+    }
+
+    public var isNetworkingError: Bool {
+        if case .networkingError = self { return true }
+        return false
+    }
+
+    public var isPermanentError: Bool {
+        if case .permanentError = self { return true }
+        return false
+    }
+
+    public var rejectionDetails: (ARC: String, reasons: String)? {
+        if case let .rejectionError(_, ARC, rejectionReasons) = self {
+            return (ARC, rejectionReasons)
+        }
+        return nil
+    }
 }
+
 
 // possible results from an Approov request update
 public enum ApproovFetchDecision {
