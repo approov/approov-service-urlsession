@@ -119,8 +119,14 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
      */
     func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
         if !challenge.protectionSpace.authenticationMethod.isEqual(NSURLAuthenticationMethodServerTrust) {
-            // delegate any challenge that is not to do with pinning
-            optionalURLDelegate?.urlSession?(session, didReceive: challenge, completionHandler: completionHandler)
+            if let userDelegate = optionalURLDelegate {
+                // delegate any challenge that is not to do with pinning
+                userDelegate.urlSession?(session, didReceive: challenge, completionHandler: completionHandler)
+            }
+            else {
+                // the user is not providing a delegate so we need to invoke the completion handler since we only deal with certificate pinning
+                completionHandler(.useCredential, nil)
+            }
         }
         else {
             // we have a server trust challenge
