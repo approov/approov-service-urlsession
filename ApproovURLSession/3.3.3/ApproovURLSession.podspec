@@ -17,7 +17,7 @@ Pod::Spec.new do |s|
   # Specify the source code paths for the combined target
   s.source_files = "Sources/ApproovURLSession/**/*.{swift,h}"
   # Dependency on the Approov SDK
-  s.dependency 'approov-ios-sdk', '~> 3.3.1'
+  s.dependency 'approov-ios-sdk', '~> 3.3.2'
   s.frameworks = 'Approov'
   # Pod target xcconfig settings if required
   s.pod_target_xcconfig = {
