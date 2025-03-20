@@ -149,8 +149,9 @@ public class ApproovService {
                         isInitialized = true
                     } catch let error {
                         // log error and throw exception
-                        os_log("ApproovService: Error initializing Approov SDK: %@", type: .error, error.localizedDescription)
-                        throw ApproovError.initializationFailure(message: "Error initializing Approov SDK: \(error.localizedDescription)")
+                        os_log("ApproovService: Ignoring initialization error in Approov SDK: %@", type: .error, error.localizedDescription)
+                        //throw ApproovError.initializationFailure(message: "Error initializing Approov SDK: \(error.localizedDescription)")
+                        isInitialized = true
                     }
                 }
             }
