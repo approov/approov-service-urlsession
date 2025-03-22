@@ -148,10 +148,14 @@ public class ApproovService {
                         Approov.setUserProperty("approov-service-urlsession")
                         isInitialized = true
                     } catch let error {
-                        // log error and throw exception
-                        os_log("ApproovService: Ignoring initialization error in Approov SDK: %@", type: .error, error.localizedDescription)
-                        //throw ApproovError.initializationFailure(message: "Error initializing Approov SDK: \(error.localizedDescription)")
-                        isInitialized = true
+                        // If the error is due to the SDK being initilized already, we ignore it otherwise we throw
+                        if error.localizedDescription.localizedCaseInsensitiveContains("Approov SDK already initialized") {
+                            os_log("ApproovService: Ignoring initialization error in Approov SDK: %@", type: .error, error.localizedDescription)
+                            isInitialized = true
+                        } else {
+                            throw ApproovError.initializationFailure(message: "Error initializing Approov SDK: \(error.localizedDescription)")
+                        }
+                        
                     }
                 }
             }
