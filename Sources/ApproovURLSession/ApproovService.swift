@@ -138,9 +138,6 @@ public class ApproovService {
                             // only initialize with a non-empty string as empty string used to bypass this
                             try Approov.initialize(config, updateConfig: "auto", comment: comment)
                         }
-                        configString = config
-                        Approov.setUserProperty("approov-service-urlsession")
-                        isInitialized = true
                     } catch let error {
                         // If the error is due to the SDK being initilized already, we ignore it otherwise we throw
                         if error.localizedDescription.localizedCaseInsensitiveContains("Approov SDK already initialized") {
@@ -148,9 +145,11 @@ public class ApproovService {
                             isInitialized = true
                         } else {
                             throw ApproovError.initializationFailure(message: "Error initializing Approov SDK: \(error.localizedDescription)")
-                        }
-                        
+                        }                        
                     }
+                    isInitialized = true
+                    configString = config
+                    Approov.setUserProperty("approov-service-urlsession")
                 }
             }
         }
