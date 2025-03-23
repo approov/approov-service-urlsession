@@ -124,7 +124,7 @@ public class ApproovService {
     public static func initialize(config: String, comment: String? = nil) throws {
             try initializerQueue.sync  {
                 // check if we attempt to use a different configString
-                if isInitialized && !comment.hasPrefix("reinit") {
+                if isInitialized && ((comment?.hasPrefix("reinit")) == nil) {
                     // ignore multiple initialization calls that use the same configuration
                     if (config != configString) {
                         // throw exception indicating we are attempting to use different config
@@ -134,7 +134,7 @@ public class ApproovService {
                     os_log("ApproovService: Ignoring multiple ApproovService layer initializations with the same config");
                 } else {
                     do {
-                        if !config.isEmpty() {
+                        if !config.isEmpty {
                             // only initialize with a non-empty string as empty string used to bypass this
                             try Approov.initialize(config, updateConfig: "auto", comment: comment)
                         }
