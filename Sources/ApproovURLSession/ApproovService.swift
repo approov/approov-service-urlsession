@@ -79,9 +79,6 @@ public class ApproovService {
     // the initial config string used to initialize
     private static var configString: String?
     
-    // the initial comment string provided to the initializer
-    private static var initialComment: String?
-    
     // status of Approov SDK initialization
     private static var isInitialized = false
     
@@ -127,24 +124,21 @@ public class ApproovService {
     public static func initialize(config: String, comment: String? = nil) throws {
             try initializerQueue.sync  {
                 // check if we attempt to use a different configString
-                if isInitialized {
+                if isInitialized && !comment.hasPrefix("reinit") {
+                    // ignore multiple initialization calls that use the same configuration
                     if (config != configString) {
                         // throw exception indicating we are attempting to use different config
                         os_log("ApproovService: Attempting to initialize with different configuration", type: .error)
                         throw ApproovError.configurationError(message: "Attempting to initialize with a different configuration")
                     }
+                    os_log("ApproovService: Ignoring multiple ApproovService layer initializations with the same config");
                 } else {
                     do {
-                        if config.count > 0 {
+                        if !config.isEmpty() {
                             // only initialize with a non-empty string as empty string used to bypass this
-                            try Approov.initialize(config, updateConfig: "auto", comment: nil)
-                        }
-                        configString = config
-                        initialComment = comment
-                        // Use the comment if not null to immediately initialize with comment as argument
-                        if (initialComment != nil) {
                             try Approov.initialize(config, updateConfig: "auto", comment: comment)
                         }
+                        configString = config
                         Approov.setUserProperty("approov-service-urlsession")
                         isInitialized = true
                     } catch let error {
