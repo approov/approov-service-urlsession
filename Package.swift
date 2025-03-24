@@ -2,9 +2,9 @@
 import PackageDescription
 
 // The release tag for the branch
-let releaseTAG = "3.3.1"
+let releaseTAG = "3.4.0"
 // SDK package version (used for both iOS and watchOS)
-let sdkVersion = "3.3.0"
+let sdkVersion = "3.4.0"
 
 let package = Package(
     name: "ApproovURLSession",
