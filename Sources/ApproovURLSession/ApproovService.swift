@@ -645,7 +645,7 @@ public class ApproovService {
             }
         }
         
-        // fetch an Approov token
+        // fetch an Approov token: request.url can not be nil here
         let approovResult = Approov.fetchTokenAndWait(request.url!.absoluteString)
         let hostname = hostnameFromURL(url: request.url!)
         os_log("ApproovService: updateRequest %@: %@", type: .info, hostname, approovResult.loggableToken())

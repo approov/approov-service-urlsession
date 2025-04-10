@@ -1,16 +1,16 @@
-// swift-tools-version:5.3
+// swift-tools-version:5.8
 import PackageDescription
 
 // The release tag for the branch
-let releaseTAG = "3.3.1"
+let releaseTAG = "3.4.0"
 // SDK package version (used for both iOS and watchOS)
-let sdkVersion = "3.3.0"
+let sdkVersion = "3.4.0"
 
 let package = Package(
     name: "ApproovURLSession",
     platforms: [
         .iOS(.v11),
-        .watchOS(.v7)
+        .watchOS(.v9)
     ],
     products: [
         // Combined library for iOS and watchOS
@@ -20,11 +20,17 @@ let package = Package(
         ),
         .library(name: "ApproovURLSessionDynamic", type: .dynamic, targets: ["ApproovURLSession"])
     ],
+    dependencies: [
+        .package(url: "https://github.com/apple/swift-http-structured-headers.git", from: "1.0.0")
+    ],
     targets: [
         // Single target for both platforms
         .target(
             name: "ApproovURLSession",
-            dependencies: ["Approov"],
+            dependencies: [
+                "Approov",
+                .product(name: "StructuredHeaders", package: "swift-http-structured-headers")
+            ],
             path: "Sources/ApproovURLSession",  // Point to the shared source code
             exclude: ["README.md", "LICENSE"]
         ),
@@ -32,7 +38,7 @@ let package = Package(
         .binaryTarget(
             name: "Approov",
             url: "https://github.com/approov/approov-ios-sdk/releases/download/\(sdkVersion)/Approov.xcframework.zip",
-            checksum: "8c8737a2cea95e7101f6e05114c37f3f45a600abd196aca05d2c58edb90634dd"
+            checksum: "9a02cb9ca905a9e2e0692047dfd4cdbfd3133c9e4b644bdfe898f7ce1b8d7461" // SHA256 checksum of the xcframework zip file
         )
     ]
 )
