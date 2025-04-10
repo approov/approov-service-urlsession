@@ -29,7 +29,8 @@ let package = Package(
             name: "ApproovURLSession",
             dependencies: [
                 "Approov",
-                .product(name: "StructuredFieldValues", package: "swift-http-structured-headers")
+                .product(name: "StructuredFieldValues", package: "swift-http-structured-headers"),
+                .product(name: "RawStructuredFieldValues", package: "swift-http-structured-headers")
             ],
             path: "Sources/ApproovURLSession",  // Point to the shared source code
             exclude: ["README.md", "LICENSE"]
