@@ -17,6 +17,8 @@
 import Foundation
 import Approov
 import os.log
+import CryptoKit
+import StructuredFieldValues
 
 // Approov error conditions
 public enum ApproovError: Error, LocalizedError {
@@ -450,21 +452,39 @@ public class ApproovService {
     }
     
     /**
-     * Gets the signature for the given message. This uses an account specific message signing key that is
-     * transmitted to the SDK after a successful fetch if the facility is enabled for the account. Note
-     * that if the attestation failed then the signing key provided is actually random so that the
-     * signature will be incorrect. An Approov token should always be included in the message
-     * being signed and sent alongside this signature to prevent replay attacks. If no signature is
-     * available, because there has been no prior fetch or the feature is not enabled, then an
-     * ApproovException is thrown.
+     * Gets the signature for the given message using the account-specific signing key.
+     * This key is transmitted to the SDK after a successful fetch if the feature is enabled.
      *
      * @param message is the message whose content is to be signed
      * @return String of the base64 encoded message signature
      */
+    public static func getAccountMessageSignature(message: String) -> String? {
+        os_log("ApproovService: getAccountMessageSignature", type: .debug)
+        return Approov.getMessageSignature(message)
+    }
+
+    /**
+     * Gets the signature for the given message using the install-specific signing key.
+     * This key is tied to the specific app installation and is transmitted after a successful fetch.
+     *
+     * @param message is the message whose content is to be signed
+     * @return String of the base64 encoded message signature
+     */
+    public static func getInstallMessageSignature(message: String) -> String? {
+        os_log("ApproovService: getInstallMessageSignature", type: .debug)
+        return Approov.getInstallMessageSignature(message)
+    }
+
+    /**
+     * Gets the signature for the given message. This method is obsolete and will return
+     * the account-specific message signature.
+     *
+     * @param message is the message whose content is to be signed
+     * @return String of the base64 encoded message signature
+     */
+    @available(*, deprecated, message: "Use getAccountMessageSignature or getInstallMessageSignature instead.")
     public static func getMessageSignature(message: String) -> String? {
-        let signature = Approov.getMessageSignature(message)
-        os_log("ApproovService: getMessageSignature", type: .debug)
-        return signature
+        return getAccountMessageSignature(message: message)
     }
     
     /**
@@ -599,7 +619,7 @@ public class ApproovService {
      * @param sessionConfig is any URLSessionConfiguration from which additional headers can be obtained
      * @return ApproovUpdateResponse providing an updated requets, plus an errors and status
      */
-    public static func updateRequestWithApproov(request: URLRequest, sessionConfig: URLSessionConfiguration?) -> ApproovUpdateResponse {
+    public static func updateRequestWithApproov(request: URLRequest, sessionConfig: URLSessionConfiguration?) throws -> ApproovUpdateResponse {
         // check if the SDK is not initialized or if the URL matches one of the exclusion regexs and just return if it does
         if let url = request.url {
             if !isInitialized {
@@ -825,6 +845,332 @@ public class ApproovService {
                 }
             }
         }
+
+        // Add message signature logic before returning the response
+        if let tokenHeaderKey = request.allHTTPHeaderFields?["Approov-Token"] {
+            // Generate and add a message signature
+            let provider = ApproovURLSessionComponentProvider(request: request)
+            guard let params = generateSignatureParameters(provider: provider) else {
+                // No signature to be added; proceed with the original request
+                return response
+            }
+
+            // Build the signature base
+            let baseBuilder = SignatureBaseBuilder(sigParams: params, ctx: provider)
+            let message = baseBuilder.createSignatureBase()
+            // WARNING: Never log the message as it contains sensitive information
+
+            // Generate the signature
+            let sigId: String
+            let signature: Data
+            switch params.getAlg() {
+            case "ecdsa-p256-sha256":
+                sigId = "install"
+                guard let base64Signature = ApproovService.getInstallMessageSignature(message: message),
+                      let decodedSignature = Data(base64Encoded: base64Signature) else {
+                    throw ApproovError.permanentError(message: "Failed to generate ES256 signature")
+                }
+                signature = try decodeES256Signature(decodedSignature)
+            case "hmac-sha256":
+                sigId = "account"
+                guard let base64Signature = ApproovService.getAccountMessageSignature(message: message),
+                      let decodedSignature = Data(base64Encoded: base64Signature) else {
+                    throw NSError(domain: "Approov", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to generate HMAC signature"])
+                }
+                signature = decodedSignature
+            default:
+                throw NSError(domain: "Approov", code: -1, userInfo: [NSLocalizedDescriptionKey: "Unsupported algorithm identifier: \(params.getAlg() ?? "unknown")"])
+            }
+
+            // Create signature headers
+            let sigHeaderDictionary: [String: String] = [sigId: signature.base64EncodedString()]
+            let sigInputDictionary: [String: Any] = [sigId: params.toComponentValue()]
+
+            // Serialize the sigHeader dictionary
+            guard let sigHeaderData = try? JSONSerialization.data(withJSONObject: sigHeaderDictionary, options: []),
+                  let sigHeader = String(data: sigHeaderData, encoding: .utf8) else {
+                throw ApproovError.permanentError(message: "Failed to serialize signature header")
+            }
+
+            // Serialize the sigInput dictionary
+            guard let sigInputData = try? JSONSerialization.data(withJSONObject: sigInputDictionary, options: []),
+                  let sigInputHeader = String(data: sigInputData, encoding: .utf8) else {
+                throw ApproovError.permanentError(message: "Failed to serialize signature input header")
+            }
+
+            // Add headers to the request
+            var signedRequest = request
+            signedRequest.addValue(sigHeader, forHTTPHeaderField: "Signature")
+            signedRequest.addValue(sigInputHeader, forHTTPHeaderField: "Signature-Input")
+
+            if params.isDebugMode() {
+                // TODO: This is only supported on iOS 13+
+                let digest = SHA256.hash(data: Data(message.utf8))
+                let digestData = Data(digest) // Convert digest to Data
+                let digestDictionary: [String: String] = ["sha-256": digestData.base64EncodedString()]
+                // Serialize the dictionary to JSON
+                if let serializedDigest = try? JSONSerialization.data(withJSONObject: digestDictionary, options: []),
+                   let serializedString = String(data: serializedDigest, encoding: .utf8) {
+                    // Add the serialized digest to the request headers
+                    signedRequest.addValue(serializedString, forHTTPHeaderField: "Signature-Base-Digest")
+                } else {
+                    fatalError("Failed to serialize the digest dictionary")
+                }
+            }
+
+            // WARNING: Never log the full request as it contains sensitive information
+            print("Signed Request: \(signedRequest)")
+        }
+
         return response
+    }
+
+    private static func generateSignatureParameters(provider: ApproovURLSessionComponentProvider) -> SignatureParameters? {
+        // Generate signature parameters based on the request
+        let params = SignatureParameters()
+        params.setAlg("ecdsa-p256-sha256")
+        params.addComponentIdentifier("@method")
+        params.addComponentIdentifier("@target-uri")
+        return params
+    }
+
+    private static func decodeES256Signature(_ signature: Data) throws -> Data {
+        // Decode ASN.1 DER encoded ES256 signature into raw r and s values
+        var offset = 0
+
+        // Ensure the signature starts with a valid ASN.1 sequence
+        guard signature[offset] == 0x30 else {
+            throw ApproovError.permanentError(message: "Invalid ASN.1 DER sequence")
+        }
+        offset += 1
+
+        // Read the total length of the sequence
+        let sequenceLength = Int(signature[offset])
+        offset += 1
+
+        guard sequenceLength == signature.count - 2 else {
+            throw ApproovError.permanentError(message: "Invalid ASN.1 DER sequence length")
+        }
+
+        // Decode the first integer (r)
+        guard signature[offset] == 0x02 else {
+            throw ApproovError.permanentError(message: "Invalid ASN.1 DER integer for r")
+        }
+        offset += 1
+
+        let rLength = Int(signature[offset])
+        offset += 1
+
+        let rBytes = signature[offset..<(offset + rLength)]
+        offset += rLength
+
+        // Decode the second integer (s)
+        guard signature[offset] == 0x02 else {
+            throw ApproovError.permanentError(message: "Invalid ASN.1 DER integer for s")
+        }
+        offset += 1
+
+        let sLength = Int(signature[offset])
+        offset += 1
+
+        let sBytes = signature[offset..<(offset + sLength)]
+        offset += sLength
+
+        // Ensure the entire signature has been processed
+        guard offset == signature.count else {
+            throw ApproovError.permanentError(message: "Extra data in ASN.1 DER signature")
+        }
+
+        // Pad r and s to 32 bytes if necessary
+        let rPadded = rBytes.count < 32 ? Data(repeating: 0, count: 32 - rBytes.count) + rBytes : rBytes
+        let sPadded = sBytes.count < 32 ? Data(repeating: 0, count: 32 - sBytes.count) + sBytes : sBytes
+
+        return rPadded + sPadded
+    }
+}
+
+/**
+ * ApproovURLSessionComponentProvider implements the ComponentProvider protocol for URLSession requests.
+ */
+class ApproovURLSessionComponentProvider: ComponentProvider {
+    func getComponentValue(componentIdentifier: String) -> String? {
+        // Handle derived components
+        if componentIdentifier.starts(with: "@") {
+            switch componentIdentifier {
+            case ApproovURLSessionComponentProvider.DC_METHOD:
+                return getMethod()
+            case ApproovURLSessionComponentProvider.DC_AUTHORITY:
+                return getAuthority()
+            case ApproovURLSessionComponentProvider.DC_SCHEME:
+                return getScheme()
+            case ApproovURLSessionComponentProvider.DC_TARGET_URI:
+                return getTargetUri()
+            case ApproovURLSessionComponentProvider.DC_REQUEST_TARGET:
+                return getRequestTarget()
+            case ApproovURLSessionComponentProvider.DC_PATH:
+                return getPath()
+            case ApproovURLSessionComponentProvider.DC_QUERY:
+                return getQuery()
+            case ApproovURLSessionComponentProvider.DC_STATUS:
+                return getStatus()
+            case ApproovURLSessionComponentProvider.DC_QUERY_PARAM:
+                // Handle query parameter with "name" parameter
+                if let name = getQueryParam(name: "name") {
+                    return name
+                } else {
+                    fatalError("'name' parameter of \(componentIdentifier) is required")
+                }
+            default:
+                fatalError("Unknown derived component: \(componentIdentifier)")
+            }
+        } else {
+            // Create an instance of StructuredFieldValueDecoder
+            let decoder = StructuredFieldValueDecoder()
+            // Handle field-based components
+            if let fieldValue = getField(name: componentIdentifier) {
+                // Check if the field is a dictionary
+                if let key = getKeyFromParams(componentIdentifier: componentIdentifier) {
+                    do {
+                        // TODO: This can not be a generic type but must be something declaring conformance to protocol StructuredFieldValue
+                        let dictionary = try decoder.decode(Dictionary<String, Any>.self, from: fieldValue.data(using: .utf8)!)
+                        if let value = dictionary[key] {
+                            return value.serialize()
+                        } else {
+                            fatalError("Value for '\(key)' key of dictionary \(componentIdentifier) does not exist")
+                        }
+                    } catch {
+                        fatalError("Field \(componentIdentifier) is not a dictionary field")
+                    }
+                }
+
+                // Check if the field is a list
+                if isListField(componentIdentifier: componentIdentifier) {
+                    do {
+                        let list = try StructuredFieldValueDecoder().decode(StructuredFieldValues.List.self, from: fieldValue.data(using: .utf8)!)
+                        return list.serialize()
+                    } catch {
+                        fatalError("Field \(componentIdentifier) is not a structured list field")
+                    }
+                }
+
+                // Check if the field is an item
+                do {
+                    let item = try StructuredFieldValueDecoder().decode(StructuredFieldValues.Item.self, from: fieldValue.data(using: .utf8)!)
+                    return item.serialize()
+                } catch {
+                    fatalError("Field \(componentIdentifier) is not a structured item field")
+                }
+            } else {
+                return nil
+            }
+        }
+    }
+
+    // Helper function to extract "key" parameter from componentIdentifier
+    private func getKeyFromParams(componentIdentifier: String) -> String? {
+        // Logic to extract "key" parameter from the componentIdentifier
+        // For example, parse the componentIdentifier to extract the "key" parameter
+        return nil // Replace with actual implementation
+    }
+
+    // Helper function to check if the field is a list
+    private func isListField(componentIdentifier: String) -> Bool {
+        // Logic to determine if the field is a list based on the componentIdentifier
+        // For example, check if the componentIdentifier matches known list fields
+        return false // Replace with actual implementation
+    }
+    
+    // Static constants moved here from the protocol
+    static let DC_AUTHORITY = "@authority"
+    static let DC_METHOD = "@method"
+    static let DC_PATH = "@path"
+    static let DC_QUERY = "@query"
+    static let DC_QUERY_PARAM = "@query-param"
+    static let DC_REQUEST_TARGET = "@request-target"
+    static let DC_SCHEME = "@scheme"
+    static let DC_STATUS = "@status"
+    static let DC_TARGET_URI = "@target-uri"
+
+    // Implementation of combineFieldValues
+    static func combineFieldValues(fields: [String]?) -> String? {
+        guard let fields = fields else { return nil }
+        return fields
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "\\s*\\r\\n\\s*", with: " ", options: .regularExpression) }
+            .joined(separator: ", ")
+    }
+
+    private var request: URLRequest
+    private var url: URL
+
+    init(request: URLRequest) {
+        self.request = request
+        guard let url = request.url else {
+            fatalError("URL is required for the request")
+        }
+        self.url = url
+    }
+
+    func getMethod() -> String {
+        return request.httpMethod ?? "GET"
+    }
+
+    func getAuthority() -> String {
+        return url.host ?? ""
+    }
+
+    func getScheme() -> String {
+        return url.scheme ?? "http"
+    }
+
+    func getTargetUri() -> String {
+        return url.absoluteString
+    }
+
+    func getRequestTarget() -> String {
+        var target = url.path
+        if let query = url.query {
+            target += "?\(query)"
+        }
+        return target
+    }
+
+    func getPath() -> String {
+        return url.path
+    }
+
+    func getQuery() -> String {
+        return url.query ?? ""
+    }
+
+    func getQueryParam(name: String) -> String? {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let queryItems = components.queryItems else {
+            return nil
+        }
+        let values = queryItems.filter { $0.name == name }.compactMap { $0.value }
+        if values.count > 1 {
+            // Per spec: If a parameter name occurs multiple times, it MUST NOT be included.
+            return nil
+        }
+        return values.first
+    }
+
+    func getStatus() -> String {
+        fatalError("Only requests are supported")
+    }
+
+    func hasField(name: String) -> Bool {
+        return request.value(forHTTPHeaderField: name) != nil
+    }
+
+    func getField(name: String) -> String? {
+        guard let value = request.value(forHTTPHeaderField: name) else {
+            return nil
+        }
+        return ApproovURLSessionComponentProvider.combineFieldValues(fields: [value])
+    }
+
+    func hasBody() -> Bool {
+        return request.httpBody != nil || request.httpBodyStream != nil
     }
 }

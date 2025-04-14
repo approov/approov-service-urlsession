@@ -9,7 +9,7 @@ let sdkVersion = "3.4.0"
 let package = Package(
     name: "ApproovURLSession",
     platforms: [
-        .iOS(.v11),
+        .iOS(.v13),
         .watchOS(.v9)
     ],
     products: [
