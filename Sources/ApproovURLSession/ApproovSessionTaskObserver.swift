@@ -288,11 +288,21 @@ public class ApproovSessionTaskObserver: NSObject {
                 // some time to complete and we cannot do this in the context of the task resume caller (which might be the
                 // main UI thread, for instance)
                 DispatchQueue.global(qos: .userInitiated).async {
-                    // update the request using Approov and handler its response
-                    let updateResponse = ApproovService.updateRequestWithApproov(request: task.currentRequest!, sessionConfig: sessionConfig)
+                    // FIXME: I proceed with the request EVEN if signature code throws!!!!!!!
+                    var updateResponse: ApproovUpdateResponse
+                    do {
+                        // Update the request using Approov and handle its response
+                        updateResponse = try ApproovService.updateRequestWithApproov(request: task.currentRequest!, sessionConfig: sessionConfig)
+                    } catch {
+                        // FIXME: I proceed with the request EVEN if signature code throws!!!!!!!
+                        // If an exception is thrown, set the decision to ShouldProceed
+                        let errorMessageFromService = "ApproovService: Error updating request with Approov: " + error.localizedDescription
+                        
+                        updateResponse = ApproovUpdateResponse(request: task.currentRequest!, decision: .ShouldProceed, sdkMessage: errorMessageFromService, error: nil)
+                    }
                     
                     if updateResponse.decision == .ShouldProceed {
-                        // modify original request by calling the "updateCurrentRequest" method in the underlying
+                        // Modify original request by calling the "updateCurrentRequest" method in the underlying
                         // Objective-C implementation
                         let sel = NSSelectorFromString("updateCurrentRequest:")
                         if task.responds(to: sel) {

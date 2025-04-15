@@ -10,7 +10,7 @@ class SignatureBaseBuilder {
         self.ctx = ctx
     }
 
-    func createSignatureBase() -> String {
+    func createSignatureBase() throws -> String {
         var base = ""
 
         for componentIdentifier in sigParams.getComponentIdentifiers() {
@@ -18,21 +18,29 @@ class SignatureBaseBuilder {
                 // Write out the line to the base
                 base += "\(componentIdentifier): \(componentValue)\n"
             } else {
-                // FIXME: Be more graceful about bailing
-                fatalError("Couldn't find a value for required parameter: \(componentIdentifier)")
+                throw SignatureBaseBuilderError.missingComponentValue(identifier: componentIdentifier)
             }
         }
 
         // Add the signature parameters line
         base += "\(sigParams.toComponentIdentifier()): "
-        // Serialize the dictionary returned by toComponentValue()
-        if let serializedValue = try? JSONSerialization.data(withJSONObject: sigParams.toComponentValue(), options: []),
-        let serializedString = String(data: serializedValue, encoding: .utf8) {
-            base += serializedString
-        } else {
-            fatalError("Failed to serialize signature parameters")
+        do {
+            // Serialize the dictionary returned by toComponentValue()
+            let serializedValue = try JSONSerialization.data(withJSONObject: sigParams.toComponentValue(), options: [])
+            if let serializedString = String(data: serializedValue, encoding: .utf8) {
+                base += serializedString
+            } else {
+                throw SignatureBaseBuilderError.serializationFailed(reason: "Failed to convert serialized signature parameters to String")
+            }
+        } catch {
+            throw SignatureBaseBuilderError.serializationFailed(reason: error.localizedDescription)
         }
 
         return base
     }
+}
+
+enum SignatureBaseBuilderError: Error {
+    case missingComponentValue(identifier: String)
+    case serializationFailed(reason: String)
 }

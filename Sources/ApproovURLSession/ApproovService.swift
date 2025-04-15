@@ -7,7 +7,7 @@
 // publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so,
 // subject to the following conditions:
 //
-// The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+// The above copyright notice shall be included in all copies or substantial portions of the Software.
 //
 // THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
 // MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR
@@ -18,6 +18,7 @@ import Foundation
 import Approov
 import os.log
 import CryptoKit
+import RawStructuredFieldValues
 import StructuredFieldValues
 
 // Approov error conditions
@@ -857,7 +858,13 @@ public class ApproovService {
 
             // Build the signature base
             let baseBuilder = SignatureBaseBuilder(sigParams: params, ctx: provider)
-            let message = baseBuilder.createSignatureBase()
+            let message: String
+            do {
+                message = try baseBuilder.createSignatureBase()
+            } catch {
+                os_log("ApproovService: Failed to create signature base: %@", type: .error, error.localizedDescription)
+                return response
+            }
             // WARNING: Never log the message as it contains sensitive information
 
             // Generate the signature
@@ -1014,7 +1021,6 @@ class ApproovURLSessionComponentProvider: ComponentProvider {
             case ApproovURLSessionComponentProvider.DC_STATUS:
                 return getStatus()
             case ApproovURLSessionComponentProvider.DC_QUERY_PARAM:
-                // Handle query parameter with "name" parameter
                 if let name = getQueryParam(name: "name") {
                     return name
                 } else {
@@ -1024,41 +1030,56 @@ class ApproovURLSessionComponentProvider: ComponentProvider {
                 fatalError("Unknown derived component: \(componentIdentifier)")
             }
         } else {
-            // Create an instance of StructuredFieldValueDecoder
-            let decoder = StructuredFieldValueDecoder()
             // Handle field-based components
             if let fieldValue = getField(name: componentIdentifier) {
+                // Convert the field value to Data
+                guard let fieldData = fieldValue.data(using: .utf8) else {
+                    fatalError("Failed to convert field value to Data")
+                }
+
                 // Check if the field is a dictionary
                 if let key = getKeyFromParams(componentIdentifier: componentIdentifier) {
                     do {
-                        // TODO: This can not be a generic type but must be something declaring conformance to protocol StructuredFieldValue
-                        let dictionary = try decoder.decode(Dictionary<String, Any>.self, from: fieldValue.data(using: .utf8)!)
-                        if let value = dictionary[key] {
-                            return value.serialize()
+                        // Create a parser instance for dictionary
+                        var parser = StructuredFieldValueParser(fieldData)
+                        // Parse the raw structured field value
+                        let parsedValue = try parser.parseDictionaryFieldValue()
+                        if let itemOrInnerList = parsedValue[key],
+                           case .item(let item) = itemOrInnerList {
+                            // Serialize the value
+                            return "\(item)"
                         } else {
                             fatalError("Value for '\(key)' key of dictionary \(componentIdentifier) does not exist")
                         }
                     } catch {
-                        fatalError("Field \(componentIdentifier) is not a dictionary field")
+                        fatalError("Field \(componentIdentifier) is not a dictionary field: \(error)")
                     }
                 }
 
                 // Check if the field is a list
                 if isListField(componentIdentifier: componentIdentifier) {
                     do {
-                        let list = try StructuredFieldValueDecoder().decode(StructuredFieldValues.List.self, from: fieldValue.data(using: .utf8)!)
-                        return list.serialize()
+                        // Create a parser instance for list
+                        var parser = StructuredFieldValueParser(fieldData)
+                        // Parse the raw structured field value
+                        let parsedValue = try parser.parseListFieldValue()
+                        // Serialize the list
+                        return "\(parsedValue)"
                     } catch {
-                        fatalError("Field \(componentIdentifier) is not a structured list field")
+                        fatalError("Field \(componentIdentifier) is not a structured list field: \(error)")
                     }
                 }
 
                 // Check if the field is an item
                 do {
-                    let item = try StructuredFieldValueDecoder().decode(StructuredFieldValues.Item.self, from: fieldValue.data(using: .utf8)!)
-                    return item.serialize()
+                    // Create a parser instance for item
+                    var parser = StructuredFieldValueParser(fieldData)
+                    // Parse the raw structured field value
+                    let parsedValue = try parser.parseItemFieldValue()
+                    // Serialize the item
+                    return "\(parsedValue)"
                 } catch {
-                    fatalError("Field \(componentIdentifier) is not a structured item field")
+                    fatalError("Field \(componentIdentifier) is not a structured item field: \(error)")
                 }
             } else {
                 return nil

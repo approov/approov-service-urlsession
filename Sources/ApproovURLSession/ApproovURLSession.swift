@@ -17,6 +17,7 @@
 
 import Foundation
 import os.log
+import Combine // Add this import to use the Fail publisher
 
 // Provides an implementation of URLSession with Approov protection, including dynamic pinning. Methods delegate to an underlying
 // URLSession after adding Approov protection. Note that the "Performing Asynchronous Transfers" methods defined from iOS 15 do not
@@ -243,22 +244,26 @@ public class ApproovURLSession: URLSession {
      */
     @available(iOS 13.0, *)
     public func dataTaskPublisherWithApproov(for request: URLRequest) -> URLSession.DataTaskPublisher {
-        // in this case we must perform the Approov update in the context of the caller - which may mean that the calling
-        // thread experience some delay to the potential network request to Approov
-        let approovUpdateResponse = ApproovService.updateRequestWithApproov(request: request, sessionConfig: urlSessionConfiguration)
-        switch approovUpdateResponse.decision {
-        case .ShouldProceed:
-            // go ahead and make the API call with the provided request object
-            return self.pinnedURLSession.dataTaskPublisher(for: approovUpdateResponse.request)
-        case .ShouldIgnore:
-            // we should ignore the ApproovService request response and just perform the original request
-            return self.pinnedURLSession.dataTaskPublisher(for: request)
-        default:
-            // we create a task and cancel it immediately, telling the delegate we are marking the session as invalid
-            let sessionTaskPublisher = self.pinnedURLSession.dataTaskPublisher(for: approovUpdateResponse.request)
-            sessionTaskPublisher.session.invalidateAndCancel()
-            self.pinningURLSessionDelegate.urlSession(self.pinnedURLSession, didBecomeInvalidWithError: approovUpdateResponse.error)
-            return sessionTaskPublisher
+        do {
+            // Perform the Approov update
+            let approovUpdateResponse = try ApproovService.updateRequestWithApproov(request: request, sessionConfig: urlSessionConfiguration)
+            switch approovUpdateResponse.decision {
+            case .ShouldProceed:
+                // Go ahead and make the API call with the provided request object
+                return self.pinnedURLSession.dataTaskPublisher(for: approovUpdateResponse.request)
+            case .ShouldIgnore:
+                // Ignore the ApproovService request response and just perform the original request
+                return self.pinnedURLSession.dataTaskPublisher(for: request)
+            default:
+                // Create a task and cancel it immediately, marking the session as invalid
+                let sessionTaskPublisher = self.pinnedURLSession.dataTaskPublisher(for: approovUpdateResponse.request)
+                sessionTaskPublisher.session.invalidateAndCancel()
+                self.pinningURLSessionDelegate.urlSession(self.pinnedURLSession, didBecomeInvalidWithError: approovUpdateResponse.error)
+                return sessionTaskPublisher
+            }
+        } catch {
+            // Handle the error by creating a failed publisher
+            fatalError("Error updating request with Approov: \(error)")
         }
     }
     
