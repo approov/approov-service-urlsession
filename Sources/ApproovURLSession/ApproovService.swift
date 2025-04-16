@@ -68,16 +68,6 @@ public struct ApproovUpdateResponse {
     var error: Error?
 }
 
-// message signing configuration
-struct ApproovMessageSigningConfig {
-    // the name of the header that will be used to send the message signature
-    var targetHeader: String
-    // the list of headers to include in the message to be signed, in the order they should be added
-    var signedHeaders: [String]
-    // True if the message body should also be signed
-    var signBody: Bool
-}
-
 // ApproovService provides a mediation layer to the Approov SDK itself
 public class ApproovService {
     // private initializer
@@ -89,6 +79,9 @@ public class ApproovService {
     // the initial config string used to initialize
     private static var configString: String?
     
+    // the initial comment string provided to the initializer
+    private static var initialComment: String?
+
     // status of Approov SDK initialization
     private static var isInitialized = false
     
@@ -107,9 +100,6 @@ public class ApproovService {
     // Approov token custom prefix: any prefix to be added such as "Bearer "
     private static var approovTokenPrefix = ""
     
-    // the dispatch queue to manage serial access to tokens and associated substitution strings and message signing keys
-    private static let tokenQueue = DispatchQueue(label: "ApproovService.token", qos: .userInitiated)
-
     // map of headers that should have their values substituted for secure strings, mapped to their
     // required prefixes
     private static var substitutionHeaders:Dictionary<String, String> = Dictionary()
@@ -122,9 +112,6 @@ public class ApproovService {
     
     // map of URL regexs that should be excluded from any Approov protection, mapped to the compiled Pattern
     private static var exclusionURLRegexs: Dictionary<String, NSRegularExpression> = Dictionary();
-
-    // message signing configuration, if any
-    private static var messageSigningConfig: ApproovMessageSigningConfig?
     
     /**
      * Initializes the SDK with the config obtained using `approov sdk -getConfigString` or
@@ -135,8 +122,9 @@ public class ApproovService {
      * reason, an .initializationFailure is raised
      *
      * @param config is the configuration to be used
+     * @param comment is an optional comment to be passed to the SDK
      */
-    public static func initialize(config: String) throws {
+    public static func initialize(config: String, comment: String? = nil) throws {
         try initializerQueue.sync  {
             // check if we attempt to use a different configString
             if isInitialized {
@@ -152,6 +140,11 @@ public class ApproovService {
                         try Approov.initialize(config, updateConfig: "auto", comment: nil)
                     }
                     configString = config
+                    initialComment = comment
+                    // Use the comment if not null to immediately initialize with comment as argument
+                    if (initialComment != nil) {
+                        try Approov.initialize(config, updateConfig: "auto", comment: comment)
+                    }
                     Approov.setUserProperty("approov-service-urlsession")
                     isInitialized = true
                 } catch let error {
@@ -160,29 +153,6 @@ public class ApproovService {
                     throw ApproovError.initializationFailure(message: "Error initializing Approov SDK: \(error.localizedDescription)")
                 }
             }
-        }
-    }
-
-    /**
-     * Sets the message signing configuration. If this is set, then a message signature will be computed based on the
-     * request URL, the headers specified in signedHeaders in the order in which they are listed and, optionally, the
-     * body of the message. The signature will be added to the request headers using the header name specified in header.
-     *
-     * To unset message signing, call this function as setMessageSigning(header: "", signedHeaders: [], signBody: false)
-     *
-     * @param header is the name of the header to use for the message signature
-     * @param signedHeaders is the list of headers in the order in which to include them in the message signature.
-     * @param signBody is true if the message body should also be included in the message signature
-     */
-    public static func setMessageSigning(header: String, signedHeaders: [String], signBody: Bool) {
-        stateQueue.sync {
-            if header == "" && signedHeaders.isEmpty && signBody == false {
-                messageSigningConfig = nil
-            } else {
-                messageSigningConfig = ApproovMessageSigningConfig(targetHeader: header, signedHeaders: signedHeaders,
-                    signBody: signBody)
-            }
-            os_log("ApproovService: setMessageSigning: %@, %@, %@", type: .debug, header, signedHeaders, signBody)
         }
     }
 
@@ -479,7 +449,6 @@ public class ApproovService {
         }
     }
     
-    // TODO remove this function from the public interface?
     /**
      * Gets the signature for the given message. This uses an account specific message signing key that is
      * transmitted to the SDK after a successful fetch if the facility is enabled for the account. Note
@@ -676,32 +645,6 @@ public class ApproovService {
             }
         }
         
-        // Check if message signing has been enabled. If so, we sync access to request and message signature
-        if (messageSigningConfig != nil) {
-            // ensure that the signing key used for signing the message belongs to the Approov token fetched here
-            response = tokenQueue.sync {
-                updatedRequest(response: response, request: request, headers: &allHeaders)
-            }
-        }else {
-            response = updatedRequest(response: response, request: request, headers: &allHeaders)
-        }
-        
-        // provide the fully updated response
-        return response
-    }
-    
-    /**
-     * Convenience function with common code used in updateRequestWithApproov
-     *
-     * @param response is the preconfigured response which is updated depending on the logic from fetching a token
-     * @param request is the original request to be made
-     * @param headers are the original request headers which might be modified if the option is chosen by the user
-     * @param sessionConfig is any URLSessionConfiguration from which additional headers can be obtained
-     * @return ApproovUpdateResponse providing an updated requets, plus an errors and status
-     */
-    static func updatedRequest(response: ApproovUpdateResponse, request: URLRequest, headers: inout Dictionary<String, String>) -> ApproovUpdateResponse {
-        // Create a mutable response so we can modify and return it
-        var mutableResponse = response
         // fetch an Approov token
         let approovResult = Approov.fetchTokenAndWait(request.url!.absoluteString)
         let hostname = hostnameFromURL(url: request.url!)
@@ -714,45 +657,45 @@ public class ApproovService {
         }
         
         // handle the Approov token fetch response
-        mutableResponse.sdkMessage = Approov.string(from: approovResult.status)
+        response.sdkMessage = Approov.string(from: approovResult.status)
         switch approovResult.status {
             case ApproovTokenFetchStatus.success:
                 // go ahead and make the API call and add the Approov token header
-                mutableResponse.decision = .ShouldProceed
+                response.decision = .ShouldProceed
                 let tokenHeader = stateQueue.sync {
                     return approovTokenHeader
                 }
                 let tokenPrefix = stateQueue.sync {
                     return approovTokenPrefix
                 }
-                mutableResponse.request.setValue(tokenPrefix + approovResult.token, forHTTPHeaderField: tokenHeader)
+                response.request.setValue(tokenPrefix + approovResult.token, forHTTPHeaderField: tokenHeader)
             case ApproovTokenFetchStatus.noNetwork,
-                ApproovTokenFetchStatus.poorNetwork,
-                ApproovTokenFetchStatus.mitmDetected:
+                 ApproovTokenFetchStatus.poorNetwork,
+                 ApproovTokenFetchStatus.mitmDetected:
                 // we are unable to get the Approov token due to network conditions so the request can
                 // be retried by the user later
                 if !proceedOnNetworkFail {
-                    mutableResponse.decision = .ShouldRetry
-                    mutableResponse.error = ApproovError.networkingError(message: mutableResponse.sdkMessage)
-                    return mutableResponse
+                    response.decision = .ShouldRetry
+                    response.error = ApproovError.networkingError(message: response.sdkMessage)
+                    return response
                 }
             case ApproovTokenFetchStatus.unprotectedURL,
-                ApproovTokenFetchStatus.unknownURL,
-                ApproovTokenFetchStatus.noApproovService:
+                 ApproovTokenFetchStatus.unknownURL,
+                 ApproovTokenFetchStatus.noApproovService:
                 // we proceed but do NOT add the Approov tokenheader to the request headers
-                mutableResponse.decision = .ShouldProceed
+                response.decision = .ShouldProceed
             default:
                 // we have a more permanent error condition
-                mutableResponse.decision = .ShouldFail
-                mutableResponse.error = ApproovError.permanentError(message: mutableResponse.sdkMessage)
-                return mutableResponse
+                response.decision = .ShouldFail
+                response.error = ApproovError.permanentError(message: response.sdkMessage)
+                return response
         }
         
         // we only continue additional processing if we had a valid status from Approov, to prevent additional delays
         // by trying to fetch from Approov again and this also protects against header substitutions in domains not
         // protected by Approov and therefore are potentially subject to a MitM.
         if (approovResult.status != .success) && (approovResult.status != .unprotectedURL) {
-            return mutableResponse
+            return response
         }
         
         // we now deal with any headers substitutions, which may require further fetches but these
@@ -761,7 +704,7 @@ public class ApproovService {
             return substitutionHeaders
         }
         for (header, prefix) in subsHeadersCopy {
-            if let value = headers[header] {
+            if let value = allHeaders[header] {
                 // check if the request contains the header we want to replace
                 if ((value.hasPrefix(prefix)) && (value.count > prefix.count)) {
                     let index = prefix.index(prefix.startIndex, offsetBy: prefix.count)
@@ -772,35 +715,35 @@ public class ApproovService {
                     if approovResults.status == ApproovTokenFetchStatus.success {
                         // we add the modified header to the new copy of request
                         if let secureStringResult = approovResults.secureString {
-                            mutableResponse.request.setValue(prefix + secureStringResult, forHTTPHeaderField: header)
+                            response.request.setValue(prefix + secureStringResult, forHTTPHeaderField: header)
                         } else {
                             // secure string is nil
-                            mutableResponse.decision = .ShouldFail
-                            mutableResponse.error = ApproovError.permanentError(message: "Header substitution: key lookup error")
-                            return mutableResponse
+                            response.decision = .ShouldFail
+                            response.error = ApproovError.permanentError(message: "Header substitution: key lookup error")
+                            return response
                         }
                     } else if approovResults.status == ApproovTokenFetchStatus.rejected {
                         // if the request is rejected then we provide a special exception with additional information
-                        mutableResponse.decision = .ShouldFail
-                        mutableResponse.error = ApproovError.rejectionError(message:
+                        response.decision = .ShouldFail
+                        response.error = ApproovError.rejectionError(message:
                                 "Header substitution: rejected",
                                 ARC: approovResults.arc, rejectionReasons: approovResults.rejectionReasons)
-                        return mutableResponse
+                        return response
                     } else if approovResults.status == ApproovTokenFetchStatus.noNetwork ||
-                            approovResults.status == ApproovTokenFetchStatus.poorNetwork ||
-                            approovResults.status == ApproovTokenFetchStatus.mitmDetected {
+                              approovResults.status == ApproovTokenFetchStatus.poorNetwork ||
+                              approovResults.status == ApproovTokenFetchStatus.mitmDetected {
                         // we are unable to get the secure string due to network conditions so the request can
                         // be retried by the user later
                         if !proceedOnNetworkFail {
-                            mutableResponse.decision = .ShouldRetry
-                            mutableResponse.error = ApproovError.networkingError(message: "Header substitution: network issue, retry needed")
-                            return mutableResponse
+                            response.decision = .ShouldRetry
+                            response.error = ApproovError.networkingError(message: "Header substitution: network issue, retry needed")
+                            return response
                         }
                     } else if approovResults.status != ApproovTokenFetchStatus.unknownKey {
                         // we have failed to get a secure string with a more serious permanent error
-                        mutableResponse.decision = .ShouldFail
-                        mutableResponse.error = ApproovError.permanentError(message: "Header substitution: " + Approov.string(from: approovResults.status))
-                        return mutableResponse
+                        response.decision = .ShouldFail
+                        response.error = ApproovError.permanentError(message: "Header substitution: " + Approov.string(from: approovResults.status))
+                        return response
                     }
                 }
             }
@@ -837,96 +780,51 @@ public class ApproovService {
                                     if let secureStringResult = approovResults.secureString {
                                         urlString.replaceSubrange(Range(matchRange, in: urlString)!, with: secureStringResult)
                                         if let newURL = URL(string: urlString) {
-                                            mutableResponse.request.url = newURL
+                                            response.request.url = newURL
                                         } else {
-                                            mutableResponse.decision = .ShouldFail
-                                            mutableResponse.error = ApproovError.permanentError(
+                                            response.decision = .ShouldFail
+                                            response.error = ApproovError.permanentError(
                                                 message: "Query parameter substitution for \(entry): malformed URL \(urlString)")
-                                            return mutableResponse
+                                            return response
                                         }
                                     }
                                 case .rejected:
                                     // if the request is rejected then we provide a special exception with additional information
-                                    mutableResponse.decision = .ShouldFail
-                                    mutableResponse.error = ApproovError.rejectionError(
+                                    response.decision = .ShouldFail
+                                    response.error = ApproovError.rejectionError(
                                         message: "Query parameter substitution for \(entry) rejected",
                                         ARC: approovResults.arc,
                                         rejectionReasons: approovResults.rejectionReasons
                                     )
-                                    return mutableResponse
+                                    return response
                                 case .noNetwork,
-                                    .poorNetwork,
-                                    .mitmDetected:
+                                     .poorNetwork,
+                                     .mitmDetected:
                                     // we are unable to get the secure string due to network conditions so the request can
                                     // be retried by the user later
                                     if !proceedOnNetworkFail {
-                                        mutableResponse.decision = .ShouldRetry
-                                        mutableResponse.error = ApproovError.networkingError(message: "Query parameter substitution for " +
+                                        response.decision = .ShouldRetry
+                                        response.error = ApproovError.networkingError(message: "Query parameter substitution for " +
                                             "\(entry): network issue, retry needed")
-                                        return mutableResponse
+                                        return response
                                     }
                                 case .unknownKey:
                                     // do not modify the URL
                                     break
                                 default:
                                     // we have failed to get a secure string with a more permanent error
-                                    mutableResponse.decision = .ShouldFail
-                                    mutableResponse.error = ApproovError.permanentError(
+                                    response.decision = .ShouldFail
+                                    response.error = ApproovError.permanentError(
                                         message: "Query parameter substitution for \(entry): " +
                                         Approov.string(from: approovResults.status)
                                     )
-                                    return mutableResponse
+                                    return response
                                 }
                             }
                     }
                 }
             }
         }
-
-        // if message signing is enabled, add the signature header to the request
-        let messageSigningConf = stateQueue.sync {
-            return messageSigningConfig
-        }
-        if messageSigningConf != nil {
-            // build the message to sign, consisting of the URL, the names and values of the included headers and the
-            // body, if enabled, where each entry is separated from the next by a newline character
-            os_log("ApproovService: Signing message: headers %@%@", type: .info, messageSigningConfig!.signedHeaders, (messageSigningConfig!.signBody ? ", body" : ""))
-            var message: String = ""
-            // add the URL to the message, followed by a newline
-            if let url = mutableResponse.request.url {
-                message.append(url.absoluteString)
-                message.append("\n")
-            } else {
-                mutableResponse.decision = .ShouldFail
-                mutableResponse.error = ApproovError.permanentError(message: "Message signing: missing URL")
-                return mutableResponse
-            }
-            // add the required headers to the message as 'headername:headervalue', where the headername is in
-            // lowercase
-            for header in messageSigningConf!.signedHeaders {
-                if let value = mutableResponse.request.value(forHTTPHeaderField: header) {
-                    // add one headername:headervalue\n entry for each header value to be included in the signature
-                    let values = value.split(separator: ",")
-                    for val in values {
-                        message.append(header.lowercased())
-                        message.append(":")
-                        message.append(contentsOf: val)
-                        message.append("\n")
-                    }
-                }
-            }
-            // add the body to the message
-            if messageSigningConf!.signBody {
-                if let body = mutableResponse.request.httpBody {
-                    message.append(String(data: body, encoding: .utf8)!)
-                }
-            }
-            // compute the signature and add it to the request
-            let signature = Approov.getMessageSignature(message)
-            if signature != nil && messageSigningConf!.targetHeader != "" {
-                mutableResponse.request.setValue(signature, forHTTPHeaderField: messageSigningConf!.targetHeader)
-            }
-        }
-        return mutableResponse
+        return response
     }
 }
