@@ -18,7 +18,6 @@ import Foundation
 import Approov
 import os.log
 import CryptoKit
-import RawStructuredFieldValues
 import StructuredFieldValues
 
 // Approov error conditions
@@ -994,6 +993,46 @@ public class ApproovService {
 
         return rPadded + sPadded
     }
+
+    private static func getKeyFromParams(componentIdentifier: String) -> String? {
+        do {
+            // Parse the componentIdentifier using RawStructuredFieldValues
+            var parser = StructuredFieldValueParser(componentIdentifier.data(using: .utf8)!)
+            var parsedItem = try parser.parseItemFieldValue()
+
+            // Extract the base identifier
+            guard let baseIdentifier = parsedItem as? String else {
+                os_log("ApproovService: Invalid componentIdentifier format: %@", type: .error, componentIdentifier)
+                return nil
+            }
+
+            // Extract the "key" parameter
+            if let keyParam = parsedItem.parameters["key"] as? String {
+                // Retrieve the field value for the base identifier
+                guard let fieldValue = getField(name: baseIdentifier) else {
+                    os_log("ApproovService: Field %@ does not exist", type: .error, baseIdentifier)
+                    return nil
+                }
+
+                // Parse the field value as a dictionary
+                let fieldParser = StructuredFieldValueParser(fieldValue.data(using: .utf8)!)
+                let dictionary = try fieldParser.parseDictionaryFieldValue()
+                if let dictionaryValue = dictionary[keyParam] {
+                    // Serialize and return the value
+                    return dictionaryValue.serialize()
+                } else {
+                    os_log("ApproovService: Value for key '%@' does not exist in dictionary %@", type: .error, keyParam, baseIdentifier)
+                    return nil
+                }
+            } else {
+                os_log("ApproovService: 'key' parameter not found in componentIdentifier %@", type: .error, componentIdentifier)
+                return nil
+            }
+        } catch {
+            os_log("ApproovService: Failed to parse componentIdentifier %@: %@", type: .error, componentIdentifier, error.localizedDescription)
+            return nil
+        }
+    }
 }
 
 /**
@@ -1024,82 +1063,100 @@ class ApproovURLSessionComponentProvider: ComponentProvider {
                 if let name = getQueryParam(name: "name") {
                     return name
                 } else {
-                    fatalError("'name' parameter of \(componentIdentifier) is required")
+                    os_log("ApproovURLSessionComponentProvider: 'name' parameter is required for %@", type: .error, componentIdentifier)
+                    return nil
                 }
             default:
-                fatalError("Unknown derived component: \(componentIdentifier)")
+                os_log("ApproovURLSessionComponentProvider: Unknown derived component %@", type: .error, componentIdentifier)
+                return nil
             }
         } else {
             // Handle field-based components
             if let fieldValue = getField(name: componentIdentifier) {
                 // Convert the field value to Data
                 guard let fieldData = fieldValue.data(using: .utf8) else {
-                    fatalError("Failed to convert field value to Data")
+                    os_log("ApproovURLSessionComponentProvider: Failed to convert field value to Data for %@", type: .error, componentIdentifier)
+                    return nil
                 }
 
                 // Check if the field is a dictionary
                 if let key = getKeyFromParams(componentIdentifier: componentIdentifier) {
                     do {
-                        // Create a parser instance for dictionary
                         var parser = StructuredFieldValueParser(fieldData)
-                        // Parse the raw structured field value
                         let parsedValue = try parser.parseDictionaryFieldValue()
                         if let itemOrInnerList = parsedValue[key],
                            case .item(let item) = itemOrInnerList {
-                            // Serialize the value
                             return "\(item)"
                         } else {
-                            fatalError("Value for '\(key)' key of dictionary \(componentIdentifier) does not exist")
+                            os_log("ApproovURLSessionComponentProvider: Key '%@' not found in dictionary %@", type: .error, key, componentIdentifier)
                         }
                     } catch {
-                        fatalError("Field \(componentIdentifier) is not a dictionary field: \(error)")
+                        os_log("ApproovURLSessionComponentProvider: Failed to parse dictionary field %@: %@", type: .error, componentIdentifier, error.localizedDescription)
                     }
                 }
 
                 // Check if the field is a list
-                if isListField(componentIdentifier: componentIdentifier) {
-                    do {
-                        // Create a parser instance for list
-                        var parser = StructuredFieldValueParser(fieldData)
-                        // Parse the raw structured field value
-                        let parsedValue = try parser.parseListFieldValue()
-                        // Serialize the list
-                        return "\(parsedValue)"
-                    } catch {
-                        fatalError("Field \(componentIdentifier) is not a structured list field: \(error)")
-                    }
+                do {
+                    var parser = StructuredFieldValueParser(fieldData)
+                    let parsedValue = try parser.parseListFieldValue()
+                    return "\(parsedValue)"
+                } catch {
+                    os_log("ApproovURLSessionComponentProvider: Field %@ is not a structured list field: %@", type: .error, componentIdentifier, error.localizedDescription)
                 }
 
                 // Check if the field is an item
                 do {
-                    // Create a parser instance for item
                     var parser = StructuredFieldValueParser(fieldData)
-                    // Parse the raw structured field value
                     let parsedValue = try parser.parseItemFieldValue()
-                    // Serialize the item
                     return "\(parsedValue)"
                 } catch {
-                    fatalError("Field \(componentIdentifier) is not a structured item field: \(error)")
+                    os_log("ApproovURLSessionComponentProvider: Field %@ is not a structured item field: %@", type: .error, componentIdentifier, error.localizedDescription)
                 }
             } else {
-                return nil
+                os_log("ApproovURLSessionComponentProvider: Field %@ not found", type: .error, componentIdentifier)
             }
         }
+
+        // If no match is found, return nil
+        return nil
     }
 
     // Helper function to extract "key" parameter from componentIdentifier
     private func getKeyFromParams(componentIdentifier: String) -> String? {
-        // Logic to extract "key" parameter from the componentIdentifier
-        // For example, parse the componentIdentifier to extract the "key" parameter
-        return nil // Replace with actual implementation
+        // Check if the componentIdentifier contains a "key" parameter
+        guard let keyRange = componentIdentifier.range(of: "key=") else {
+            os_log("ApproovURLSessionComponentProvider: 'key' parameter not found in componentIdentifier %@", type: .error, componentIdentifier)
+            return nil
+        }
+
+        // Extract the key value
+        let keyStartIndex = keyRange.upperBound
+        let keyEndIndex = componentIdentifier[keyStartIndex...].firstIndex(of: ";") ?? componentIdentifier.endIndex
+        let key = String(componentIdentifier[keyStartIndex..<keyEndIndex])
+
+        // Retrieve the base identifier (field name)
+        let baseIdentifier = componentIdentifier.split(separator: ";").first ?? ""
+        guard let fieldValue = getField(name: String(baseIdentifier)) else {
+            os_log("ApproovURLSessionComponentProvider: Field %@ does not exist", type: .error, baseIdentifier)
+            return nil
+        }
+
+        // Parse the field value as a dictionary
+        do {
+            let dictionary = try StructuredFieldValueParser(fieldValue.data(using: .utf8)!).parseDictionaryFieldValue()
+            if let dictionaryValue = dictionary[key] {
+                // Serialize and return the value
+                return dictionaryValue.serialize()
+            } else {
+                os_log("ApproovURLSessionComponentProvider: Value for key '%@' does not exist in dictionary %@", type: .error, key, baseIdentifier)
+                return nil
+            }
+        } catch {
+            os_log("ApproovURLSessionComponentProvider: Failed to parse dictionary field %@: %@", type: .error, baseIdentifier, error.localizedDescription)
+            return nil
+        }
     }
 
-    // Helper function to check if the field is a list
-    private func isListField(componentIdentifier: String) -> Bool {
-        // Logic to determine if the field is a list based on the componentIdentifier
-        // For example, check if the componentIdentifier matches known list fields
-        return false // Replace with actual implementation
-    }
     
     // Static constants moved here from the protocol
     static let DC_AUTHORITY = "@authority"
@@ -1128,7 +1185,7 @@ class ApproovURLSessionComponentProvider: ComponentProvider {
         guard let url = request.url else {
             fatalError("URL is required for the request")
         }
-        self.url = url
+        this.url = url
     }
 
     func getMethod() -> String {

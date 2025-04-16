@@ -1,6 +1,5 @@
 import Foundation
-import StructuredFieldValues
-
+import RawStructuredFieldValues
 
 protocol ComponentProvider {
     // Derived, for requests

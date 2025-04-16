@@ -29,7 +29,7 @@ let package = Package(
             name: "ApproovURLSession",
             dependencies: [
                 "Approov",
-                .product(name: "StructuredFieldValues", package: "swift-http-structured-headers"),
+                .product(name: "StructuredFieldValues", package: "swift-http-structured-headers"),// FIXME: we do not use atm this version but rather the Raw version below
                 .product(name: "RawStructuredFieldValues", package: "swift-http-structured-headers")
             ],
             path: "Sources/ApproovURLSession",  // Point to the shared source code

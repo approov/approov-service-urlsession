@@ -1,5 +1,5 @@
 import Foundation
-import StructuredFieldValues
+import RawStructuredFieldValues // Updated import
 
 class SignatureParameters: CustomStringConvertible {
     private static let ALG = "alg"
@@ -116,12 +116,12 @@ class SignatureParameters: CustomStringConvertible {
         var parametersList: [String: Any] = [:]
 
         // Add component identifiers as a list
-        parametersList["items"] = componentIdentifiers.map { DisplayString(rawValue: $0).rawValue }
+        parametersList["items"] = componentIdentifiers.map { $0 } // No need for DisplayString
 
         // Add parameters as key-value pairs
         for (key, value) in parameters {
             if let stringValue = value as? String {
-                parametersList[key] = DisplayString(rawValue: stringValue).rawValue
+                parametersList[key] = stringValue // No need for DisplayString
             } else if let intValue = value as? Int64 {
                 parametersList[key] = intValue
             } else {

@@ -1,5 +1,5 @@
 import Foundation
-import StructuredFieldValues
+import RawStructuredFieldValues
 
 class SignatureBaseBuilder {
     private let sigParams: SignatureParameters
