@@ -18,7 +18,7 @@ public class SignatureParameters: CustomStringConvertible {
     private var componentIdentifiers: [StringItem] = [] // List of Strings
 
     // TODO: this should preserve insertion order
-    private var componentParameters: [String: Any] = [:]
+    private var componentParameters: OrderedMap<String, Any> = [:]
 
 	/**
 	 * Default constructor creates an empty SignatureParameters ready to be populated.
@@ -49,14 +49,14 @@ public class SignatureParameters: CustomStringConvertible {
 	/**
 	 * @return the parameters
 	 */
-    func getParameters() -> [String: Any] {
+    func getParameters() -> OrderedMap<String, Any> {
         return componentParameters
     }
 
 	/**
 	 * @param parameters the parameters to set
 	 */
-    func setParameters(_ parameters: [String: Any]) -> SignatureParameters {
+    func setParameters(_ parameters: OrderedMap<String, Any>) -> SignatureParameters {
         self.componentParameters = parameters
         return self
     }
@@ -255,9 +255,9 @@ public class SignatureParameters: CustomStringConvertible {
         var parameters: OrderedMap<String, RFC9651BareItem> = [:]
         for (key, value) in componentParameters {
             if let stringValue = value as? String {
-                componentParameters[key] = stringValue
+                parameters[key] = RFC9651BareItem.string(stringValue)
             } else if let intValue = value as? Int64 {
-                componentParameters[key] = intValue
+                parameters[key] = RFC9651BareItem.integer(intValue)
             } else {
                 // TODO: Handle other types or throw an error
                 continue

@@ -648,6 +648,7 @@ public class ApproovService {
      */
     public static func updateRequestWithApproov(request: URLRequest, sessionConfig: URLSessionConfiguration?) -> ApproovUpdateResponse {
         // check if the SDK is not initialized or if the URL matches one of the exclusion regexs and just return if it does
+        var changes = ApproovRequestMutations()
         if let url = request.url {
             if !isInitialized {
                 os_log("ApproovService: not initialized, forwarding: %@", type: .info, url.absoluteString)
@@ -705,6 +706,8 @@ public class ApproovService {
 
         // handle the Approov token fetch response
         response.sdkMessage = Approov.string(from: approovResult.status)
+        var aChange = false
+        var setTokenHeaderKey: String?
         switch approovResult.status {
         case ApproovTokenFetchStatus.success:
             // go ahead and make the API call and add the Approov token header
@@ -715,6 +718,8 @@ public class ApproovService {
             let tokenPrefix = stateQueue.sync {
                 return approovTokenPrefix
             }
+            aChange = true
+            setTokenHeaderKey = tokenHeader
             response.request.setValue(tokenPrefix + approovResult.token, forHTTPHeaderField: tokenHeader)
         case ApproovTokenFetchStatus.noNetwork,
             ApproovTokenFetchStatus.poorNetwork,
@@ -873,12 +878,33 @@ public class ApproovService {
             }
         }
 
+        // TODO Apply all the changes to the request
+        if (aChange) {
+            // TODO Actually provide the ApproovRequestMutations
+            // Request.Builder builder = request.newBuilder();
+            if (setTokenHeaderKey != nil) {
+                // builder.header(setTokenHeaderKey, setTokenHeaderValue);
+                changes.setTokenHeaderKey(setTokenHeaderKey!);
+            }
+            // if (!setSubstitutionHeaders.isEmpty()) {
+            //     for (Map.Entry<String, String> entry : setSubstitutionHeaders.entrySet()) {
+            //         // substitute the header
+            //         builder.header(entry.getKey(), entry.getValue());
+            //     }
+            //     changes.setSubstitutionHeaderKeys(new ArrayList<>(setSubstitutionHeaders.keySet()));
+            // }
+            // if (!originalURL.equals(replacementURL)) {
+            //     builder.url(replacementURL);
+            //     changes.setSubstitutionQueryParamResults(originalURL, queryKeys);
+            // }
+            // request = builder.build();
+        }
+
         // Call the processed request callback
         if let interceptorExtensions = ApproovService.interceptorExtensions {
             do {
                 // TODO response: ApproovUpdateResponse =
-                // TODO Actually provide the ApproovRequestMutations
-                response.request = try interceptorExtensions.processedRequest(response.request, changes: ApproovRequestMutations());
+                response.request = try interceptorExtensions.processedRequest(response.request, changes: changes);
             } catch let error {
                 // TODO Should this fail???
                 response.decision = .ShouldFail

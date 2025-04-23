@@ -86,28 +86,6 @@ public class ApproovDefaultMessageSigning: ApproovInterceptorExtensions {
         return factory?.buildSignatureParameters(provider: provider, changes: changes)
     }
 
-    // UNUSED
-    // /**
-    //  * Converts one part of an ASN.1 DER encoded ES256 signature to a byte array of exactly 32 bytes.
-    //  *
-    //  * - Parameter bytesAsBigInt: The BigInt representation of the ASN.1 integer.
-    //  * - Returns: A byte array of length 32.
-    //  * - Throws: An error if the integer cannot be represented as a 32-byte array.
-    //  */
-    // private func to32ByteArray(bytesAsBigInt: Data) throws -> Data {
-    //     var bytes = bytesAsBigInt
-    //     if bytes.count < 32 {
-    //         let padding = Data(repeating: 0, count: 32 - bytes.count)
-    //         return padding + bytes
-    //     } else if bytes.count == 32 {
-    //         return bytes
-    //     } else if bytes.count == 33 && bytes.first == 0 {
-    //         return bytes.dropFirst()
-    //     } else {
-    //         throw ApproovError.permanentError(message: "Not an ASN.1 DER ES256 signature part")
-    //     }
-    // }
-
     /**
      * Processes a request to add message signature headers.
      *
@@ -122,7 +100,7 @@ public class ApproovDefaultMessageSigning: ApproovInterceptorExtensions {
         if (request.allHTTPHeaderFields?["Approov-Token"]) != nil {
             // Generate and add a message signature
             let provider = ApproovURLSessionComponentProvider(request: request)
-            guard let params = ApproovDefaultMessageSigning.generateSignatureParameters(provider: provider) else {
+            guard let params = buildSignatureParameters(provider: provider, changes: changes) else {
                 // No signature to be added; proceed with the original request
                 return request
             }
@@ -138,15 +116,15 @@ public class ApproovDefaultMessageSigning: ApproovInterceptorExtensions {
             let sigId: String
             let signature: Data
             switch params.getAlg() {
-            case "ecdsa-p256-sha256":
+            case ApproovDefaultMessageSigning.ALG_ES256:
                 sigId = "install"
                 guard let base64Signature = ApproovService.getInstallMessageSignature(message: message),
                       let decodedSignature = Data(base64Encoded: base64Signature) else {
                     throw ApproovError.permanentError(message: "Failed to generate ES256 signature")
                 }
                 // decode the signature from ASN.1 DER format
-                signature = try ApproovDefaultMessageSigning.decodeES256Signature(decodedSignature)
-            case "hmac-sha256":
+                signature = try ApproovDefaultMessageSigning.decodeASN_1_DER_ES256_Signature(decodedSignature)
+            case ApproovDefaultMessageSigning.ALG_HS256:
                 sigId = "account"
                 guard let base64Signature = ApproovService.getAccountMessageSignature(message: message),
                       let decodedSignature = Data(base64Encoded: base64Signature) else {
@@ -160,9 +138,11 @@ public class ApproovDefaultMessageSigning: ApproovInterceptorExtensions {
             // Create signature headers
             var serializer = StructuredFieldValueSerializer()
 
+            let signatureBase64: String = signature.base64EncodedString()
             let sigHeaderDict: OrderedMap<String, ItemOrInnerList> =
-                [sigId: ItemOrInnerList.item(Item(bareItem: BareItem.string(signature.base64EncodedString()), parameters: [:]))]
-            guard let sigHeader = String(data: Data(try serializer.writeDictionaryFieldValue(sigHeaderDict)), encoding: .utf8) else {
+                [sigId: ItemOrInnerList.item(Item(bareItem: RFC9651BareItem.undecodedByteSequence(signatureBase64), parameters: [:]))]
+            let serializedSigHeaderDict: [UInt8] = try serializer.writeDictionaryFieldValue(sigHeaderDict)
+            guard let sigHeader = String(data: Data(serializedSigHeaderDict), encoding: .utf8) else {
                 throw ApproovError.permanentError(message: "Failed to serialize signature header")
             }
 
@@ -174,6 +154,7 @@ public class ApproovDefaultMessageSigning: ApproovInterceptorExtensions {
 
             // Debugging - log the message and signature-related headers
             // WARNING never log the message in production code as it contains the Approov token which allows API access
+            // TODO FIXME Don't log here!
             os_log("Message Value - Signature Message: %@", type: .debug, message)
             os_log("Message Header - Signature: %@", type: .debug, sigHeader)
             os_log("Message Header Signature-Input: %@", type: .debug, sigInputHeader)
@@ -187,7 +168,7 @@ public class ApproovDefaultMessageSigning: ApproovInterceptorExtensions {
                 let digest = ApproovDefaultMessageSigning.sha256(data: Data(message.utf8))
                 let digestData = Data(digest) // Convert digest to Data
                 let digestDictionary: OrderedMap<String, ItemOrInnerList> =
-                    ["sha-256": ItemOrInnerList.item(Item(bareItem: BareItem.string(digestData.base64EncodedString()), parameters: [:]))]
+                    ["sha-256": ItemOrInnerList.item(Item(bareItem: RFC9651BareItem.string(digestData.base64EncodedString()), parameters: [:]))]
                 if let digestHeader = String(data: Data(try serializer.writeDictionaryFieldValue(sigInputHeaderDict)), encoding: .utf8) {
                     signedRequest.addValue(digestHeader, forHTTPHeaderField: "Signature-Base-Digest")
                 } else {
@@ -218,20 +199,8 @@ public class ApproovDefaultMessageSigning: ApproovInterceptorExtensions {
         return Data(hash)
     }
 
-
-
-    private static func generateSignatureParameters(provider: ApproovURLSessionComponentProvider) -> SignatureParameters? {
-        // Generate signature parameters based on the request
-        //        let params = SignatureParameters()
-        //        params.setAlg("ecdsa-p256-sha256")
-        //        params.addComponentIdentifier("@method")
-        //        params.addComponentIdentifier("@target-uri")
-        //        return params
-        return SignatureParameters().setAlg("ecdsa-p256-sha256").addComponentIdentifier("@method").addComponentIdentifier("@target-uri")
-    }
-
-    private static func decodeES256Signature(_ signature: Data) throws -> Data {
-        // Decode ASN.1 DER encoded ES256 signature into raw r and s values
+    // Decode ASN.1 DER encoded ES256 signature into "raw" signature format
+    private static func decodeASN_1_DER_ES256_Signature(_ signature: Data) throws -> Data {
         var offset = 0
 
         // Ensure the signature starts with a valid ASN.1 sequence
@@ -277,13 +246,31 @@ public class ApproovDefaultMessageSigning: ApproovInterceptorExtensions {
             throw ApproovError.permanentError(message: "Extra data in ASN.1 DER signature")
         }
 
-        // TODO What about integer encodings that have more than 32 bytes?
+        return try to32ByteData(bytes: rBytes) + to32ByteData(bytes: sBytes)
+    }
 
-        // Pad r and s to 32 bytes if necessary
-        let rPadded = rBytes.count < 32 ? Data(repeating: 0, count: 32 - rBytes.count) + rBytes : rBytes
-        let sPadded = sBytes.count < 32 ? Data(repeating: 0, count: 32 - sBytes.count) + sBytes : sBytes
-
-        return rPadded + sPadded
+    /**
+     * Converts one part, encoded as an ASN1Integer, of an ASN.1 DER encoded ES256 signature to a byte array of
+     * exactly 32 bytes. Throws IllegalArgumentException if this is not possible.
+     *
+     * @param bytesAsASN1Integer The ASN1Integer to convert.
+     * @return A byte array of length 32, containing the raw bytes of the signature part.
+     * @throws IllegalArgumentException if the ASN1Integer is not representing a 32 byte array.
+     */
+    private static func to32ByteData(bytes: Data) throws -> Data {
+        if bytes.count < 32 {
+            let padding = Data(repeating: 0, count: 32 - bytes.count)
+            return padding + bytes
+        } else if bytes.count == 32 {
+            // Return as-is if the byte array is exactly 32 bytes
+            return bytes
+        } else if bytes.count == 33 && bytes.first == 0 {
+            // Remove the leading zero if the byte array is 33 bytes and starts with 0
+            return bytes.dropFirst()
+        } else {
+            // Throw an error if the byte array cannot be represented as 32 bytes
+            throw ApproovError.permanentError(message: "Not an ASN.1 DER ES256 signature part")
+        }
     }
 
     /**
@@ -521,7 +508,7 @@ public class SignatureParametersFactory {
         }
 
         let digestBase64 = digest.base64EncodedString()
-        let itemOrInnerList = ItemOrInnerList.item(Item(bareItem: BareItem.string(digestBase64), parameters: [:]))
+        let itemOrInnerList = ItemOrInnerList.item(Item(bareItem: RFC9651BareItem.string(digestBase64), parameters: [:]))
         let digestHeader: OrderedMap<String, ItemOrInnerList> = [bodyDigestAlg: itemOrInnerList]
         do {
             var serializer = StructuredFieldValueSerializer()
