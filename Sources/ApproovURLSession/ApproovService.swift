@@ -126,7 +126,7 @@ public class ApproovService {
      * in the original onboarding email. Note the initializer function should only ever be called once.
      * Subsequent calls will be ignored since the ApproovSDK can only be intialized once; if however,
      * an attempt is made to initialize with a different configuration (config) we throw an
-     * ApproovException.configurationError If the Approov SDk fails to be initialized for some other
+     * ApproovException.configurationError If the Approov SDK fails to be initialized for some other
      * reason, an .initializationFailure is raised
      *
      * @param config is the configuration to be used
@@ -878,7 +878,7 @@ public class ApproovService {
             do {
                 // TODO response: ApproovUpdateResponse =
                 // TODO Actually provide the ApproovRequestMutations
-                try interceptorExtensions.processedRequest(request, changes: ApproovRequestMutations());
+                response.request = try interceptorExtensions.processedRequest(response.request, changes: ApproovRequestMutations());
             } catch let error {
                 // TODO Should this fail???
                 response.decision = .ShouldFail

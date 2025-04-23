@@ -35,12 +35,19 @@ public class ApproovDefaultMessageSigning: ApproovInterceptorExtensions {
     /**
      * Default factory for generating signature parameters.
      */
-    private static var defaultFactory: SignatureParametersFactory?
+    private var defaultFactory: SignatureParametersFactory?
 
     /**
      * Host-specific factories for generating signature parameters.
      */
-    private static var hostFactories: [String: SignatureParametersFactory] = [:]
+    private var hostFactories: [String: SignatureParametersFactory]
+
+    /**
+     * Initializer
+     */
+    public init() {
+        hostFactories = [:]
+    }
 
     /**
      * Sets the default factory for generating signature parameters.
@@ -48,9 +55,9 @@ public class ApproovDefaultMessageSigning: ApproovInterceptorExtensions {
      * - Parameter factory: The factory to set as the default.
      * - Returns: The current instance for method chaining.
      */
-    public static func setDefaultFactory(_ factory: SignatureParametersFactory) -> ApproovDefaultMessageSigning {
-        self.defaultFactory = factory
-        return ApproovDefaultMessageSigning()
+    public func setDefaultFactory(_ factory: SignatureParametersFactory) -> ApproovDefaultMessageSigning {
+        defaultFactory = factory
+        return self
     }
 
     /**
@@ -61,9 +68,9 @@ public class ApproovDefaultMessageSigning: ApproovInterceptorExtensions {
      *   - factory: The factory to associate with the host.
      * - Returns: The current instance for method chaining.
      */
-    public static func putHostFactory(hostName: String, factory: SignatureParametersFactory) -> ApproovDefaultMessageSigning {
-        self.hostFactories[hostName] = factory
-        return ApproovDefaultMessageSigning()
+    public func putHostFactory(hostName: String, factory: SignatureParametersFactory) -> ApproovDefaultMessageSigning {
+        hostFactories[hostName] = factory
+        return self
     }
 
     /**
@@ -75,7 +82,7 @@ public class ApproovDefaultMessageSigning: ApproovInterceptorExtensions {
      * - Returns: The generated `SignatureParameters`, or `nil` if no factory is available.
      */
     private func buildSignatureParameters(provider: ApproovURLSessionComponentProvider, changes: ApproovRequestMutations) -> SignatureParameters? {
-        let factory = ApproovDefaultMessageSigning.hostFactories[provider.getAuthority()] ?? ApproovDefaultMessageSigning.defaultFactory
+        let factory = hostFactories[provider.getAuthority()] ?? defaultFactory
         return factory?.buildSignatureParameters(provider: provider, changes: changes)
     }
 
@@ -151,20 +158,25 @@ public class ApproovDefaultMessageSigning: ApproovInterceptorExtensions {
             }
 
             // Create signature headers
-            let sigHeaderDictionary: [String: String] = [sigId: signature.base64EncodedString()]
-            let sigInputDictionary: [String: Any] = [sigId: params.toComponentValue()]
+            var serializer = StructuredFieldValueSerializer()
 
-            // Serialize the sigHeader dictionary
-            guard let sigHeaderData = try? JSONSerialization.data(withJSONObject: sigHeaderDictionary, options: []),
-                  let sigHeader = String(data: sigHeaderData, encoding: .utf8) else {
+            let sigHeaderDict: OrderedMap<String, ItemOrInnerList> =
+                [sigId: ItemOrInnerList.item(Item(bareItem: BareItem.string(signature.base64EncodedString()), parameters: [:]))]
+            guard let sigHeader = String(data: Data(try serializer.writeDictionaryFieldValue(sigHeaderDict)), encoding: .utf8) else {
                 throw ApproovError.permanentError(message: "Failed to serialize signature header")
             }
 
-            // Serialize the sigInput dictionary
-            guard let sigInputData = try? JSONSerialization.data(withJSONObject: sigInputDictionary, options: []),
-                  let sigInputHeader = String(data: sigInputData, encoding: .utf8) else {
+            let sigInputHeaderDict: OrderedMap<String, ItemOrInnerList> =
+                [sigId: ItemOrInnerList.innerList(params.toComponentValue())]
+            guard let sigInputHeader = String(data: Data(try serializer.writeDictionaryFieldValue(sigInputHeaderDict)), encoding: .utf8) else {
                 throw ApproovError.permanentError(message: "Failed to serialize signature input header")
             }
+
+            // Debugging - log the message and signature-related headers
+            // WARNING never log the message in production code as it contains the Approov token which allows API access
+            os_log("Message Value - Signature Message: %@", type: .debug, message)
+            os_log("Message Header - Signature: %@", type: .debug, sigHeader)
+            os_log("Message Header Signature-Input: %@", type: .debug, sigInputHeader)
 
             // Add headers to the request
             var signedRequest = request
@@ -174,22 +186,19 @@ public class ApproovDefaultMessageSigning: ApproovInterceptorExtensions {
             if params.isDebugMode() {
                 let digest = ApproovDefaultMessageSigning.sha256(data: Data(message.utf8))
                 let digestData = Data(digest) // Convert digest to Data
-                let digestDictionary: [String: String] = ["sha-256": digestData.base64EncodedString()]
-                // Serialize the dictionary to JSON
-                if let serializedDigest = try? JSONSerialization.data(withJSONObject: digestDictionary, options: []),
-                   let serializedString = String(data: serializedDigest, encoding: .utf8) {
-                    // Add the serialized digest to the request headers
-                    signedRequest.addValue(serializedString, forHTTPHeaderField: "Signature-Base-Digest")
+                let digestDictionary: OrderedMap<String, ItemOrInnerList> =
+                    ["sha-256": ItemOrInnerList.item(Item(bareItem: BareItem.string(digestData.base64EncodedString()), parameters: [:]))]
+                if let digestHeader = String(data: Data(try serializer.writeDictionaryFieldValue(sigInputHeaderDict)), encoding: .utf8) {
+                    signedRequest.addValue(digestHeader, forHTTPHeaderField: "Signature-Base-Digest")
                 } else {
                     os_log("ApproovService: Failed to get digest algorithm - no debug entry", type: .debug)
-                    // TODO Remove this call
-                    fatalError("Failed to serialize the digest dictionary")
                 }
             }
 
             // WARNING: Never log the full request as it contains sensitive information
             // TODO FIXME Don't log here!
-            print("Signed Request: \(signedRequest)")
+            os_log("Signed Request: %@", type: .debug, "\(signedRequest)")
+            return signedRequest
         }
 
         return request
