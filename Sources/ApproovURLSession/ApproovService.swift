@@ -18,7 +18,6 @@ import Foundation
 import Approov
 import os.log
 import CryptoKit
-import StructuredFieldValues
 
 // Approov error conditions
 public enum ApproovError: Error, LocalizedError {

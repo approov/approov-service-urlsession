@@ -1,5 +1,4 @@
 import Foundation
-import StructuredFieldValues
 import RawStructuredFieldValues
 
 public class SignatureParameters: CustomStringConvertible {
@@ -15,9 +14,9 @@ public class SignatureParameters: CustomStringConvertible {
 	// the reconstruction of the signature base or the verification of the signature.
     private var debugMode: Bool = false
 
-    private var componentIdentifiers: [StringItem] = [] // List of Strings
+    private var componentIdentifiers: [StringItem] = []
 
-    // TODO: this should preserve insertion order
+    // This preserves insertion order
     private var componentParameters: OrderedMap<String, Any> = [:]
 
 	/**
@@ -225,10 +224,13 @@ public class SignatureParameters: CustomStringConvertible {
         }
     }
 
+    // TODO: only called in one place - replace with serialization function
+    // TODO: this just gets the name as a constant - define as constant and make clear that this is not an entry in the componentIdentifiers list
     func toComponentIdentifier() -> StringItem {
-        return StringItem(value: "@signature-params", parameters: [:])
+        return StringItem(value: "@signature-params")
     }
 
+    // TODO: only called in connection with serialization - replace with serialization function
     func toComponentValue() -> InnerList {
         // Types used in this conversion
         // componentIdentifiers: [StringItem]

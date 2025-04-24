@@ -2,7 +2,6 @@
 import CommonCrypto
 import Foundation
 import os.log
-import RawStructuredFieldValues
 
 /**
  * Provides a base implementation of message signing for Approov when using
@@ -81,9 +80,9 @@ public class ApproovDefaultMessageSigning: ApproovInterceptorExtensions {
      *   - changes: The request mutations to apply.
      * - Returns: The generated `SignatureParameters`, or `nil` if no factory is available.
      */
-    private func buildSignatureParameters(provider: ApproovURLSessionComponentProvider, changes: ApproovRequestMutations) -> SignatureParameters? {
+    private func buildSignatureParameters(provider: ApproovURLSessionComponentProvider, changes: ApproovRequestMutations) throws -> SignatureParameters? {
         let factory = hostFactories[provider.getAuthority()] ?? defaultFactory
-        return factory?.buildSignatureParameters(provider: provider, changes: changes)
+        return try factory?.buildSignatureParameters(provider: provider, changes: changes)
     }
 
     /**
@@ -100,7 +99,7 @@ public class ApproovDefaultMessageSigning: ApproovInterceptorExtensions {
         if (request.allHTTPHeaderFields?["Approov-Token"]) != nil {
             // Generate and add a message signature
             let provider = ApproovURLSessionComponentProvider(request: request)
-            guard let params = buildSignatureParameters(provider: provider, changes: changes) else {
+            guard let params = try buildSignatureParameters(provider: provider, changes: changes) else {
                 // No signature to be added; proceed with the original request
                 return request
             }
@@ -136,19 +135,10 @@ public class ApproovDefaultMessageSigning: ApproovInterceptorExtensions {
             }
 
             // Create signature headers
-            var serializer = StructuredFieldValueSerializer()
-
-            let signatureBase64: String = signature.base64EncodedString()
-            let sigHeaderDict: OrderedMap<String, ItemOrInnerList> =
-                [sigId: ItemOrInnerList.item(Item(bareItem: RFC9651BareItem.undecodedByteSequence(signatureBase64), parameters: [:]))]
-            let serializedSigHeaderDict: [UInt8] = try serializer.writeDictionaryFieldValue(sigHeaderDict)
-            guard let sigHeader = String(data: Data(serializedSigHeaderDict), encoding: .utf8) else {
+            guard let sigHeader = try SFV.serializeDictionary(key: sigId, data: signature) else {
                 throw ApproovError.permanentError(message: "Failed to serialize signature header")
             }
-
-            let sigInputHeaderDict: OrderedMap<String, ItemOrInnerList> =
-                [sigId: ItemOrInnerList.innerList(params.toComponentValue())]
-            guard let sigInputHeader = String(data: Data(try serializer.writeDictionaryFieldValue(sigInputHeaderDict)), encoding: .utf8) else {
+            guard let sigInputHeader = try SFV.serializeDictionary(key: sigId, innerList: params.toComponentValue()) else {
                 throw ApproovError.permanentError(message: "Failed to serialize signature input header")
             }
 
@@ -166,11 +156,8 @@ public class ApproovDefaultMessageSigning: ApproovInterceptorExtensions {
 
             if params.isDebugMode() {
                 let digest = ApproovDefaultMessageSigning.sha256(data: Data(message.utf8))
-                let digestData = Data(digest) // Convert digest to Data
-                let digestDictionary: OrderedMap<String, ItemOrInnerList> =
-                    ["sha-256": ItemOrInnerList.item(Item(bareItem: RFC9651BareItem.string(digestData.base64EncodedString()), parameters: [:]))]
-                if let digestHeader = String(data: Data(try serializer.writeDictionaryFieldValue(sigInputHeaderDict)), encoding: .utf8) {
-                    signedRequest.addValue(digestHeader, forHTTPHeaderField: "Signature-Base-Digest")
+                if let sigBaseDigestHeader = try SFV.serializeDictionary(key: "sha-256", data: digest) {
+                    signedRequest.addValue(sigBaseDigestHeader, forHTTPHeaderField: "Signature-Base-Digest")
                 } else {
                     os_log("ApproovService: Failed to get digest algorithm - no debug entry", type: .debug)
                 }
@@ -434,7 +421,7 @@ public class SignatureParametersFactory {
      * - Returns: The generated `SignatureParameters`.
      * - Throws: An error if required parameters cannot be generated.
      */
-    func buildSignatureParameters(provider: ApproovURLSessionComponentProvider, changes: ApproovRequestMutations) -> SignatureParameters {
+    func buildSignatureParameters(provider: ApproovURLSessionComponentProvider, changes: ApproovRequestMutations) throws -> SignatureParameters {
         // init(base: SignatureParameters) {
         //     private var baseParameters: SignatureParameters?
         var requestParameters: SignatureParameters
@@ -466,8 +453,11 @@ public class SignatureParametersFactory {
         }
 
         if let algorithm = bodyDigestAlgorithm {
-            if !generateBodyDigest(provider: provider, requestParameters: requestParameters) && bodyDigestRequired {
-                fatalError("Failed to create required body digest")
+            if bodyDigestRequired {
+                let bodyDigestCreated = try generateBodyDigest(provider: provider, requestParameters: requestParameters)
+                if !bodyDigestCreated {
+                    throw ApproovError.permanentError(message: "Failed to create required body digest")
+                }
             }
         }
 
@@ -482,7 +472,7 @@ public class SignatureParametersFactory {
      *   - requestParameters: The signature parameters to update.
      * - Returns: `true` if the body digest was successfully generated, `false` otherwise.
      */
-    private func generateBodyDigest(provider: ApproovURLSessionComponentProvider, requestParameters: SignatureParameters) -> Bool {
+    private func generateBodyDigest(provider: ApproovURLSessionComponentProvider, requestParameters: SignatureParameters) throws -> Bool {
         var request = provider.getRequest()
 
         // If there is no body, we don't generate a digest
@@ -507,18 +497,14 @@ public class SignatureParametersFactory {
             return false
         }
 
-        let digestBase64 = digest.base64EncodedString()
-        let itemOrInnerList = ItemOrInnerList.item(Item(bareItem: RFC9651BareItem.string(digestBase64), parameters: [:]))
-        let digestHeader: OrderedMap<String, ItemOrInnerList> = [bodyDigestAlg: itemOrInnerList]
         do {
-            var serializer = StructuredFieldValueSerializer()
-            let serializedValue = try serializer.writeDictionaryFieldValue(digestHeader)
-            guard let digestHeader = String(data: Data(serializedValue), encoding: .utf8) else
-            {
-                return false
+            guard let digestHeader = try SFV.serializeDictionary(key: bodyDigestAlg, data: digest) else {
+                // TODO: be more graceful about bailing
+                fatalError("Failed to serialize Content-Digest header")
             }
             request.addValue(digestHeader, forHTTPHeaderField: "Content-Digest")
         } catch {
+            // TODO: be more graceful about bailing
             fatalError("Failed to serialize Content-Digest header: \(error)")
         }
         requestParameters.addComponentIdentifier("Content-Digest")

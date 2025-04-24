@@ -1,8 +1,8 @@
 import Foundation
-import StructuredFieldValues
 import RawStructuredFieldValues
 
 
+// Gets items from the request
 protocol ComponentProvider {
     // Component Identifiers
     static var DC_METHOD: String { get }
@@ -35,6 +35,8 @@ protocol ComponentProvider {
 
     // Static method declaration (no body)
     static func combineFieldValues(fields: [String]?) -> String?
+
+    // TODO: Rename to serializeComponent()
     func getComponentValue(componentIdentifier: StringItem) throws -> String?
 }
 
@@ -43,25 +45,6 @@ enum ComponentProviderError: Error {
     case unknownComponent(String)
     case invalidFieldValue(String)
 }
-
-
-//struct ListField: StructuredFieldValue {
-//    static let structuredFieldType: StructuredFieldType = .list
-//    var items: [String]
-//}
-//struct IntWithParams: StructuredFieldValue, Equatable {
-//    static let structuredFieldType: StructuredFieldType = .item
-//
-//    var item: Int
-//    var parameters: [String: String]
-//}
-struct StringItem: StructuredFieldValue {
-    static let structuredFieldType: StructuredFieldType = .item
-
-    var value: String
-    var parameters: [String: String]
-}
-
 
 extension ComponentProvider {
 

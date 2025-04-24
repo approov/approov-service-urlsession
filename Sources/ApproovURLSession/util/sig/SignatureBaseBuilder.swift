@@ -17,13 +17,8 @@ class SignatureBaseBuilder {
         for componentIdentifier in sigParams.getComponentIdentifiers() {
             if let componentValue = try ctx.getComponentValue(componentIdentifier: componentIdentifier) {
                 // Write out the line to the base
-                // TODO this is needlessly complicated - it converts a StringItem to a String to an Item and then serializes this into a String.
-                // It should either just serialize the StringItem (needs support in class StringItem) or sigParams.getComponentIdentifiers()
-                // should return the component identifiers as already correctly serialized strings (needs support in getComponentValue()).
-                var serializer = StructuredFieldValueSerializer()
-                let stringItem = Item(bareItem: RFC9651BareItem.string(componentIdentifier.value), parameters: [:])
-                let serializedValue = try serializer.writeItemFieldValue(stringItem)
-                guard let compIdString = String(data: Data(serializedValue), encoding: .utf8) else {
+                // TODO: Method on sigParams to serialize Item of componentIdentifier of type String or serialization method on componentIdentifier of type StringItem
+                guard let compIdString = try SFV.serializeStringItem(item: componentIdentifier) else {
                     // TODO FIXME: Be more graceful about bailing
                     fatalError("Failed to serialize component identifier: \(componentIdentifier)")
                 }
@@ -35,20 +30,15 @@ class SignatureBaseBuilder {
         }
 
         // Add the signature parameters line
-        var serializer = StructuredFieldValueSerializer()
         // Serialize the signature parameters component identifier
-        // TODO this is needlessly complicated - it converts a StringItem to a String to an Item and then serializes this into a String.
-        let stringItem = Item(bareItem: RFC9651BareItem.string(sigParams.toComponentIdentifier().value), parameters: [:])
-        let serializedSigParamsId = try serializer.writeItemFieldValue(stringItem)
-        guard let sigParamsIdString = String(data: Data(serializedSigParamsId), encoding: .utf8) else {
+        guard let sigParamsIdString = try SFV.serializeStringItem(item: sigParams.toComponentIdentifier()) else {
             // TODO FIXME: Be more graceful about bailing
             fatalError("Failed to serialize signature params component identifier")
         }
 
         // Serialize the signature params dictionary returned by toComponentValue()
-        let itemOrInnerList = ItemOrInnerList.innerList(sigParams.toComponentValue())
-        let serializedSigParams = try serializer.writeListFieldValue([itemOrInnerList])
-        guard let sigParamsString = String(data: Data(serializedSigParams), encoding: .utf8) else {
+        // TODO: Method on sigParams to serialize its component values
+        guard let sigParamsString = try SFV.serializeList(list: sigParams.toComponentValue()) else {
             // TODO FIXME: Be more graceful about bailing
             fatalError("Failed to serialize signature parameters")
         }
