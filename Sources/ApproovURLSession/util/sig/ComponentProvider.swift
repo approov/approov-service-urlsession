@@ -1,3 +1,19 @@
+// MIT License
+//
+// Copyright (c) 2025-present, Critical Blue Ltd.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files
+// (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge,
+// publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so,
+// subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR
+// ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH
+// THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
 import Foundation
 import RawStructuredFieldValues
 
@@ -13,7 +29,6 @@ protocol ComponentProvider {
     static var DC_PATH: String { get }
     static var DC_QUERY: String { get }
     static var DC_QUERY_PARAM: String { get }
-    static var DC_STATUS: String { get }
 
     // For requests
     func getMethod() -> String
@@ -26,17 +41,11 @@ protocol ComponentProvider {
     func getQueryParam(name: String) -> String?
     func hasBody() -> Bool
 
-    // For responses
-    func getStatus() -> String
-
     // Fields
     func hasField(name: String) -> Bool
     func getField(name: String) -> String?
-
-    // Static method declaration (no body)
     static func combineFieldValues(fields: [String]?) -> String?
 
-    // TODO: Rename to serializeComponent()
     func getComponentValue(componentIdentifier: StringItem) throws -> String?
 }
 
@@ -57,7 +66,6 @@ extension ComponentProvider {
     static var DC_PATH: String { "@path" }
     static var DC_QUERY: String { "@query" }
     static var DC_QUERY_PARAM: String { "@query-param" }
-    static var DC_STATUS: String { "@status" }
 
     static func combineFieldValues(fields: [String]?) -> String? {
         guard let fields = fields else {
@@ -92,8 +100,6 @@ extension ComponentProvider {
                 return getPath()
             case Self.DC_QUERY:
                 return getQuery()
-            case Self.DC_STATUS:
-                return getStatus()
             case Self.DC_QUERY_PARAM:
                 if let nameParameter = componentIdentifier.parameters["name"] {
                     return getQueryParam(name: nameParameter)
@@ -105,9 +111,10 @@ extension ComponentProvider {
             }
         } else {
             if let keyParameter = componentIdentifier.parameters["key"] {
-                if let fieldValue = getField(name: baseIdentifier) {
+                if let fieldValue = getField(name: baseIdentifier),
+                   let fieldValueData = fieldValue.data(using: .utf8) {
                     // Parse the field as a dictionary
-                    var parser = StructuredFieldValueParser(fieldValue.data(using: .utf8)!) // TODO should be safe as fieldValue cannot be nil here
+                    var parser = StructuredFieldValueParser(fieldValueData)
                     let parsed = try parser.parseDictionaryFieldValue()
                     if let dictionaryValue = parsed[keyParameter] {
                         var serializer = StructuredFieldValueSerializer()
@@ -133,8 +140,9 @@ extension ComponentProvider {
                     "te", "timing-allow-origin", "trailer", "transfer-encoding", "variant-key", "vary",
                     "x-list", "x-list-a", "x-list-b", "x-xss-protection":
                     // List
-                    if let fieldValue = getField(name: baseIdentifier) {
-                        var parser = StructuredFieldValueParser(fieldValue.data(using: .utf8)!) // TODO should be safe as fieldValue cannot be nil here
+                    if let fieldValue = getField(name: baseIdentifier),
+                       let fieldValueData = fieldValue.data(using: .utf8) {
+                        var parser = StructuredFieldValueParser(fieldValueData)
                         let parsed = try parser.parseListFieldValue()
                         var serializer = StructuredFieldValueSerializer()
                         let serializedValue = try serializer.writeListFieldValue(parsed)
@@ -145,8 +153,9 @@ extension ComponentProvider {
                      "pragma", "prefer", "preference-applied", "priority", "signature", "signature-input",
                      "surrogate-control", "variants", "x-dictionary":
                     // Dictionary
-                    if let fieldValue = getField(name: baseIdentifier) {
-                        var parser = StructuredFieldValueParser(fieldValue.data(using: .utf8)!) // TODO should be safe as fieldValue cannot be nil here
+                    if let fieldValue = getField(name: baseIdentifier),
+                       let fieldValueData = fieldValue.data(using: .utf8) {
+                        var parser = StructuredFieldValueParser(fieldValueData)
                         let parsed = try parser.parseDictionaryFieldValue()
                         var serializer = StructuredFieldValueSerializer()
                         let serializedValue = try serializer.writeDictionaryFieldValue(parsed)
@@ -158,8 +167,9 @@ extension ComponentProvider {
                      "example-boolean", "example-bytesequence", "example-decimal", "example-integer", "example-string",
                      "example-token", "expect", "host", "origin", "retry-after", "x-content-type-options", "x-frame-options":
                     // Item
-                    if let fieldValue = getField(name: baseIdentifier) {
-                        var parser = StructuredFieldValueParser(fieldValue.data(using: .utf8)!) // TODO should be safe as fieldValue cannot be nil here
+                    if let fieldValue = getField(name: baseIdentifier),
+                       let fieldValueData = fieldValue.data(using: .utf8) {
+                        var parser = StructuredFieldValueParser(fieldValueData)
                         let parsed = try parser.parseItemFieldValue()
                         var serializer = StructuredFieldValueSerializer()
                         let serializedValue = try serializer.writeItemFieldValue(parsed)

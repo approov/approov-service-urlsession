@@ -1,7 +1,25 @@
+// MIT License
+//
+// Copyright (c) 2025-present, Critical Blue Ltd.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files
+// (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge,
+// publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so,
+// subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR
+// ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH
+// THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
 import Foundation
 import RawStructuredFieldValues
 
 public class SignatureParameters: CustomStringConvertible {
+    private static let SIGNATURE_PARAMS = "@signature-params"
+
     private static let ALG = "alg"
     private static let CREATED = "created"
     private static let EXPIRES = "expires"
@@ -224,22 +242,11 @@ public class SignatureParameters: CustomStringConvertible {
         }
     }
 
-    // TODO: only called in one place - replace with serialization function
-    // TODO: this just gets the name as a constant - define as constant and make clear that this is not an entry in the componentIdentifiers list
     func toComponentIdentifier() -> StringItem {
-        return StringItem(value: "@signature-params")
+        return StringItem(value: Self.SIGNATURE_PARAMS)
     }
 
-    // TODO: only called in connection with serialization - replace with serialization function
-    func toComponentValue() -> InnerList {
-        // Types used in this conversion
-        // componentIdentifiers: [StringItem]
-        // parameters: [String: Any]
-        // InnerList: struct {bareInnerList: BareInnerList, rfc9651Parameters: OrderedMap<String, RFC9651BareItem>}
-        // BareInnerList: struct {items: [Item]}
-        // Item: struct {rfc9651BareItem: RFC9651BareItem, parameters: OrderedMap<String, RFC9651BareItem>}
-        // RFC9651BareItem: enum {bool, integer, decimal, string, undecodedByteSequence, token, date, displayString}
-
+    func toComponentValue() throws -> InnerList {
         // Copy the componentIdentifiers
         var identifiers: BareInnerList = BareInnerList()
         for identifier in componentIdentifiers {
@@ -256,16 +263,24 @@ public class SignatureParameters: CustomStringConvertible {
         // Copy the componentParameters
         var parameters: OrderedMap<String, RFC9651BareItem> = [:]
         for (key, value) in componentParameters {
-            if let stringValue = value as? String {
-                parameters[key] = RFC9651BareItem.string(stringValue)
+            if let boolValue = value as? Bool {
+                parameters[key] = RFC9651BareItem.bool(boolValue)
             } else if let intValue = value as? Int64 {
                 parameters[key] = RFC9651BareItem.integer(intValue)
+            } else if let doubleValue = value as? Double {
+                parameters[key] = try RFC9651BareItem.decimal(PseudoDecimal(doubleValue))
+            } else if let stringValue = value as? String {
+                parameters[key] = RFC9651BareItem.string(stringValue)
+            } else if let data = value as? Data {
+                parameters[key] = RFC9651BareItem.undecodedByteSequence(data.base64EncodedString())
+            } else if let date = value as? Date {
+                parameters[key] = RFC9651BareItem.date(Int64(date.timeIntervalSince1970))
             } else {
-                // TODO: Handle other types or throw an error
-                continue
+                throw ApproovError.permanentError(message: "Unsupported component parameter type: \(type(of: value))")
             }
         }
-        // init(bareInnerList: BareInnerList, parameters: OrderedMap<String, RFC9651BareItem>)
+
+        // Assemble the result
         let componentValue = InnerList(bareInnerList: identifiers, parameters: parameters)
         return componentValue
     }
@@ -316,7 +331,7 @@ public class SignatureParameters: CustomStringConvertible {
     public var description: String {
         do {
             var serializer = StructuredFieldValueSerializer()
-            let itemOrInnerList = ItemOrInnerList.innerList(toComponentValue())
+            let itemOrInnerList = ItemOrInnerList.innerList(try toComponentValue())
             let serializedValue = try serializer.writeListFieldValue([itemOrInnerList])
             guard let description = String(data: Data(serializedValue), encoding: .utf8) else {
                 throw SignatureParametersError.encodingFailed(description: "UTF-8 encoding failed")

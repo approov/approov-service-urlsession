@@ -1,3 +1,18 @@
+// MIT License
+//
+// Copyright (c) 2025-present, Critical Blue Ltd.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files
+// (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge,
+// publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so,
+// subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR
+// ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH
+// THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 import CommonCrypto
 import Foundation
@@ -257,21 +272,12 @@ public class ApproovDefaultMessageSigning: ApproovInterceptorExtensions {
     }
 
     /**
-     * Generates a default `SignatureParametersFactory` with predefined settings.
-     *
-     * - Returns: A new instance of `SignatureParametersFactory`.
-     */
-    public static func generateDefaultSignatureParametersFactory() -> SignatureParametersFactory {
-        return generateDefaultSignatureParametersFactory(baseParametersOverride: nil)
-    }
-
-    /**
-     * Generates a default `SignatureParametersFactory` with optional base parameters.
+     * Generates a default `SignatureParametersFactory` with predefined settings and optional base parameters.
      *
      * - Parameter baseParametersOverride: The base parameters to override, or `nil` to use defaults.
      * - Returns: A new instance of `SignatureParametersFactory`.
      */
-    public static func generateDefaultSignatureParametersFactory(baseParametersOverride: SignatureParameters?) -> SignatureParametersFactory {
+    public static func generateDefaultSignatureParametersFactory(baseParametersOverride: SignatureParameters? = nil) -> SignatureParametersFactory {
         // Default expiry seconds - must encompass worst-case request retry time and clock skew
         let defaultExpiresLifetime: Int64 = 15
         let baseParameters: SignatureParameters
@@ -284,14 +290,20 @@ public class ApproovDefaultMessageSigning: ApproovInterceptorExtensions {
                 .addComponentIdentifier(ApproovURLSessionComponentProvider.DC_TARGET_URI)
         }
 
-        return SignatureParametersFactory()
+        let defaultSignatureParametersFactory = SignatureParametersFactory()
             .setBaseParameters(baseParameters)
             .setUseDeviceMessageSigning()
             .setAddCreated(true)
             .setExpiresLifetime(defaultExpiresLifetime)
             .setAddApproovTokenHeader(true)
             .addOptionalHeaders(["Authorization", "Content-Length", "Content-Type"])
-            .setBodyDigestConfig(ApproovDefaultMessageSigning.DIGEST_SHA256, required: false)
+        do {
+            try defaultSignatureParametersFactory.setBodyDigestConfig(ApproovDefaultMessageSigning.DIGEST_SHA256, required: false)
+        } catch {
+            // ApproovDefaultMessageSigning.DIGEST_SHA256 is a supported body digest algorithm - will never throw
+            os_log("ApproovDefaultMessageSigning - generateDefaultSignatureParametersFactory: Failed to set default body digest algorithm", type: .error)
+        }
+        return defaultSignatureParametersFactory
     }
 }
 
@@ -330,11 +342,11 @@ public class SignatureParametersFactory {
      * - Returns: The current instance for method chaining.
      * - Throws: An error if an unsupported algorithm is specified.
      */
-    func setBodyDigestConfig(_ bodyDigestAlgorithm: String?, required: Bool) -> SignatureParametersFactory {
+    func setBodyDigestConfig(_ bodyDigestAlgorithm: String?, required: Bool) throws -> SignatureParametersFactory {
         if let algorithm = bodyDigestAlgorithm {
             guard algorithm == ApproovDefaultMessageSigning.DIGEST_SHA256 ||
                   algorithm == ApproovDefaultMessageSigning.DIGEST_SHA512 else {
-                fatalError("Unsupported body digest algorithm: \(algorithm)")
+                throw ApproovError.permanentError(message: "Unsupported body digest algorithm: \(algorithm)")
             }
             self.bodyDigestAlgorithm = algorithm
             self.bodyDigestRequired = required
@@ -471,18 +483,17 @@ public class SignatureParametersFactory {
     private func generateBodyDigest(provider: ApproovURLSessionComponentProvider, requestParameters: SignatureParameters) throws -> Bool {
         var request = provider.getRequest()
 
-        // If there is no body, we don't generate a digest
-        guard let body = provider.getRequest().httpBody else {
+        guard let body = SignatureParametersFactory.getHTTPBody(request) else {
+            // If there is no body, we can't generate a digest
             return false
         }
-
-        // TODO: Check if the body is a stream and handle it accordingly
 
         // If no body digest algorithm has been set, we don't generate a digest
         guard let bodyDigestAlg = bodyDigestAlgorithm else {
             return false
         }
 
+        // Generate the digest
         let digest: Data
         switch bodyDigestAlg {
         case ApproovDefaultMessageSigning.DIGEST_SHA256:
@@ -490,21 +501,47 @@ public class SignatureParametersFactory {
         case ApproovDefaultMessageSigning.DIGEST_SHA512:
             digest = SignatureParametersFactory.sha512(data: body)
         default:
-            return false
+            throw ApproovError.permanentError(message: "Unsupported body digest algorithm: \(bodyDigestAlg)")
         }
 
+        // Add the digest header to the request
         do {
             guard let digestHeader = try SFV.serializeDictionary(key: bodyDigestAlg, data: digest) else {
-                // TODO: be more graceful about bailing
-                fatalError("Failed to serialize Content-Digest header")
+                throw ApproovError.permanentError(message: "Failed to serialize Content-Digest header")
             }
             request.addValue(digestHeader, forHTTPHeaderField: "Content-Digest")
-        } catch {
-            // TODO: be more graceful about bailing
-            fatalError("Failed to serialize Content-Digest header: \(error)")
+        } catch let error {
+            throw ApproovError.permanentError(message: "Failed to serialize Content-Digest header: \(error)")
         }
         requestParameters.addComponentIdentifier("Content-Digest")
         return true
+    }
+
+    /**
+     * Gets the HTTP body from the request, either from httpBody or httpBodyStream.
+     * 
+     * @param request is the URLRequest to extract the body from.
+     * @return the HTTP body as Data, or nil if not available.
+     */
+    private static func getHTTPBody(_ request: URLRequest) -> Data? {
+        if let body = request.httpBody {
+            return body
+        } else if let bodyStream = request.httpBodyStream {
+            var data = Data()
+            bodyStream.open()
+            defer { bodyStream.close() }
+            let bufferSize = 1024
+            var buffer = [UInt8](repeating: 0, count: bufferSize)
+            while bodyStream.hasBytesAvailable {
+                let bytesRead = bodyStream.read(&buffer, maxLength: bufferSize)
+                if bytesRead < 0 {
+                    return nil
+                }
+                data.append(buffer, count: bytesRead)
+            }
+            return data
+        }
+        return nil
     }
 
     /**
@@ -528,14 +565,9 @@ public class SignatureParametersFactory {
 class ApproovURLSessionComponentProvider: ComponentProvider {
 
     private var request: URLRequest
-    private var url: URL
 
     init(request: URLRequest) {
         self.request = request
-        guard let url = request.url else {
-            fatalError("URL is required for the request")
-        }
-        self.url = url
     }
 
     func getRequest() -> URLRequest {
@@ -544,10 +576,6 @@ class ApproovURLSessionComponentProvider: ComponentProvider {
 
     func setRequest(_ newRequest: URLRequest) {
         self.request = newRequest
-        guard let newUrl = newRequest.url else {
-            fatalError("URL is required for the request")
-        }
-        self.url = newUrl
     }
 
     func getMethod() -> String {
@@ -555,35 +583,36 @@ class ApproovURLSessionComponentProvider: ComponentProvider {
     }
 
     func getAuthority() -> String {
-        return url.host ?? ""
+        return request.url?.host ?? ""
     }
 
     func getScheme() -> String {
-        return url.scheme ?? "http"
+        return request.url?.scheme ?? "http"
     }
 
     func getTargetUri() -> String {
-        return url.absoluteString
+        return request.url?.absoluteString ?? ""
     }
 
     func getRequestTarget() -> String {
-        var target = url.path
-        if let query = url.query {
+        var target = getPath()
+        if let query = request.url?.query {
             target += "?\(query)"
         }
         return target
     }
 
     func getPath() -> String {
-        return url.path
+        return request.url?.path ?? ""
     }
 
     func getQuery() -> String {
-        return url.query ?? ""
+        return request.url?.query ?? ""
     }
 
     func getQueryParam(name: String) -> String? {
-        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+        guard let url = request.url,
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
               let queryItems = components.queryItems else {
             return nil
         }
@@ -597,10 +626,6 @@ class ApproovURLSessionComponentProvider: ComponentProvider {
             return nil
         }
         return values.first
-    }
-
-    func getStatus() -> String {
-        fatalError("Only requests are supported")
     }
 
     func hasField(name: String) -> Bool {

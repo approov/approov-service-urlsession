@@ -117,9 +117,6 @@ public class ApproovService {
     // map of URL regexs that should be excluded from any Approov protection, mapped to the compiled Pattern
     private static var exclusionURLRegexs: Dictionary<String, NSRegularExpression> = Dictionary();
 
-    // TODO Initialize the ApproovService with an account configuration and without a comment.
-    // TODO Is this implemented for iOS?
-
     /**
      * Initializes the SDK with the config obtained using `approov sdk -getConfigString` or
      * in the original onboarding email. Note the initializer function should only ever be called once.
@@ -902,13 +899,11 @@ public class ApproovService {
         // Call the processed request callback
         if let interceptorExtensions = ApproovService.interceptorExtensions {
             do {
-                // TODO response: ApproovUpdateResponse =
-                response.request = try interceptorExtensions.processedRequest(response.request, changes: changes);
+                response.request = try interceptorExtensions.processedRequest(response.request, changes: changes)
             } catch let error {
-                // TODO Should this fail???
                 response.decision = .ShouldFail
                 response.error = ApproovError.permanentError(
-                    message: "Interceptor extension error: \(error.localizedDescription)")
+                    message: "Interceptor extension for processed request error: \(error.localizedDescription)")
             }
         }
 
