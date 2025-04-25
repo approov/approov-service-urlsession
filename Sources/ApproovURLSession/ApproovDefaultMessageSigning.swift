@@ -107,9 +107,7 @@ public class ApproovDefaultMessageSigning: ApproovInterceptorExtensions {
             // Build the signature base
             let baseBuilder = SignatureBaseBuilder(sigParams: params, ctx: provider)
             let message = try baseBuilder.createSignatureBase()
-
-            // WARNING: Never log the message as it contains sensitive information
-            // TODO Log what we are doing
+            // WARNING never log the message as it contains an Approov token which provides access to your API.
 
             // Generate the signature
             let sigId: String
@@ -144,10 +142,9 @@ public class ApproovDefaultMessageSigning: ApproovInterceptorExtensions {
 
             // Debugging - log the message and signature-related headers
             // WARNING never log the message in production code as it contains the Approov token which allows API access
-            // TODO FIXME Don't log here!
-            os_log("Message Value - Signature Message: %@", type: .debug, message)
-            os_log("Message Header - Signature: %@", type: .debug, sigHeader)
-            os_log("Message Header Signature-Input: %@", type: .debug, sigInputHeader)
+            // os_log("Message Value - Signature Message: %@", type: .debug, message)
+            // os_log("Message Header - Signature: %@", type: .debug, sigHeader)
+            // os_log("Message Header Signature-Input: %@", type: .debug, sigInputHeader)
 
             // Add headers to the request
             var signedRequest = request
@@ -163,9 +160,8 @@ public class ApproovDefaultMessageSigning: ApproovInterceptorExtensions {
                 }
             }
 
-            // WARNING: Never log the full request as it contains sensitive information
-            // TODO FIXME Don't log here!
-            os_log("Signed Request: %@", type: .debug, "\(signedRequest)")
+            // WARNING never log the full request as it contains an Approov token which provides access to your API
+            // os_log("Request String: %@", type: .debug, "\(signedRequest)")
             return signedRequest
         }
 
