@@ -17,7 +17,6 @@
 import Foundation
 import Approov
 import os.log
-import CryptoKit
 
 // Approov error conditions
 public enum ApproovError: Error, LocalizedError {
@@ -149,7 +148,7 @@ public class ApproovService {
                         isInitialized = true
                     } else {
                         throw ApproovError.initializationFailure(message: "Error initializing Approov SDK: \(error.localizedDescription)")
-                    }                        
+                    }
                 }
                 isInitialized = true
                 configString = config
@@ -462,8 +461,8 @@ public class ApproovService {
             // provide the Approov token result
             return result.token
         case .noNetwork,
-                .poorNetwork,
-                .mitmDetected:
+             .poorNetwork,
+             .mitmDetected:
             // we are unable to get an Approov token due to network conditions
             throw ApproovError.networkingError(message: "fetchToken network error: " + Approov.string(from: result.status))
         default:
@@ -484,7 +483,7 @@ public class ApproovService {
         return getAccountMessageSignature(message: message)
     }
 
-    /** 
+    /**
      * Gets the signature for the given message using the account-specific signing key.
      * This key is transmitted to the SDK after a successful fetch if the feature is enabled.
      *
