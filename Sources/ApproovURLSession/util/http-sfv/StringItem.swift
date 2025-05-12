@@ -1,6 +1,6 @@
 // MIT License
 //
-// Copyright (c) 2025-present, Critical Blue Ltd.
+// Copyright (c) 2025-present, Approov Ltd.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files
 // (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge,
@@ -31,7 +31,7 @@ public struct StringItem {
     }
 
     var value: String {
-        switch item.bareItem {
+        switch item.rfc9651BareItem {
         case .string(let string):
             let check: String = string
             return check
@@ -42,7 +42,7 @@ public struct StringItem {
 
     var parameters: OrderedMap<String, String> {
         var paramsAsStrings = OrderedMap<String, String>()
-        for (key, value) in item.parameters {
+        for (key, value) in item.rfc9651Parameters {
             switch value {
             case .string(let string):
                 paramsAsStrings[key] = string
