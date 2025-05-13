@@ -71,12 +71,12 @@ public struct ApproovUpdateResponse {
 // ApproovService provides a mediation layer to the Approov SDK itself
 public class ApproovService {
     // private initializer
-    fileprivate init() {}
+    private init() {}
 
-    // the dispatch queue to manage serial access to intializer modified variables
+    // the dispatch queue to manage serial access to intializer-modified variables
     private static let initializerQueue = DispatchQueue(label: "ApproovService.initializer", qos: .userInitiated)
 
-    // the initial config string used to initialize
+    // configuration string used for initialization
     private static var configString: String?
 
     // status of Approov SDK initialization
@@ -88,7 +88,7 @@ public class ApproovService {
     // if we should proceed on network fail
     private static var proceedOnNetworkFail = false
 
-    // binding header string
+    // binding header name
     private static var bindingHeader = ""
 
     // Approov token default header
