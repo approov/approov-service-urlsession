@@ -24,3 +24,4 @@ Pod::Spec.new do |s|
     'VALID_ARCHS' => 'arm64 x86_64 arm64_32 x86_64'         # Valid architectures: Note on watchOS you need to disable arm64 for device builds
   }
 end
+
