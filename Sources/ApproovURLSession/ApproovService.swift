@@ -656,7 +656,9 @@ public class ApproovService {
         }
 
         // we construct a response to return
-        var response = ApproovUpdateResponse(request: request, decision: .ShouldFail, sdkMessage: "", error: nil)
+        // by default, when proceedOnNetworkFail is false, we will not proceed with the request and propagate the failure to the client
+        // if proceedOnNetworkFail is true, we will proceed with the request but without the Approov token header
+        var response = ApproovUpdateResponse(request: request, decision: proceedOnNetworkFail ? .ShouldProceed : .ShouldFail, sdkMessage: "", error: nil)
 
         // get all of the headers including those from the session configuration
         var allHeaders: [String: String] = Dictionary()
