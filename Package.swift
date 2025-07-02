@@ -1,8 +1,8 @@
 // swift-tools-version:5.8
 import PackageDescription
 
-// The release tag for the branch
-let releaseTAG = "3.4.1"
+// The release tag
+let releaseTAG = "3.4.2"
 // SDK package version (used for both iOS and watchOS)
 let sdkVersion = "3.4.0"
 

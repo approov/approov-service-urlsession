@@ -656,9 +656,7 @@ public class ApproovService {
         }
 
         // we construct a response to return
-        // by default, when proceedOnNetworkFail is false, we will not proceed with the request and propagate the failure to the client
-        // if proceedOnNetworkFail is true, we will proceed with the request but without the Approov token header
-        var response = ApproovUpdateResponse(request: request, decision: proceedOnNetworkFail ? .ShouldProceed : .ShouldFail, sdkMessage: "", error: nil)
+        var response = ApproovUpdateResponse(request: request, decision: .ShouldFail, sdkMessage: "", error: nil)
 
         // get all of the headers including those from the session configuration
         var allHeaders: [String: String] = Dictionary()
@@ -703,6 +701,7 @@ public class ApproovService {
         var hasChanges = false
         var setTokenHeaderKey: String?
         var setTokenHeaderValue: String?
+        // All paths through this switch statement must set response.decision
         switch approovResult.status {
         case ApproovTokenFetchStatus.success:
             // go ahead and make the API call and add the Approov token header
@@ -719,13 +718,15 @@ public class ApproovService {
         case ApproovTokenFetchStatus.noNetwork,
             ApproovTokenFetchStatus.poorNetwork,
             ApproovTokenFetchStatus.mitmDetected:
-            // we are unable to get the Approov token due to network conditions so the request can
-            // be retried by the user later
+            // we are unable to get the Approov token due to network conditions
             if !proceedOnNetworkFail {
+                // unless required to proceed; the request can be retried by the user later
                 response.decision = .ShouldRetry
                 response.error = ApproovError.networkingError(message: response.sdkMessage)
                 return response
             }
+            // otherwise, proceed with the request but without the Approov token header
+            response.decision = .ShouldProceed
         case ApproovTokenFetchStatus.unprotectedURL,
             ApproovTokenFetchStatus.unknownURL,
             ApproovTokenFetchStatus.noApproovService:
