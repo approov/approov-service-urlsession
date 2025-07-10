@@ -18,7 +18,11 @@ let package = Package(
             name: "ApproovURLSession",
             targets: ["ApproovURLSession"]
         ),
-        .library(name: "ApproovURLSessionDynamic", type: .dynamic, targets: ["ApproovURLSession"])
+        .library(
+            name: "ApproovURLSessionDynamic",
+            type: .dynamic,
+            targets: ["ApproovURLSession"]
+        )
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-http-structured-headers.git", from: "1.0.0")
@@ -29,7 +33,6 @@ let package = Package(
             name: "ApproovURLSession",
             dependencies: [
                 "Approov",
-                .product(name: "StructuredFieldValues", package: "swift-http-structured-headers"),
                 .product(name: "RawStructuredFieldValues", package: "swift-http-structured-headers")
             ],
             path: "Sources/ApproovURLSession",  // Point to the shared source code
@@ -39,8 +42,8 @@ let package = Package(
         .binaryTarget(
             name: "Approov",
             url: "https://github.com/approov/approov-ios-sdk/releases/download/\(sdkVersion)/Approov.xcframework.zip",
-            checksum: "9a02cb9ca905a9e2e0692047dfd4cdbfd3133c9e4b644bdfe898f7ce1b8d7461" // SHA256 checksum of the xcframework zip file
+            // SHA256 checksum of the xcframework zip file
+            checksum: "9a02cb9ca905a9e2e0692047dfd4cdbfd3133c9e4b644bdfe898f7ce1b8d7461"
         )
     ]
 )
-
