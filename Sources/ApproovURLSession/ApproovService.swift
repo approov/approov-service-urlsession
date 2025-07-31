@@ -657,6 +657,7 @@ public class ApproovService {
         }
         
         // handle the Approov token fetch response
+        // All paths through this switch statement must set response.decision
         response.sdkMessage = Approov.string(from: approovResult.status)
         switch approovResult.status {
             case ApproovTokenFetchStatus.success:
@@ -679,6 +680,8 @@ public class ApproovService {
                     response.error = ApproovError.networkingError(message: response.sdkMessage)
                     return response
                 }
+                // otherwise, proceed with the request but without the Approov token header
+                response.decision = .ShouldProceed
             case ApproovTokenFetchStatus.unprotectedURL,
                  ApproovTokenFetchStatus.unknownURL,
                  ApproovTokenFetchStatus.noApproovService:
