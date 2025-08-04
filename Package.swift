@@ -2,7 +2,7 @@
 import PackageDescription
 
 // The release tag
-let releaseTAG = "3.5.0"
+let releaseTAG = "3.5.1"
 // SDK package version (used for both iOS and watchOS)
 let sdkVersion = "3.5.0"
 

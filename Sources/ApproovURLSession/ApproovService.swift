@@ -598,7 +598,11 @@ public class ApproovService {
      */
     private static func hostnameFromURL(url: URL) -> String {
         if url.absoluteString.starts(with: "https") {
-            return url.host!
+            if let host = url.host {
+                // if the URL has a host then return it
+                return host
+            }
+            return ""
         } else {
             let fullHost = "https://" + url.absoluteString
             let newURL = URL(string: fullHost)
