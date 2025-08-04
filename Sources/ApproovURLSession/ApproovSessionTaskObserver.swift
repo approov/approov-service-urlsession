@@ -378,7 +378,21 @@ public class ApproovSessionTaskObserver: NSObject {
                                 // the task is still suspended and we have an error condition, first inform the pinning delegate
                                 pinningDelegate.urlSession!(pinningSession, didBecomeInvalidWithError: updateResponse.error)
                                 // call any completion handler with the error or cancel if there is no completion handler
-                                if let handler = completionHandler as? CompletionHandlerData {
+                                if completionHandler == nil {
+                                    //MARK: LOG_MESSAGE
+                                    if ApproovSessionTaskObserver.enableLogging {
+                                        self.logMessage(
+                                            line: String(#line),
+                                            taskId: task.taskIdentifier,
+                                            property: "task.cancel()",
+                                            // Get the current state of the task
+                                            value: self.getURLSessionStateString(state: task.state),
+                                            objectDescription: "CompletionHandler is nil; Invoked cancel for task with ID: \(task.taskIdentifier)"
+                                        )
+                                    }
+                                    task.cancel()
+                                }
+                                else if let handler = completionHandler as? CompletionHandlerData {
                                     //MARK: LOG_MESSAGE
                                     if ApproovSessionTaskObserver.enableLogging {
                                         self.logMessage(
@@ -391,11 +405,7 @@ public class ApproovSessionTaskObserver: NSObject {
                                         )
                                     }
                                     // call the completion handler only if valid object
-                                    if handler != nil {
-                                        handler(nil, nil, updateResponse.error)
-                                    } else {
-                                        task.cancel()
-                                    }
+                                    handler?(nil, nil, updateResponse.error)
                                 } else if let handler = completionHandler as? CompletionHandlerURL {
                                     //MARK: LOG_MESSAGE
                                     if ApproovSessionTaskObserver.enableLogging {
@@ -409,12 +419,7 @@ public class ApproovSessionTaskObserver: NSObject {
                                         )
                                     }
                                     // call the completion handler with the error unless is nil
-                                    if handler != nil {
-                                        handler(nil, nil, updateResponse.error)
-                                    } else {
-                                        task.cancel()
-                                    }
-                                    
+                                    handler?(nil, nil, updateResponse.error)
                                 } else {
                                     //MARK: LOG_MESSAGE
                                     if ApproovSessionTaskObserver.enableLogging {
@@ -424,7 +429,7 @@ public class ApproovSessionTaskObserver: NSObject {
                                             property: "task.cancel()",
                                             // Get the current state of the task
                                             value: self.getURLSessionStateString(state: task.state),
-                                            objectDescription: "Invoked cancel for task with ID: \(task.taskIdentifier)"
+                                            objectDescription: "completionHandler as! UnknownType; task with ID: \(task.taskIdentifier)"
                                         )
                                     }
                                     task.cancel()
