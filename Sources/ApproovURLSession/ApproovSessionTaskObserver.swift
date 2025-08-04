@@ -390,9 +390,13 @@ public class ApproovSessionTaskObserver: NSObject {
                                             objectDescription: "Delegate handler with error message for task with ID: \(task.taskIdentifier)"
                                         )
                                     }
-                                    handler!(nil, nil, updateResponse.error)
+                                    // call the completion handler only if valid object
+                                    if handler != nil {
+                                        handler(nil, nil, updateResponse.error)
+                                    } else {
+                                        task.cancel()
+                                    }
                                 } else if let handler = completionHandler as? CompletionHandlerURL {
-                                    handler!(nil, nil, updateResponse.error)
                                     //MARK: LOG_MESSAGE
                                     if ApproovSessionTaskObserver.enableLogging {
                                         self.logMessage(
@@ -404,6 +408,13 @@ public class ApproovSessionTaskObserver: NSObject {
                                             objectDescription: "Delegate handler with error message for task with ID: \(task.taskIdentifier)"
                                         )
                                     }
+                                    // call the completion handler with the error unless is nil
+                                    if handler != nil {
+                                        handler(nil, nil, updateResponse.error)
+                                    } else {
+                                        task.cancel()
+                                    }
+                                    
                                 } else {
                                     //MARK: LOG_MESSAGE
                                     if ApproovSessionTaskObserver.enableLogging {
