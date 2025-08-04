@@ -18,7 +18,11 @@ let package = Package(
             name: "ApproovURLSession",
             targets: ["ApproovURLSession"]
         ),
-        .library(name: "ApproovURLSessionDynamic", type: .dynamic, targets: ["ApproovURLSession"])
+        .library(
+            name: "ApproovURLSessionDynamic",
+            type: .dynamic,
+            targets: ["ApproovURLSession"]
+        )
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-http-structured-headers.git", from: "1.0.0")
@@ -29,7 +33,6 @@ let package = Package(
             name: "ApproovURLSession",
             dependencies: [
                 "Approov",
-                .product(name: "StructuredFieldValues", package: "swift-http-structured-headers"),
                 .product(name: "RawStructuredFieldValues", package: "swift-http-structured-headers")
             ],
             path: "Sources/ApproovURLSession",  // Point to the shared source code
