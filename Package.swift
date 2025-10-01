@@ -7,7 +7,7 @@ let releaseTAG = "3.5.2"
 let sdkVersion = "3.5.0"
 
 let package = Package(
-    name: "ApproovURLSession",
+    name: "ApproovURLSessionPackage",
     platforms: [
         .iOS(.v11),
         .watchOS(.v9)
@@ -15,13 +15,13 @@ let package = Package(
     products: [
         // Combined library for iOS and watchOS
         .library(
-            name: "ApproovURLSession",
-            targets: ["ApproovURLSession"]
+            name: "ApproovURLSessionPackage",
+            targets: ["ApproovURLSessionPackage"]
         ),
         .library(
             name: "ApproovURLSessionDynamic",
             type: .dynamic,
-            targets: ["ApproovURLSession"]
+            targets: ["ApproovURLSessionPackage"]
         )
     ],
     dependencies: [
@@ -31,7 +31,7 @@ let package = Package(
     targets: [
         // Single target for both platforms
         .target(
-            name: "ApproovURLSession",
+            name: "ApproovURLSessionPackage",
             dependencies: [
                 .product(name: "Approov", package: "approov-ios-sdk"),
                 .product(name: "RawStructuredFieldValues", package: "swift-http-structured-headers")
