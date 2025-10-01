@@ -25,24 +25,19 @@ let package = Package(
         )
     ],
     dependencies: [
-        .package(url: "https://github.com/apple/swift-http-structured-headers.git", from: "1.0.0")
+        .package(url: "https://github.com/apple/swift-http-structured-headers.git", from: "1.0.0"),
+        .package(url: "https://github.com/approov/approov-ios-sdk.git", from: "3.5.0")
     ],
     targets: [
         // Single target for both platforms
         .target(
             name: "ApproovURLSession",
             dependencies: [
-                "Approov",
+                .product(name: "Approov", package: "approov-ios-sdk"),
                 .product(name: "RawStructuredFieldValues", package: "swift-http-structured-headers")
             ],
             path: "Sources/ApproovURLSession",  // Point to the shared source code
             exclude: ["README.md", "LICENSE"]
-        ),
-        // Binary target for the merged xcframework
-        .binaryTarget(
-            name: "Approov",
-            url: "https://github.com/approov/approov-ios-sdk/releases/download/\(sdkVersion)/Approov.xcframework.zip",
-            checksum: "c2902922d07df7cdc74b4b5ec70353bfc88339baee7dd94556170c565731da01" // SHA256 checksum of the xcframework zip file
         )
     ]
 )
