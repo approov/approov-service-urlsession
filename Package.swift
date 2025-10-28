@@ -2,9 +2,9 @@
 import PackageDescription
 
 // The release tag
-let releaseTAG = "3.5.3"
+let releaseTAG = "3.5.4"
 // SDK package version (used for both iOS and watchOS)
-let sdkVersion = "3.5.1"
+let sdkVersion = "3.5.2"
 
 let package = Package(
     name: "ApproovURLSession",
@@ -42,7 +42,7 @@ let package = Package(
         .binaryTarget(
             name: "Approov",
             url: "https://github.com/approov/approov-ios-sdk/releases/download/\(sdkVersion)/Approov.xcframework.zip",
-            checksum: "bc3d18b0ca72e9df45dee85ae6e82eccfd57e1eb8e7ba7a46338fc2b294a380b" // SHA256 checksum of the xcframework zip file
+            checksum: "UPDATE_AFTER_RELEASE_OF_SDK3.5.2" // SHA256 checksum of the xcframework zip file
         )
     ]
 )
