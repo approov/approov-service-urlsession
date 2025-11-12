@@ -1,6 +1,6 @@
 Pod::Spec.new do |s|
   s.name         = "ApproovURLSession"
-  s.version      = "3.5.3"
+  s.version      = "3.5.4"
   s.summary      = "Approov mobile attestation SDK"
   s.description  = <<-DESC
     Approov SDK integrates security attestation and secure string fetching for both iOS and watchOS apps.
@@ -17,7 +17,9 @@ Pod::Spec.new do |s|
   # Specify the source code paths for the combined target
   s.source_files = "Sources/ApproovURLSession/**/*.{swift,h}"
   # Dependency on the Approov SDK
-  s.dependency 'approov-ios-sdk', '~> 3.5.1'
+  s.dependency 'approov-ios-sdk', '~> 3.5.2'
+   # Add dependency on swift-http-structured-headers
+  s.dependency 'swift-http-structured-headers', '~> 1.4.0'
   s.frameworks = 'Approov'
   # Pod target xcconfig settings if required
   s.pod_target_xcconfig = {
