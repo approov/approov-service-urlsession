@@ -241,17 +241,18 @@ public class ApproovURLSession: URLSession {
      *  https://developer.apple.com/documentation/foundation/urlsession
      */
     @available(iOS 13.0, *)
-    public func dataTaskPublisherWithApproov(for request: URLRequest) -> URLSession.DataTaskPublisher {
+    public func dataTaskPublisherWithApproov(for request: URLRequest) -> (URLSession.DataTaskPublisher, Error?) {
         // in this case we must perform the Approov update in the context of the caller - which may mean that the calling
         // thread experience some delay to the potential network request to Approov
         let approovUpdateResponse = ApproovService.updateRequestWithApproov(request: request, sessionConfig: urlSessionConfiguration)
         switch approovUpdateResponse.decision {
         case .ShouldProceed:
             // go ahead and make the API call with the provided request object
-            return self.pinnedURLSession.dataTaskPublisher(for: approovUpdateResponse.request)
+            return (self.pinnedURLSession.dataTaskPublisher(for: approovUpdateResponse.request), nil)
         case .ShouldIgnore:
             // we should ignore the ApproovService request response and just perform the original request
-            return self.pinnedURLSession.dataTaskPublisher(for: request)
+            return (self.pinnedURLSession.dataTaskPublisher(for: request), nil)
+        // .ShouldFail .ShouldRetry are treated the same here
         default:
             // we create a task and cancel it immediately, telling the delegate we are marking the task as invalid
             let sessionTaskPublisher = self.pinnedURLSession.dataTaskPublisher(for: approovUpdateResponse.request)
@@ -260,7 +261,7 @@ public class ApproovURLSession: URLSession {
                 tasks.forEach { $0.cancel() }
             }
             self.pinningURLSessionDelegate.urlSession(self.pinnedURLSession, didBecomeInvalidWithError: approovUpdateResponse.error)
-            return sessionTaskPublisher
+            return (sessionTaskPublisher, approovUpdateResponse.error)
         }
     }
     
@@ -269,7 +270,7 @@ public class ApproovURLSession: URLSession {
      *  https://developer.apple.com/documentation/foundation/urlsession
      */
     @available(iOS 13.0, *)
-    public func dataTaskPublisherApproov(for request: URLRequest) -> URLSession.DataTaskPublisher {
+    public func dataTaskPublisherApproov(for request: URLRequest) -> (URLSession.DataTaskPublisher, Error?) {
         return dataTaskPublisherWithApproov(for: request)
     }
     
