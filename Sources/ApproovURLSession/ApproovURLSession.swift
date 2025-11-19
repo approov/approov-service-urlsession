@@ -253,9 +253,12 @@ public class ApproovURLSession: URLSession {
             // we should ignore the ApproovService request response and just perform the original request
             return self.pinnedURLSession.dataTaskPublisher(for: request)
         default:
-            // we create a task and cancel it immediately, telling the delegate we are marking the session as invalid
+            // we create a task and cancel it immediately, telling the delegate we are marking the task as invalid
             let sessionTaskPublisher = self.pinnedURLSession.dataTaskPublisher(for: approovUpdateResponse.request)
-            sessionTaskPublisher.session.invalidateAndCancel()
+            // We cancel all the tasks for the current pinned session as it is now invalid but we do not cancel the session itself
+            self.pinnedURLSession.getAllTasks { tasks in
+                tasks.forEach { $0.cancel() }
+            }
             self.pinningURLSessionDelegate.urlSession(self.pinnedURLSession, didBecomeInvalidWithError: approovUpdateResponse.error)
             return sessionTaskPublisher
         }
