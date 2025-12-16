@@ -113,9 +113,6 @@ public class ApproovService {
     // map of URL regexs that should be excluded from any Approov protection, mapped to the compiled Pattern
     private static var exclusionURLRegexs: Dictionary<String, NSRegularExpression> = Dictionary()
 
-    // dispatch queue for ARC access
-    private static let arcQueue = DispatchQueue(label: "ApproovService.arc", qos: .userInitiated)
-
     /**
      * Gets the last ARC (Attestation Result Code) value.
      *
