@@ -114,6 +114,21 @@ public class ApproovService {
     private static var exclusionURLRegexs: Dictionary<String, NSRegularExpression> = Dictionary()
 
     /**
+     * Gets the last ARC (Attestation Result Code) value.
+     *
+     * @return String of the last ARC value or empty string if a JWT token fetch failed
+     */
+    public static func getLastARC() -> String {
+        // Fetch an Approov token (this should be cached) and get the status of the response
+        let result = Approov.fetchTokenAndWait("approov.io")
+        // Check if a token was fetcehed successfully and return its arc code
+        if result.token.count > 0 {
+            return result.arc
+        }
+        return ""
+    }
+
+    /**
      * Initializes the SDK with the config obtained using `approov sdk -getConfigString` or
      * in the original onboarding email. Note the initializer function should only ever be called once.
      * Subsequent calls will be ignored since the ApproovSDK can only be initialized once; if however,
@@ -720,7 +735,6 @@ public class ApproovService {
         let approovResult = Approov.fetchTokenAndWait(request.url!.absoluteString)
         let hostname = hostnameFromURL(url: request.url!)
         os_log("ApproovService: updateRequest %@: %@", type: .info, hostname, approovResult.loggableToken())
-
         // log if a configuration update is received and call fetchConfig to clear the update state
         if approovResult.isConfigChanged {
             Approov.fetchConfig()
