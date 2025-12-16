@@ -113,6 +113,33 @@ public class ApproovService {
     // map of URL regexs that should be excluded from any Approov protection, mapped to the compiled Pattern
     private static var exclusionURLRegexs: Dictionary<String, NSRegularExpression> = Dictionary()
 
+    // dispatch queue for ARC access
+    private static let arcQueue = DispatchQueue(label: "ApproovService.arc", qos: .userInitiated)
+    // last ARC value
+    private static var lastARC: String = ""
+
+    /**
+     * Gets the last ARC (Attestation Result Code) value in a thread-safe manner.
+     *
+     * @return String of the last ARC value
+     */
+    public static func getLastARC() -> String {
+        return arcQueue.sync {
+            return lastARC
+        }
+    }
+
+    /**
+     * Sets the last ARC (Attestation Result Code) value in a thread-safe manner.
+     *
+     * @param arc is the ARC value to set
+     */
+    public static func setLastARC(arc: String) {
+        arcQueue.sync {
+            lastARC = arc
+        }
+    }
+
     /**
      * Initializes the SDK with the config obtained using `approov sdk -getConfigString` or
      * in the original onboarding email. Note the initializer function should only ever be called once.
@@ -415,7 +442,7 @@ public class ApproovService {
         } else {
             os_log("ApproovService: precheck: %@", type: .debug, Approov.string(from: approovResults.status))
         }
-
+        ApproovService.setLastARC(arc: approovResults.arc)
         // process the returned Approov status
         if approovResults.status == ApproovTokenFetchStatus.rejected {
             // if the request is rejected then we provide a special exception with additional information
@@ -479,7 +506,7 @@ public class ApproovService {
         // fetch the Approov token
         let result: ApproovTokenFetchResult = Approov.fetchTokenAndWait(url)
         os_log("ApproovService: fetchToken: %@", type: .debug, Approov.string(from: result.status))
-
+        ApproovService.setLastARC(arc: result.arc)
         // process the status
         switch result.status {
         case .success:
@@ -560,7 +587,7 @@ public class ApproovService {
         // try and fetch the secure string
         let approovResult = Approov.fetchSecureStringAndWait(key, newDef)
         os_log("ApproovService: fetchSecureString: %@: %@", type: .info, type, Approov.string(from: approovResult.status))
-
+        ApproovService.setLastARC(arc: approovResult.arc)
         // process the returned Approov status
         if approovResult.status == ApproovTokenFetchStatus.rejected {
             // if the request is rejected then we provide a special exception with additional information
@@ -597,7 +624,7 @@ public class ApproovService {
         // fetch the custom JWT
         let approovResult = Approov.fetchCustomJWTAndWait(payload)
         os_log("ApproovService: fetchCustomJWT: %@", type: .info, Approov.string(from: approovResult.status))
-
+        ApproovService.setLastARC(arc: approovResult.arc)
         // process the returned Approov status
         if approovResult.status == ApproovTokenFetchStatus.rejected {
             // if the request is rejected then we provide a special exception with additional information
@@ -720,7 +747,7 @@ public class ApproovService {
         let approovResult = Approov.fetchTokenAndWait(request.url!.absoluteString)
         let hostname = hostnameFromURL(url: request.url!)
         os_log("ApproovService: updateRequest %@: %@", type: .info, hostname, approovResult.loggableToken())
-
+        ApproovService.setLastARC(arc: approovResult.arc)
         // log if a configuration update is received and call fetchConfig to clear the update state
         if approovResult.isConfigChanged {
             Approov.fetchConfig()
@@ -800,7 +827,7 @@ public class ApproovService {
                     let index = prefix.index(prefix.startIndex, offsetBy: prefix.count)
                     let approovResults = Approov.fetchSecureStringAndWait(String(value.suffix(from:index)), nil)
                     os_log("ApproovService: Substituting header: %@, %@", type: .info, header, Approov.string(from: approovResults.status))
-
+                    ApproovService.setLastARC(arc: approovResults.arc)
                     // process the result of the token fetch operation
                     if approovResults.status == ApproovTokenFetchStatus.success {
                         // we add the modified header to the new copy of request
@@ -864,6 +891,7 @@ public class ApproovService {
                             let approovResults = Approov.fetchSecureStringAndWait(String(queryValue), nil)
                             os_log("ApproovService: Substituting query parameter: %@, %@", entry,
                                 Approov.string(from: approovResults.status))
+                            ApproovService.setLastARC(arc: approovResults.arc)
 
                             // process the result of the secure string fetch operation
                             switch approovResults.status {
