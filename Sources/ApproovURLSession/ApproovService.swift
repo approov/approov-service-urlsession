@@ -115,29 +115,20 @@ public class ApproovService {
 
     // dispatch queue for ARC access
     private static let arcQueue = DispatchQueue(label: "ApproovService.arc", qos: .userInitiated)
-    // last ARC value
-    private static var lastARC: String = ""
 
     /**
-     * Gets the last ARC (Attestation Result Code) value in a thread-safe manner.
+     * Gets the last ARC (Attestation Result Code) value.
      *
-     * @return String of the last ARC value
+     * @return String of the last ARC value or empty string if a JWT token fetch failed
      */
     public static func getLastARC() -> String {
-        return arcQueue.sync {
-            return lastARC
+        // Fetch an Approov token (this should be cached) and get the status of the response
+        ApproovTokenFetchResult result = Approov.fetchTokenAndWait("approov.io")
+        // Check if a token was fetcehed successfully and return its arc code
+        if result.token.length > 0 {
+            return result.arc
         }
-    }
-
-    /**
-     * Sets the last ARC (Attestation Result Code) value in a thread-safe manner.
-     *
-     * @param arc is the ARC value to set
-     */
-    public static func setLastARC(arc: String) {
-        arcQueue.sync {
-            lastARC = arc
-        }
+        return ""
     }
 
     /**
@@ -442,7 +433,7 @@ public class ApproovService {
         } else {
             os_log("ApproovService: precheck: %@", type: .debug, Approov.string(from: approovResults.status))
         }
-        ApproovService.setLastARC(arc: approovResults.arc)
+
         // process the returned Approov status
         if approovResults.status == ApproovTokenFetchStatus.rejected {
             // if the request is rejected then we provide a special exception with additional information
@@ -506,7 +497,7 @@ public class ApproovService {
         // fetch the Approov token
         let result: ApproovTokenFetchResult = Approov.fetchTokenAndWait(url)
         os_log("ApproovService: fetchToken: %@", type: .debug, Approov.string(from: result.status))
-        ApproovService.setLastARC(arc: result.arc)
+
         // process the status
         switch result.status {
         case .success:
@@ -587,7 +578,7 @@ public class ApproovService {
         // try and fetch the secure string
         let approovResult = Approov.fetchSecureStringAndWait(key, newDef)
         os_log("ApproovService: fetchSecureString: %@: %@", type: .info, type, Approov.string(from: approovResult.status))
-        ApproovService.setLastARC(arc: approovResult.arc)
+
         // process the returned Approov status
         if approovResult.status == ApproovTokenFetchStatus.rejected {
             // if the request is rejected then we provide a special exception with additional information
@@ -624,7 +615,7 @@ public class ApproovService {
         // fetch the custom JWT
         let approovResult = Approov.fetchCustomJWTAndWait(payload)
         os_log("ApproovService: fetchCustomJWT: %@", type: .info, Approov.string(from: approovResult.status))
-        ApproovService.setLastARC(arc: approovResult.arc)
+
         // process the returned Approov status
         if approovResult.status == ApproovTokenFetchStatus.rejected {
             // if the request is rejected then we provide a special exception with additional information
@@ -827,7 +818,7 @@ public class ApproovService {
                     let index = prefix.index(prefix.startIndex, offsetBy: prefix.count)
                     let approovResults = Approov.fetchSecureStringAndWait(String(value.suffix(from:index)), nil)
                     os_log("ApproovService: Substituting header: %@, %@", type: .info, header, Approov.string(from: approovResults.status))
-                    ApproovService.setLastARC(arc: approovResults.arc)
+
                     // process the result of the token fetch operation
                     if approovResults.status == ApproovTokenFetchStatus.success {
                         // we add the modified header to the new copy of request
@@ -891,7 +882,6 @@ public class ApproovService {
                             let approovResults = Approov.fetchSecureStringAndWait(String(queryValue), nil)
                             os_log("ApproovService: Substituting query parameter: %@, %@", entry,
                                 Approov.string(from: approovResults.status))
-                            ApproovService.setLastARC(arc: approovResults.arc)
 
                             // process the result of the secure string fetch operation
                             switch approovResults.status {
