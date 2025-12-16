@@ -1,9 +1,9 @@
 // swift-tools-version:5.8
 import PackageDescription
 // The release tag for this version of ApproovURLSession
-let releaseTAG = "3.5.4"
+let releaseTAG = "3.5.5"
 // SDK package version (used for both iOS and watchOS)
-let sdkVersion: Version = "3.5.2"
+let sdkVersion: Version = "3.5.3"
 
 let package = Package(
     name: "ApproovURLSession",
