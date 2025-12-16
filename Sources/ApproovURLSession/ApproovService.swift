@@ -123,9 +123,9 @@ public class ApproovService {
      */
     public static func getLastARC() -> String {
         // Fetch an Approov token (this should be cached) and get the status of the response
-        ApproovTokenFetchResult result = Approov.fetchTokenAndWait("approov.io")
+        let result = Approov.fetchTokenAndWait("approov.io")
         // Check if a token was fetcehed successfully and return its arc code
-        if result.token.length > 0 {
+        if result.token.count > 0 {
             return result.arc
         }
         return ""
@@ -738,7 +738,6 @@ public class ApproovService {
         let approovResult = Approov.fetchTokenAndWait(request.url!.absoluteString)
         let hostname = hostnameFromURL(url: request.url!)
         os_log("ApproovService: updateRequest %@: %@", type: .info, hostname, approovResult.loggableToken())
-        ApproovService.setLastARC(arc: approovResult.arc)
         // log if a configuration update is received and call fetchConfig to clear the update state
         if approovResult.isConfigChanged {
             Approov.fetchConfig()
