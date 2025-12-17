@@ -113,18 +113,29 @@ public class ApproovService {
     // map of URL regexs that should be excluded from any Approov protection, mapped to the compiled Pattern
     private static var exclusionURLRegexs: Dictionary<String, NSRegularExpression> = Dictionary()
 
+
+    
     /**
-     * Gets the last ARC (Attestation Result Code) value.
+     * Gets the last ARC (Attestation Response Code) code.
      *
-     * @return String of the last ARC value or empty string if a JWT token fetch failed
+     * @return String of the last ARC or empty string if there was none
      */
     public static func getLastARC() -> String {
-        // Fetch an Approov token (this should be cached) and get the status of the response
-        let result = Approov.fetchTokenAndWait("approov.io")
-        // Check if a token was fetcehed successfully and return its arc code
-        if result.token.count > 0 {
-            return result.arc
+        // We have to get the current config and obtain one protected API endpoint at least
+        // get the dynamic pins from Approov
+        guard let approovPins = Approov.getPins("public-key-sha256") else {
+            os_log("ApproovService: no host pinning information available", type: .error)
+            return ""
         }
+        // The approovPins contains a map of hostnames to pin strings, we just need one of them
+            if let hostname = approovPins.keys.first {
+                let result = Approov.fetchTokenAndWait(hostname)
+                // Check if a token was fetched successfully and return its arc code
+                if result.token.count > 0 {
+                    return result.arc
+                }
+            }
+        os_log("ApproovService: ARC code unavailable", type: .info)
         return ""
     }
 
