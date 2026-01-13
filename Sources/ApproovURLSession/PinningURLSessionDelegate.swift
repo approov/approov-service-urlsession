@@ -119,29 +119,28 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
      */
     func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
         if !challenge.protectionSpace.authenticationMethod.isEqual(NSURLAuthenticationMethodServerTrust) {
-            if let userDelegate = optionalURLDelegate {
+            if let userDelegate = optionalURLDelegate,
+               userDelegate.responds(to: #selector(URLSessionDelegate.urlSession(_:didReceive:completionHandler:))) {
                 // delegate any challenge that is not to do with pinning
                 userDelegate.urlSession?(session, didReceive: challenge, completionHandler: completionHandler)
-            }
-            else {
+            } else {
                 // the user is not providing a delegate so we need to invoke the completion handler since we only deal with certificate pinning
                 completionHandler(.useCredential, nil)
             }
+            return // return after handling non-pinning challenge
         }
-        else {
-            // we have a server trust challenge
-            do {
-                if let serverTrust = try shouldAcceptAuthenticationChallenge(challenge: challenge) {
-                    // the pinning check succeeded
-                    completionHandler(.useCredential, URLCredential.init(trust: serverTrust));
-                    optionalURLDelegate?.urlSession?(session, didReceive: challenge, completionHandler: completionHandler)
-                    return
-                }
-            } catch {
-                os_log("ApproovService: urlSession error %@", type: .error, error.localizedDescription)
+        
+        // we have a server trust challenge
+        do {
+            if let serverTrust = try shouldAcceptAuthenticationChallenge(challenge: challenge) {
+                // the pinning check succeeded
+                completionHandler(.useCredential, URLCredential.init(trust: serverTrust))
+                return
             }
-            completionHandler(URLSession.AuthChallengeDisposition.cancelAuthenticationChallenge, nil)
+        } catch {
+            os_log("ApproovService: urlSession error %@", type: .error, error.localizedDescription)
         }
+        completionHandler(URLSession.AuthChallengeDisposition.cancelAuthenticationChallenge, nil)
     }
     
     // MARK: URLSessionTaskDelegate
@@ -157,32 +156,33 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
      *  https://developer.apple.com/documentation/foundation/urlsessiontaskdelegate/1411595-urlsession
      */
     func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
-        if let delegate = optionalURLDelegate as? URLSessionTaskDelegate {
-            if !challenge.protectionSpace.authenticationMethod.isEqual(NSURLAuthenticationMethodServerTrust) {
-                if let userDelegate = optionalURLDelegate {
-                    // delegate any challenge that is not to do with pinning
-                    userDelegate.urlSession?(session, didReceive: challenge, completionHandler: completionHandler)
-                }
-                else {
-                    // the user is not providing a delegate so we need to invoke the completion handler since we only deal with certificate pinning
-                    completionHandler(.useCredential, nil)
-                }
+        if !challenge.protectionSpace.authenticationMethod.isEqual(NSURLAuthenticationMethodServerTrust) {
+            if let taskDelegate = optionalURLDelegate as? URLSessionTaskDelegate,
+               taskDelegate.responds(to: #selector(URLSessionTaskDelegate.urlSession(_:task:didReceive:completionHandler:))) {
+                // delegate any challenge that is not to do with pinning
+                taskDelegate.urlSession?(session, task: task, didReceive: challenge, completionHandler: completionHandler)
+            } else if let userDelegate = optionalURLDelegate,
+                      userDelegate.responds(to: #selector(URLSessionDelegate.urlSession(_:didReceive:completionHandler:))) {
+                // fall back to session-level delegate handling if provided
+                userDelegate.urlSession?(session, didReceive: challenge, completionHandler: completionHandler)
+            } else {
+                // the user is not providing a delegate so we need to invoke the completion handler since we only deal with certificate pinning
+                completionHandler(.useCredential, nil)
             }
-            else {
-                // we have a server trust challenge
-                do {
-                    if let serverTrust = try shouldAcceptAuthenticationChallenge(challenge: challenge) {
-                        // the pinning check succeeded
-                        completionHandler(.useCredential, URLCredential.init(trust: serverTrust));
-                        delegate.urlSession?(session, task: task, didReceive: challenge, completionHandler: completionHandler)
-                        return
-                    }
-                } catch {
-                    os_log("ApproovService: urlSession error %@", type: .error, error.localizedDescription)
-                }
-                completionHandler(URLSession.AuthChallengeDisposition.cancelAuthenticationChallenge, nil)
-            }
+            return
         }
+        
+        // we have a server trust challenge
+        do {
+            if let serverTrust = try shouldAcceptAuthenticationChallenge(challenge: challenge) {
+                // the pinning check succeeded
+                completionHandler(.useCredential, URLCredential.init(trust: serverTrust))
+                return
+            }
+        } catch {
+            os_log("ApproovService: urlSession error %@", type: .error, error.localizedDescription)
+        }
+        completionHandler(URLSession.AuthChallengeDisposition.cancelAuthenticationChallenge, nil)
     }
     
     /**
