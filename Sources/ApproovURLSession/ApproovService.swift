@@ -698,6 +698,7 @@ public class ApproovService {
     private static func applyMutatorError(_ error: Error,
                                           response: inout ApproovUpdateResponse,
                                           context: String) {
+        // Map mutator errors into user-facing decisions (retry for network errors, fail otherwise).
         if let approovError = error as? ApproovError {
             response.error = approovError
             switch approovError {

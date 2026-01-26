@@ -137,6 +137,7 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
         }
         else {
             // we have a server trust challenge
+            // Build a canonical URL including port so mutator decisions align with host+port semantics.
             var components = URLComponents()
             components.scheme = challenge.protectionSpace.`protocol` ?? "https"
             components.host = challenge.protectionSpace.host
