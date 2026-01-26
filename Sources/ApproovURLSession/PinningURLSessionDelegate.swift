@@ -87,6 +87,13 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
         PinningURLSessionDelegate.initializeSPKI()
         self.optionalURLDelegate = delegate
     }
+
+    private func shouldApplyPinning(for request: URLRequest?) -> Bool {
+        guard let request = request else {
+            return true
+        }
+        return ApproovService.getServiceMutator().handlePinningShouldProcessRequest(request)
+    }
     
     // MARK: URLSessionDelegate
     
@@ -130,6 +137,16 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
         }
         else {
             // we have a server trust challenge
+            if let hostURL = URL(string: "https://\(challenge.protectionSpace.host)") {
+                if !shouldApplyPinning(for: URLRequest(url: hostURL)) {
+                    if let userDelegate = optionalURLDelegate {
+                        userDelegate.urlSession?(session, didReceive: challenge, completionHandler: completionHandler)
+                    } else {
+                        completionHandler(.performDefaultHandling, nil)
+                    }
+                    return
+                }
+            }
             do {
                 if let serverTrust = try shouldAcceptAuthenticationChallenge(challenge: challenge) {
                     // the pinning check succeeded
@@ -170,6 +187,10 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
             }
             else {
                 // we have a server trust challenge
+                if !shouldApplyPinning(for: task.currentRequest ?? task.originalRequest) {
+                    delegate.urlSession?(session, task: task, didReceive: challenge, completionHandler: completionHandler)
+                    return
+                }
                 do {
                     if let serverTrust = try shouldAcceptAuthenticationChallenge(challenge: challenge) {
                         // the pinning check succeeded
