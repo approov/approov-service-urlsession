@@ -137,7 +137,13 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
         }
         else {
             // we have a server trust challenge
-            if let hostURL = URL(string: "https://\(challenge.protectionSpace.host)") {
+            var components = URLComponents()
+            components.scheme = challenge.protectionSpace.`protocol` ?? "https"
+            components.host = challenge.protectionSpace.host
+            if challenge.protectionSpace.port > 0 {
+                components.port = challenge.protectionSpace.port
+            }
+            if let hostURL = components.url {
                 if !shouldApplyPinning(for: URLRequest(url: hostURL)) {
                     if let userDelegate = optionalURLDelegate {
                         userDelegate.urlSession?(session, didReceive: challenge, completionHandler: completionHandler)
