@@ -13,9 +13,8 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 
 ### Changed
 - ApproovService now routes decision logic through the service mutator and exposes set/get APIs.
-- ApproovDefaultMessageSigning updated to emit signature values as strings per spec.
+- Signature header values now use base64-encoded strings (per spec) instead of binary data.
 - Pinning delegate now checks the mutator before applying pinning logic.
 
 ### Deprecated
 - ApproovInterceptorExtensions in favor of ApproovServiceMutator.
-
