@@ -165,9 +165,9 @@ public class ApproovDefaultMessageSigning: ApproovServiceMutator, CustomStringCo
                 throw ApproovError.permanentError(message: "Unsupported algorithm identifier: \(params.getAlg() ?? "unknown")")
             }
 
-            // TODO: Signature is binary data, however according to the spec it should be base64 encoded String. I'm leaving it as-is for now to don't change existing behavior.
             // Create signature headers
-            guard let sigHeader = try SFV.serializeDictionary(key: sigId, data: signature) else {
+            let signatureBase64 = signature.base64EncodedString()
+            guard let sigHeader = try SFV.serializeDictionary(key: sigId, string: signatureBase64) else {
                 throw ApproovError.permanentError(message: "Failed to serialize signature header")
             }
             guard let sigInputHeader = try SFV.serializeDictionary(key: sigId, innerList: params.toComponentValue()) else {
