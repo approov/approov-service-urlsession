@@ -166,8 +166,7 @@ public class ApproovDefaultMessageSigning: ApproovServiceMutator, CustomStringCo
             }
 
             // Create signature headers
-            let signatureBase64 = signature.base64EncodedString()
-            guard let sigHeader = try SFV.serializeDictionary(key: sigId, string: signatureBase64) else {
+            guard let sigHeader = try SFV.serializeDictionary(key: sigId, data: signature) else {
                 throw ApproovError.permanentError(message: "Failed to serialize signature header")
             }
             guard let sigInputHeader = try SFV.serializeDictionary(key: sigId, innerList: params.toComponentValue()) else {
