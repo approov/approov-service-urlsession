@@ -46,6 +46,16 @@ public class SFV {
         return string
     }
 
+    // Method to serialize dictionary entry of sigId: signatureBase64 of type String: String
+    static func serializeDictionary(key: String, string: String) throws -> String? {
+        var serializer = StructuredFieldValueSerializer()
+        let dictionary: OrderedMap<String, ItemOrInnerList> =
+            [key: ItemOrInnerList.item(Item(bareItem: RFC9651BareItem.string(string), parameters: [:]))]
+        let serialized: [UInt8] = try serializer.writeDictionaryFieldValue(dictionary)
+        let string = String(data: Data(serialized), encoding: .utf8)
+        return string
+    }
+
     // Method to serialize dictionary entry of key: sigParams of type String: InnerList
     static func serializeDictionary(key: String, innerList: InnerList) throws -> String? {
         var serializer = StructuredFieldValueSerializer()

@@ -24,7 +24,7 @@ import os.log
  * message signatures to HTTP requests based on specified parameters and
  * algorithms.
  */
-public class ApproovDefaultMessageSigning: ApproovInterceptorExtensions {
+public class ApproovDefaultMessageSigning: ApproovServiceMutator, CustomStringConvertible {
 
     /**
      * Constant for the SHA-256 digest algorithm (used for body digests).
@@ -61,6 +61,10 @@ public class ApproovDefaultMessageSigning: ApproovInterceptorExtensions {
      */
     public init() {
         hostFactories = [:]
+    }
+
+    public var description: String {
+        return "ApproovDefaultMessageSigning"
     }
 
     /**
@@ -109,6 +113,20 @@ public class ApproovDefaultMessageSigning: ApproovInterceptorExtensions {
      * - Returns: The processed HTTP request with the signature headers added.
      * - Throws: An `ApproovError` if an error occurs during processing.
      */
+    public func handleInterceptorProcessedRequest(_ request: URLRequest,
+                                                  changes: ApproovRequestMutations) throws -> URLRequest {
+        return try processedRequest(request, changes: changes)
+    }
+
+    /**
+     * @deprecated Use ApproovServiceMutator.handleInterceptorProcessedRequest instead.
+     *
+     *             Currently the method is implemented to maintain backwards
+     *             compatibility. A future release will move the implementation
+     *             to the ApproovServiceMutator.handleInterceptorProcessedRequest
+     *             method.
+     */
+    @available(*, deprecated, message: "Use handleInterceptorProcessedRequest instead.")
     public func processedRequest(_ request: URLRequest, changes: ApproovRequestMutations) throws -> URLRequest {
         // If the request doesn't have an Approov token, we don't need to sign it
         if (request.allHTTPHeaderFields?["Approov-Token"]) != nil {
@@ -148,7 +166,8 @@ public class ApproovDefaultMessageSigning: ApproovInterceptorExtensions {
             }
 
             // Create signature headers
-            guard let sigHeader = try SFV.serializeDictionary(key: sigId, data: signature) else {
+            let signatureBase64 = signature.base64EncodedString()
+            guard let sigHeader = try SFV.serializeDictionary(key: sigId, string: signatureBase64) else {
                 throw ApproovError.permanentError(message: "Failed to serialize signature header")
             }
             guard let sigInputHeader = try SFV.serializeDictionary(key: sigId, innerList: params.toComponentValue()) else {
@@ -661,3 +680,6 @@ class ApproovURLSessionComponentProvider: ComponentProvider {
         return request.httpBody != nil || request.httpBodyStream != nil
     }
 }
+
+@available(*, deprecated, message: "Use ApproovServiceMutator instead.")
+extension ApproovDefaultMessageSigning: ApproovInterceptorExtensions {}

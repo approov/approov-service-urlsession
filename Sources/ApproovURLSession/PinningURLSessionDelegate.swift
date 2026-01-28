@@ -87,6 +87,13 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
         PinningURLSessionDelegate.initializeSPKI()
         self.optionalURLDelegate = delegate
     }
+
+    private func shouldApplyPinning(for request: URLRequest?) -> Bool {
+        guard let request = request else {
+            return true
+        }
+        return ApproovService.getServiceMutator().handlePinningShouldProcessRequest(request)
+    }
     
     // MARK: URLSessionDelegate
     
@@ -131,6 +138,24 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
         }
         
         // we have a server trust challenge
+        // Build a canonical URL including port so mutator decisions align with host+port semantics.
+        var components = URLComponents()
+        components.scheme = challenge.protectionSpace.`protocol` ?? "https"
+        components.host = challenge.protectionSpace.host
+        if challenge.protectionSpace.port > 0 {
+            components.port = challenge.protectionSpace.port
+        }
+        if let hostURL = components.url {
+            if !shouldApplyPinning(for: URLRequest(url: hostURL)) {
+                if let userDelegate = optionalURLDelegate,
+                   userDelegate.responds(to: #selector(URLSessionDelegate.urlSession(_:didReceive:completionHandler:))) {
+                    userDelegate.urlSession?(session, didReceive: challenge, completionHandler: completionHandler)
+                } else {
+                    completionHandler(.performDefaultHandling, nil)
+                }
+                return
+            }
+        }
         do {
             if let serverTrust = try shouldAcceptAuthenticationChallenge(challenge: challenge) {
                 // the pinning check succeeded
@@ -140,7 +165,7 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
         } catch {
             os_log("ApproovService: urlSession error %@", type: .error, error.localizedDescription)
         }
-        completionHandler(URLSession.AuthChallengeDisposition.cancelAuthenticationChallenge, nil)
+        completionHandler(.cancelAuthenticationChallenge, nil)
     }
     
     // MARK: URLSessionTaskDelegate
@@ -173,6 +198,18 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
         }
         
         // we have a server trust challenge
+        if !shouldApplyPinning(for: task.currentRequest ?? task.originalRequest) {
+            if let taskDelegate = optionalURLDelegate as? URLSessionTaskDelegate,
+               taskDelegate.responds(to: #selector(URLSessionTaskDelegate.urlSession(_:task:didReceive:completionHandler:))) {
+                taskDelegate.urlSession?(session, task: task, didReceive: challenge, completionHandler: completionHandler)
+            } else if let userDelegate = optionalURLDelegate,
+                      userDelegate.responds(to: #selector(URLSessionDelegate.urlSession(_:didReceive:completionHandler:))) {
+                userDelegate.urlSession?(session, didReceive: challenge, completionHandler: completionHandler)
+            } else {
+                completionHandler(.performDefaultHandling, nil)
+            }
+            return
+        }
         do {
             if let serverTrust = try shouldAcceptAuthenticationChallenge(challenge: challenge) {
                 // the pinning check succeeded
@@ -182,7 +219,7 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
         } catch {
             os_log("ApproovService: urlSession error %@", type: .error, error.localizedDescription)
         }
-        completionHandler(URLSession.AuthChallengeDisposition.cancelAuthenticationChallenge, nil)
+        completionHandler(.cancelAuthenticationChallenge, nil)
     }
     
     /**
