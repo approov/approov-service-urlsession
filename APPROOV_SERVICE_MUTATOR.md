@@ -16,6 +16,7 @@ Create a mutator, then install it once during app startup (for example in your A
 
 ```swift
 import ApproovURLSession
+import Approov
 
 final class MyMutator: ApproovServiceMutator {
     // Override only the hooks you need.
