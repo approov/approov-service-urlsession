@@ -150,7 +150,8 @@ public class ApproovDefaultMessageSigning: ApproovServiceMutator, CustomStringCo
                 sigId = "install"
                 guard let base64Signature = ApproovService.getInstallMessageSignature(message: message),
                       let decodedSignature = Data(base64Encoded: base64Signature) else {
-                    throw ApproovError.permanentError(message: "Failed to generate ES256 signature")
+                    os_log("ApproovService: install message signature unavailable, skipping signing", type: .error)
+                    return request
                 }
                 // decode the signature from ASN.1 DER format
                 signature = try ApproovDefaultMessageSigning.decodeASN_1_DER_ES256_Signature(decodedSignature)
