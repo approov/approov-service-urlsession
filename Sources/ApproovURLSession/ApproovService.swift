@@ -118,7 +118,7 @@ public class ApproovService {
 
     
     /**
-     * Gets the last ARC (Attestation Response Code) code.
+     * Gets the last ARC (Attestation Response Code) code. 
      *
      * @return String of the last ARC or empty string if there was none
      */
@@ -198,6 +198,7 @@ public class ApproovService {
      *
      * @param proceed is true if Approov networking fails should allow continuation
      */
+    @available(*, deprecated, message: "Use setServiceMutator instead")
     public static func setProceedOnNetworkFailure(proceed: Bool) {
         stateQueue.sync {
             proceedOnNetworkFail = proceed
@@ -391,9 +392,7 @@ public class ApproovService {
      * Adds a key name for a query parameter that should be subject to secure strings substitution.
      * This means that if the query parameter is present in a URL then the value will be used as a
      * key to look up a secure string value which will be substituted as the query parameter value
-     * instead. This allows easy migration to the use of secure strings. Note that this function
-     * should be called on initialization rather than for every request as it will require a new
-     * OkHttpClient to be built.
+     * instead. This allows easy migration to the use of secure strings. 
      *
      * @param key is the query parameter key name to be added for substitution
      */
@@ -484,6 +483,7 @@ public class ApproovService {
      * be loading resources or is awaiting user input. Since the initial fetch is the
      * most expensive the prefetch can hide the most latency.
      */
+    @available(*, deprecated, message: "This method is now automatically called when the service is initialized.")
     public static func prefetch() {
         initializerQueue.sync {
             if isInitialized {
@@ -506,7 +506,7 @@ public class ApproovService {
      * a rejection (throws a ApproovError.rejectionError) type which might include additional
      * information regarding the rejection reason. An ApproovError.networkingError exception should
      * allow a retry operation to be performed and finally if some other error occurs an
-     * ApproovError.permanentError is raised.
+     * ApproovError.permanentError is raised. Useful during development to check if the app will pass attestation.
      *
      * @throws ApproovError if there was a problem
      */
@@ -651,10 +651,10 @@ public class ApproovService {
      * Fetches a custom JWT with the given payload. Note that this call will require network
      * transaction and thus will block for some time, so should not be called from the UI thread.
      * If the fetch fails for any reason an exception will be thrown. Exceptions could be due to
-     * malformed JSON string provided (then an ApproovError.permanentError is raised), a rejection throws
-     * an ApproovError.rejectionError type which might include additional information regarding the failure
-     * reason. An Approov.networkingError exception should allow a retry operation to be performed. If
-     * some other error occurs an Approov.permanentError is raised.
+     * malformed JSON string provided (then an `ApproovError.permanentError` is raised), a rejection throws
+     * an `ApproovError.rejectionError` type which might include additional information regarding the failure
+     * reason. An `ApproovError.networkingError` exception should allow a retry operation to be performed. If
+     * some other error occurs an `ApproovError.permanentError` is raised.
      *
      * @param payload is the marshaled JSON object for the claims to be included
      * @return custom JWT string or nil if an error occurred
