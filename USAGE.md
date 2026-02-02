@@ -181,7 +181,9 @@ final class CustomLogic: ApproovServiceMutator {
 
 ### Log rejections with ARC + device ID to your telemetry
 
-An important part of your security strategy is to monitor and analyze rejections. This example shows how to log rejections with the ARC and device ID to your telemetry. It assumes you are using a custom `ApproovServiceMutator` that prevents requests from proceeding without an Approov token. If this is not the case, and a request is made in poor network conditions, there is a small chance that `getLastARC()` will be executed just as an attestation completes. This would provide an ARC, even though the original request timed out without one. The following code is a simple example of how to do this.
+An important part of your security strategy is to monitor and analyze rejections. Ideally, the server response would be customized to include the ARC and device ID in the response body or headers. However, if this is not possible, you can obtain these values from the `ApproovService` and log them to your telemetry directly from your application code.
+
+This example shows how to log rejections with the ARC and device ID. It assumes you are using a custom `ApproovServiceMutator` that prevents requests from proceeding without an Approov token. If this is not the case, and a request is made in poor network conditions, there is a small chance that `getLastARC()` will be executed just as the network interface becomes available. This would provide an ARC even though the original request timed out without one. The following code is a simple example of how to implement this logging:
 
 ```swift
         if let httpResponse = response.response {
@@ -189,8 +191,8 @@ An important part of your security strategy is to monitor and analyze rejections
             if code == 200 {
                 // Process request
             } else {
-                // Log rejection: ARC + device ID can beadded for correlating a particular request to the failure reason
-                let arc = ApproovService.getLastARC() // We are certain we have an ARC code because our custom ApproovServiceMutator prevents requests without an Approov token to proceed
+                // Log rejection: ARC + device ID can be added for correlating a particular request to the failure reason
+                let arc = ApproovService.getLastARC() // We are certain we have an ARC code because our custom ApproovServiceMutator prevents requests without an Approov token to proceed. If this is not the case, we will not have an ARC code and should SKIP this line of code.
                 let deviceID = ApproovService.getDeviceID()
                 // Log rejection
                 myLogger.log("Request rejected with ARC: \(arc) and device ID: \(deviceID); response code: \(code)")
