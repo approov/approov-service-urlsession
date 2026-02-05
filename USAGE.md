@@ -1,3 +1,7 @@
+# Usage
+
+This document describes the features and functionality of the Approov Service for URLSession. It provides details on how to interact with the service layer and customize its behavior to suit your application's needs, specifically through the `ApproovServiceMutator`. For a basic integration example, please refer to the [Quickstart guide](https://github.com/approov/quickstart-ios-swift-urlsession).
+
 # Approov Service Mutator
 
 The `ApproovServiceMutator` allows you to customize the behavior of the Approov URLSession layer at key points in the request lifecycle. You can override specific methods to tailor the handling of attestations and requests while retaining the default behavior for other cases.
@@ -65,6 +69,34 @@ To implement this, check for `.poorNetwork` and return `true`, which proceeds wi
 }
 ```
 
+
+### Add custom headers using a mutator
+
+You can override `handleInterceptorProcessedRequest` to add additional headers or modify the request after Approov has processed it. This is useful for adding app metadata or other diagnostics.
+
+```swift
+final class MyMutator: ApproovServiceMutator {
+    // If you are composing with another mutator (like a signer), initialize it here.
+    // Otherwise, you can use ApproovServiceMutatorDefault.shared.
+    let signer: ApproovServiceMutator = ApproovServiceMutatorDefault.shared
+
+    /// Called after Approov has already mutated the request (token, substitutions, signing).
+    ///
+    /// Use this to add *additional* headers or rewrite the request further. This is also
+    /// where message signing should remain in place if you use a signer mutator.
+    func handleInterceptorProcessedRequest(_ request: URLRequest,
+                                           changes: ApproovRequestMutations) throws -> URLRequest {
+        var req = try signer.handleInterceptorProcessedRequest(request, changes: changes)
+        // Example: attach app metadata for backend diagnostics or routing.
+        req.setValue("ios", forHTTPHeaderField: "Client-Platform")
+        if let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String {
+            req.setValue(version, forHTTPHeaderField: "App-Version")
+        }
+        return req
+    }
+}
+```
+
 ## How to use a custom mutator in your application
 
 Create a mutator, then install it once during app startup (for example in your AppDelegate or app initialization path).
@@ -105,6 +137,10 @@ let signer = ApproovDefaultMessageSigning().setDefaultFactory(factory)
 ApproovService.setServiceMutator(signer)
 ```
 
+If you have already customized the mutator, you can add message signing to it:
+
+ApproovService.setServiceMutator(MyMutator(signer: ApproovDefaultMessageSigning()))
+
 ### Customize behavior
 
 ```swift
@@ -123,6 +159,33 @@ ApproovService.setServiceMutator(signer)
 To disable signing, remove the signer (`setServiceMutator(nil)`) or return `nil`
 from your factory for hosts you want to skip. If you have custom mutator logic,
 call the signer from `handleInterceptorProcessedRequest` (see example below).
+
+## Token Binding
+
+[Token Binding](https://ext.approov.io/docs/latest/approov-usage-documentation/#token-binding) allows you to bind the Approov token to a specific piece of data, such as an OAuth token or a user session identifier. This adds an extra layer of security by ensuring that the Approov token can only be used in conjunction with the bound data. The `ApproovService` calculates a hash of the binding data locally and includes this hash in the Approov token claims. It is important to note that the actual binding data is never sent to the Approov cloud service; only the hash is transmitted.
+
+To set up token binding, you specify a header name. The value of this header in your requests will be used for the binding.
+
+### Example: Bind to Authorization Header
+
+```swift
+// Bind the Approov token to the Authorization header (e.g., for OAuth)
+ApproovService.setBindingHeader(header: "Authorization")
+```
+
+If the value of the binding header changes (e.g., the user logs in and gets a new OAuth token), the SDK automatically invalidates the current Approov token and fetches a new one with the updated binding on the next request.
+
+## Use Approov Status as Token
+
+In some cases, you might want to send the Approov fetch status (e.g., `NO_NETWORK`, `MITM_DETECTED`) to your backend when an actual token cannot be obtained. This allows your backend to distinguish between different failure reasons even when the `Approov-Token` would otherwise be empty or missing.
+
+To enable this feature:
+
+```swift
+ApproovService.setUseApproovStatusIfNoToken(shouldUse: true)
+```
+
+When enabled, if the Approov token fetch fails or returns an empty token, the `Approov-Token` header will be populated with the status string (with the configured prefix) instead of being left empty.
 
 ## Real-world examples
 

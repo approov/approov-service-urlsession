@@ -291,6 +291,24 @@ public class ApproovService {
         }
     }
 
+    // Indicates if the Approov fetch status should be used as the token header value if the token is empty
+    private static var useApproovStatusIfNoToken: Bool = false
+
+    /**
+     * Sets a flag indicating if the Approov fetch status (e.g. "NO_NETWORK", "MITM_DETECTED")
+     * should be used as the token header value if the actual token fetch fails or returns an empty token.
+     * This allows passing error condition information to the backend via the Approov-Token header,
+     * which might otherwise be empty or missing.
+     *
+     * @param shouldUse is true if the status should be used as the token value
+     */
+    public static func setUseApproovStatusIfNoToken(shouldUse: Bool) {
+        stateQueue.sync {
+            useApproovStatusIfNoToken = shouldUse
+            os_log("ApproovService: setUseApproovStatusIfNoToken: %@", type: .debug, String(shouldUse))
+        }
+    }
+
     /**
      * Sets the ApproovServiceMutator instance to handle callbacks from the
      * ApproovService implementation. This facility enables customization of
@@ -811,7 +829,11 @@ public class ApproovService {
         }
         hasChanges = true
         setTokenHeaderKey = tokenHeader
-        setTokenHeaderValue = tokenPrefix + approovResult.token
+        if approovResult.token.isEmpty && (stateQueue.sync { useApproovStatusIfNoToken }) {
+            setTokenHeaderValue = tokenPrefix + response.sdkMessage
+        } else {
+            setTokenHeaderValue = tokenPrefix + approovResult.token
+        }
         let traceID = approovResult.traceID
         if let traceHeader = stateQueue.sync(execute: { approovTraceIDHeader }),
            !traceHeader.isEmpty,
