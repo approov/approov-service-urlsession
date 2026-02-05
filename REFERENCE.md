@@ -94,6 +94,16 @@ method should typically only be called once.
 ApproovService.setBindingHeader(header: "Authorization")
 ```
 
+## setUseApproovStatusIfNoToken
+Sets a flag indicating if the Approov fetch status (e.g. `NO_NETWORK`, `MITM_DETECTED`) should be
+used as the token header value if the actual token fetch fails or returns an empty token. This allows
+passing error condition information to the backend via the Approov-Token header, which might
+otherwise be empty or missing.
+
+```swift
+ApproovService.setUseApproovStatusIfNoToken(shouldUse: true)
+```
+
 ## setServiceMutator
 Installs a service mutator to customize behavior at key points in the service flow. Pass `nil` to restore defaults. See the `README.md` for more information and a custom mutator example implementation.
 
