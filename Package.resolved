@@ -5,8 +5,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/approov/approov-ios-sdk.git",
       "state" : {
-        "revision" : "40fa2fc0a18858b4a82299071c6b0ee04092e5c7",
-        "version" : "3.5.2"
+        "revision" : "ddeee49a8116df7e48daddbe2eebcdacf642eab8",
+        "version" : "3.5.3"
       }
     },
     {
