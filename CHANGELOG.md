@@ -9,7 +9,7 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 ### Added
 - ApproovServiceMutator protocol with default behavior to centralize decision points in the service flow.
 - Mutator hooks for precheck, token fetch, secure string fetch, custom JWT fetch, interceptor decisions, and pinning.
-- REFERENCE.md & CHANGELOG.md & APPROOV_SERVICE_MUTATOR.md
+- REFERENCE.md & CHANGELOG.md & USAGE.md
 - Added `setUseApproovStatusIfNoToken` to allow using status as token value when token is missing.
 ### Changed
 - ApproovService now routes decision logic through the service mutator and exposes set/get APIs.
