@@ -68,6 +68,18 @@ public struct ApproovUpdateResponse {
     var error: Error?
 }
 
+// Log level for controlling the verbosity of os_log output from the ApproovService
+public enum ApproovLogLevel: Int, Comparable {
+    case off = 0
+    case error = 1
+    case warning = 2
+    case info = 3
+    case debug = 4
+    public static func < (lhs: ApproovLogLevel, rhs: ApproovLogLevel) -> Bool {
+        return lhs.rawValue < rhs.rawValue
+    }
+}
+
 // ApproovService provides a mediation layer to the Approov SDK itself
 public class ApproovService {
     // private initializer
@@ -105,6 +117,9 @@ public class ApproovService {
     // behaviour defined in the default implementation of ApproovServiceMutator will be used.
     private static var serviceMutator: ApproovServiceMutator = ApproovServiceMutatorDefault.shared
 
+    // the current logging level for os_log output from the ApproovService
+    static var loggingLevel: ApproovLogLevel = .info
+
     // map of headers that should have their values substituted for secure strings, mapped to their
     // required prefixes
     private static var substitutionHeaders: Dictionary<String, String> = Dictionary()
@@ -126,7 +141,9 @@ public class ApproovService {
         // We have to get the current config and obtain one protected API endpoint at least
         // get the dynamic pins from Approov
         guard let approovPins = Approov.getPins("public-key-sha256") else {
-            os_log("ApproovService: no host pinning information available", type: .error)
+            if loggingLevel >= .error {
+                os_log("ApproovService: no host pinning information available", type: .error)
+            }
             return ""
         }
         // The approovPins contains a map of hostnames to pin strings. We need to skip the '*' entry (Managed Trust Roots),
@@ -138,7 +155,9 @@ public class ApproovService {
                 return result.arc
             }
         }
-        os_log("ApproovService: ARC code unavailable", type: .info)
+        if loggingLevel >= .info {
+            os_log("ApproovService: ARC code unavailable", type: .info)
+        }
         return ""
     }
 
@@ -161,10 +180,14 @@ public class ApproovService {
                 // ignore multiple initialization calls that use the same configuration
                 if (config != configString) {
                     // throw exception indicating we are attempting to use different config
-                    os_log("ApproovService: Attempting to initialize with different configuration", type: .error)
+                    if loggingLevel >= .error {
+                        os_log("ApproovService: Attempting to initialize with different configuration", type: .error)
+                    }
                     throw ApproovError.configurationError(message: "Attempting to initialize with a different configuration")
                 }
-                os_log("ApproovService: Ignoring multiple ApproovService layer initializations with the same config");
+                if loggingLevel >= .warning {
+                    os_log("ApproovService: Ignoring multiple ApproovService layer initializations with the same config");
+                }
             } else {
                 do {
                     if !config.isEmpty {
@@ -175,7 +198,9 @@ public class ApproovService {
                     // If the error is due to the SDK being initilized already, we ignore it otherwise we throw
                     let nsError = error as NSError
                     if nsError.code == 0, nsError.domain == "Foundation._GenericObjCError" {
-                        os_log("ApproovService: Ignoring initialization error in Approov SDK: %@", type: .error, nsError.localizedDescription)
+                        if loggingLevel >= .error {
+                            os_log("ApproovService: Ignoring initialization error in Approov SDK: %@", type: .error, nsError.localizedDescription)
+                        }
                     } else {
                         throw ApproovError.initializationFailure(message: "Error initializing Approov SDK: \(nsError.localizedDescription)")
                     }
@@ -202,7 +227,9 @@ public class ApproovService {
     public static func setProceedOnNetworkFailure(proceed: Bool) {
         stateQueue.sync {
             proceedOnNetworkFail = proceed
-            os_log("ApproovService: setProceedOnNetworkFailure ", type: .info, proceed)
+            if loggingLevel >= .info {
+                os_log("ApproovService: setProceedOnNetworkFailure ", type: .info, proceed)
+            }
         }
     }
 
@@ -231,7 +258,9 @@ public class ApproovService {
     public static func setDevKey(devKey: String) {
         stateQueue.sync {
             Approov.setDevKey(devKey)
-            os_log("ApproovService: setDevKey")
+            if loggingLevel >= .debug {
+                os_log("ApproovService: setDevKey")
+            }
         }
     }
 
@@ -247,7 +276,9 @@ public class ApproovService {
         stateQueue.sync {
             approovTokenHeader = header
             approovTokenPrefix = prefix
-            os_log("ApproovService: setApproovHeader: %@", type: .debug, header, prefix)
+            if loggingLevel >= .debug {
+                os_log("ApproovService: setApproovHeader: %@", type: .debug, header, prefix)
+            }
         }
     }
 
@@ -260,7 +291,9 @@ public class ApproovService {
     public static func setApproovTraceIDHeader(header: String?) {
         stateQueue.sync {
             approovTraceIDHeader = header
-            os_log("ApproovService: setApproovTraceIDHeader: %@", type: .debug, header ?? "nil")
+            if loggingLevel >= .debug {
+                os_log("ApproovService: setApproovTraceIDHeader: %@", type: .debug, header ?? "nil")
+            }
         }
     }
 
@@ -287,7 +320,9 @@ public class ApproovService {
     public static func setBindingHeader(header: String) {
         stateQueue.sync {
             bindingHeader = header
-            os_log("ApproovService: setBindingHeader: %@", type: .debug, header)
+            if loggingLevel >= .debug {
+                os_log("ApproovService: setBindingHeader: %@", type: .debug, header)
+            }
         }
     }
 
@@ -305,7 +340,26 @@ public class ApproovService {
     public static func setUseApproovStatusIfNoToken(shouldUse: Bool) {
         stateQueue.sync {
             useApproovStatusIfNoToken = shouldUse
-            os_log("ApproovService: setUseApproovStatusIfNoToken: %@", type: .debug, String(shouldUse))
+            if loggingLevel >= .debug {
+                os_log("ApproovService: setUseApproovStatusIfNoToken: %@", type: .debug, String(shouldUse))
+            }
+        }
+    }
+
+    /**
+     * Sets the service-layer logging level.
+     *
+     * This controls all logging emitted by the ApproovService layer. Set to `.debug`
+     * when collecting diagnostics for customer issues.
+     *
+     * @param level the desired severity level
+     */
+    public static func setLoggingLevel(_ level: ApproovLogLevel) {
+        stateQueue.sync {
+            loggingLevel = level
+            if level >= .info {
+                os_log("ApproovService: logging level set to %d", type: .info, level.rawValue)
+            }
         }
     }
 
@@ -323,7 +377,9 @@ public class ApproovService {
      */
     public static func setServiceMutator(_ mutator: ApproovServiceMutator?) {
         let appliedMutator = mutator ?? ApproovServiceMutatorDefault.shared
-        os_log("Applied ApproovServiceMutator: %@", type: .debug, String(describing: appliedMutator))
+        if loggingLevel >= .debug {
+            os_log("Applied ApproovServiceMutator: %@", type: .debug, String(describing: appliedMutator))
+        }
         stateQueue.sync {
             serviceMutator = appliedMutator
         }
@@ -373,10 +429,14 @@ public class ApproovService {
         stateQueue.sync {
             if prefix == nil {
                 substitutionHeaders[header] = ""
-                os_log("ApproovService: addSubstitutionHeader: %@", type: .debug, header)
+                if loggingLevel >= .debug {
+                    os_log("ApproovService: addSubstitutionHeader: %@", type: .debug, header)
+                }
             } else {
                 substitutionHeaders[header] = prefix
-                os_log("ApproovService: addSubstitutionHeader: %@ %@", type: .debug, header, prefix!)
+                if loggingLevel >= .debug {
+                    os_log("ApproovService: addSubstitutionHeader: %@ %@", type: .debug, header, prefix!)
+                }
             }
         }
     }
@@ -391,7 +451,9 @@ public class ApproovService {
             if substitutionHeaders[header] != nil {
                 substitutionHeaders.removeValue(forKey: header)
             }
-            os_log("ApproovService: removeSubstitutionHeader: %@", type: .debug, header)
+            if loggingLevel >= .debug {
+                os_log("ApproovService: removeSubstitutionHeader: %@", type: .debug, header)
+            }
         }
     }
 
@@ -417,7 +479,9 @@ public class ApproovService {
     public static func addSubstitutionQueryParam(key: String) {
         stateQueue.sync {
             substitutionQueryParams.insert(key)
-            os_log("ApproovService: addSubstitutionQueryParam: %@", type: .debug, key)
+            if loggingLevel >= .debug {
+                os_log("ApproovService: addSubstitutionQueryParam: %@", type: .debug, key)
+            }
         }
     }
 
@@ -429,7 +493,9 @@ public class ApproovService {
     public static func removeSubstitutionQueryParam(key: String) {
         stateQueue.sync {
             substitutionQueryParams.remove(key)
-            os_log("ApproovService: removeSubstitutionQueryParam: %@", type: .debug, key)
+            if loggingLevel >= .debug {
+                os_log("ApproovService: removeSubstitutionQueryParam: %@", type: .debug, key)
+            }
         }
     }
 
@@ -463,9 +529,13 @@ public class ApproovService {
             do {
                 let regex = try NSRegularExpression(pattern: urlRegex, options: [])
                 exclusionURLRegexs[urlRegex] = regex
-                os_log("ApproovService: addExclusionURLRegex: %@", type: .debug, urlRegex)
+                if loggingLevel >= .debug {
+                    os_log("ApproovService: addExclusionURLRegex: %@", type: .debug, urlRegex)
+                }
             } catch {
-                os_log("ApproovService: addExclusionURLRegex: %@ error: %@", type: .debug, urlRegex, error.localizedDescription)
+                if loggingLevel >= .debug {
+                    os_log("ApproovService: addExclusionURLRegex: %@ error: %@", type: .debug, urlRegex, error.localizedDescription)
+                }
             }
         }
     }
@@ -479,7 +549,9 @@ public class ApproovService {
         stateQueue.sync {
             if exclusionURLRegexs[urlRegex] != nil {
                 exclusionURLRegexs.removeValue(forKey: urlRegex)
-                os_log("ApproovService: removeExclusionURLRegex: %@", type: .debug, urlRegex)
+                if loggingLevel >= .debug {
+                    os_log("ApproovService: removeExclusionURLRegex: %@", type: .debug, urlRegex)
+                }
             }
         }
     }
@@ -507,9 +579,13 @@ public class ApproovService {
             if isInitialized {
                 Approov.fetchToken({(approovResult: ApproovTokenFetchResult) in
                     if approovResult.status == ApproovTokenFetchStatus.unknownURL {
-                        os_log("ApproovService: prefetch: success", type: .debug)
+                        if loggingLevel >= .debug {
+                            os_log("ApproovService: prefetch: success", type: .debug)
+                        }
                     } else {
-                        os_log("ApproovService: prefetch: %@", type: .debug, Approov.string(from: approovResult.status))
+                        if loggingLevel >= .debug {
+                            os_log("ApproovService: prefetch: %@", type: .debug, Approov.string(from: approovResult.status))
+                        }
                     }
                 }, "approov.io")
             }
@@ -532,9 +608,13 @@ public class ApproovService {
         // try to fetch a non-existent secure string in order to check for a rejection
         let approovResults = Approov.fetchSecureStringAndWait("precheck-dummy-key", nil)
         if approovResults.status == ApproovTokenFetchStatus.unknownKey {
-            os_log("ApproovService: precheck: success", type: .debug)
+            if loggingLevel >= .debug {
+                os_log("ApproovService: precheck: success", type: .debug)
+            }
         } else {
-            os_log("ApproovService: precheck: %@", type: .debug, Approov.string(from: approovResults.status))
+            if loggingLevel >= .debug {
+                os_log("ApproovService: precheck: %@", type: .debug, Approov.string(from: approovResults.status))
+            }
         }
 
         // process the returned Approov status using decision maker
@@ -551,7 +631,9 @@ public class ApproovService {
     public static func getDeviceID() -> String? {
         let deviceID = Approov.getDeviceID()
         if (deviceID != nil) {
-            os_log("ApproovService: getDeviceID %@", type: .debug, deviceID!)
+            if loggingLevel >= .debug {
+                os_log("ApproovService: getDeviceID %@", type: .debug, deviceID!)
+            }
         }
         return deviceID
     }
@@ -566,7 +648,9 @@ public class ApproovService {
      * @param data is the data to be hashed and set in the token
      */
     public static func setDataHashInToken(data: String) {
-        os_log("ApproovService: setDataHashInToken", type: .debug)
+        if loggingLevel >= .debug {
+            os_log("ApproovService: setDataHashInToken", type: .debug)
+        }
         Approov.setDataHashInToken(data)
     }
 
@@ -586,7 +670,9 @@ public class ApproovService {
     public static func fetchToken(url: String) throws -> String {
         // fetch the Approov token
         let result: ApproovTokenFetchResult = Approov.fetchTokenAndWait(url)
-        os_log("ApproovService: fetchToken: %@", type: .debug, Approov.string(from: result.status))
+        if loggingLevel >= .debug {
+            os_log("ApproovService: fetchToken: %@", type: .debug, Approov.string(from: result.status))
+        }
 
         // process the status
         try getServiceMutator().handleFetchTokenResult(result)
@@ -615,7 +701,9 @@ public class ApproovService {
      * @return String of the base64 encoded message signature
      */
     public static func getAccountMessageSignature(message: String) -> String? {
-        os_log("ApproovService: getAccountMessageSignature", type: .debug)
+        if loggingLevel >= .debug {
+            os_log("ApproovService: getAccountMessageSignature", type: .debug)
+        }
         return Approov.getMessageSignature(message)
     }
 
@@ -627,7 +715,9 @@ public class ApproovService {
      * @return String of the base64 encoded message signature
      */
     public static func getInstallMessageSignature(message: String) -> String? {
-        os_log("ApproovService: getInstallMessageSignature", type: .debug)
+        if loggingLevel >= .debug {
+            os_log("ApproovService: getInstallMessageSignature", type: .debug)
+        }
         return Approov.getInstallMessageSignature(message)
     }
 
@@ -658,7 +748,9 @@ public class ApproovService {
 
         // try and fetch the secure string
         let approovResult = Approov.fetchSecureStringAndWait(key, newDef)
-        os_log("ApproovService: fetchSecureString: %@: %@", type: .info, type, Approov.string(from: approovResult.status))
+        if loggingLevel >= .info {
+            os_log("ApproovService: fetchSecureString: %@: %@", type: .info, type, Approov.string(from: approovResult.status))
+        }
 
         // process the returned Approov status using decision maker
         try getServiceMutator().handleFetchSecureStringResult(approovResult, operation: type, key: key)
@@ -681,7 +773,9 @@ public class ApproovService {
     public static func fetchCustomJWT(payload: String) throws -> String? {
         // fetch the custom JWT
         let approovResult = Approov.fetchCustomJWTAndWait(payload)
-        os_log("ApproovService: fetchCustomJWT: %@", type: .info, Approov.string(from: approovResult.status))
+        if loggingLevel >= .info {
+            os_log("ApproovService: fetchCustomJWT: %@", type: .info, Approov.string(from: approovResult.status))
+        }
 
         // process the returned Approov status using decision maker
         try getServiceMutator().handleFetchCustomJWTResult(approovResult)
@@ -742,18 +836,24 @@ public class ApproovService {
     public static func updateRequestWithApproov(request: URLRequest, sessionConfig: URLSessionConfiguration?) -> ApproovUpdateResponse {
         var changes = ApproovRequestMutations()
         guard let url = request.url else {
-            os_log("ApproovService: no url provided", type: .info)
+            if loggingLevel >= .info {
+                os_log("ApproovService: no url provided", type: .info)
+            }
             return ApproovUpdateResponse(request: request, decision: .ShouldIgnore, sdkMessage: "", error: nil)
         }
         if !isInitialized {
-            os_log("ApproovService: not initialized, forwarding: %@", type: .info, url.absoluteString)
+            if loggingLevel >= .info {
+                os_log("ApproovService: not initialized, forwarding: %@", type: .info, url.absoluteString)
+            }
             return ApproovUpdateResponse(request: request, decision: .ShouldIgnore, sdkMessage: "", error: nil)
         }
 
         let mutator = getServiceMutator()
         do {
             if try !mutator.handleInterceptorShouldProcessRequest(request) {
-                os_log("ApproovService: excluded, forwarding: %@", type: .info, url.absoluteString)
+                if loggingLevel >= .info {
+                    os_log("ApproovService: excluded, forwarding: %@", type: .info, url.absoluteString)
+                }
                 return ApproovUpdateResponse(request: request, decision: .ShouldIgnore, sdkMessage: "", error: nil)
             }
         } catch {
@@ -795,11 +895,15 @@ public class ApproovService {
         // fetch an Approov token: request.url can not be nil here
         let approovResult = Approov.fetchTokenAndWait(url.absoluteString)
         let hostname = hostnameFromURL(url: url)
-        os_log("ApproovService: updateRequest %@: %@", type: .info, hostname, approovResult.loggableToken())
+        if loggingLevel >= .info {
+            os_log("ApproovService: updateRequest %@: %@", type: .info, hostname, approovResult.loggableToken())
+        }
         // log if a configuration update is received and call fetchConfig to clear the update state
         if approovResult.isConfigChanged {
             Approov.fetchConfig()
-            os_log("ApproovService: dynamic configuration update received")
+            if loggingLevel >= .info {
+                os_log("ApproovService: dynamic configuration update received")
+            }
         }
 
         response.sdkMessage = Approov.string(from: approovResult.status)
@@ -853,7 +957,9 @@ public class ApproovService {
                 if ((value.hasPrefix(prefix)) && (value.count > prefix.count)) {
                     let index = prefix.index(prefix.startIndex, offsetBy: prefix.count)
                     let approovResults = Approov.fetchSecureStringAndWait(String(value.suffix(from:index)), nil)
-                    os_log("ApproovService: Substituting header: %@, %@", type: .info, header, Approov.string(from: approovResults.status))
+                    if loggingLevel >= .info {
+                        os_log("ApproovService: Substituting header: %@, %@", type: .info, header, Approov.string(from: approovResults.status))
+                    }
 
                     do {
                         if try mutator.handleInterceptorHeaderSubstitutionResult(approovResults, header: header) {
@@ -894,8 +1000,10 @@ public class ApproovService {
                     if let substringRange = Range(matchRange, in: updateURLString) {
                         let queryValue = String(updateURLString[substringRange])
                         let approovResults = Approov.fetchSecureStringAndWait(String(queryValue), nil)
-                        os_log("ApproovService: Substituting query parameter: %@, %@", entry,
-                            Approov.string(from: approovResults.status))
+                        if loggingLevel >= .info {
+                            os_log("ApproovService: Substituting query parameter: %@, %@", entry,
+                                Approov.string(from: approovResults.status))
+                        }
 
                         do {
                             if try mutator.handleInterceptorQueryParamSubstitutionResult(approovResults, queryKey: entry) {
