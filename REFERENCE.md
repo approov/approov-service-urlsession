@@ -1,9 +1,9 @@
 # Reference
 
-This provides a reference for the public methods defined on `ApproovService`. These are available when you import:
+This provides a reference for the public methods defined on `ApproovService`. These are available when you import the Swift Package Manager module:
 
 ```swift
-import ApproovURLSession
+import ApproovURLSessionPackage
 ```
 
 Most methods either throw an `ApproovError` or return an `ApproovUpdateResponse`. The error cases to be aware of are:

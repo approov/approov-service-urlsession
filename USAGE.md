@@ -40,7 +40,7 @@ You can use a mutator to enforce this policy by throwing an error or returning `
 Override `handleInterceptorFetchTokenResult` to check for `noApproovService` and prevent the request to your API from continuing; instead log the event. Since `NO_APPROOV_SERVICE` implies the SDK cannot reach the Approov servers, this could be a transient issue (e.g., no DNS server available) or a permanent configuration/network restriction. You might choose to retry the request once to handle transient errors, or if the issue persists, inform the user of a network issue and suggest checking their connection or changing networks.
 
 ```swift
-import ApproovURLSession
+import ApproovURLSessionPackage
 import Approov
 
 final class EnforceTokenMutator: ApproovServiceMutator {
@@ -102,7 +102,7 @@ final class MyMutator: ApproovServiceMutator {
 Create a mutator, then install it once during app startup (for example in your AppDelegate or app initialization path).
 
 ```swift
-import ApproovURLSession
+import ApproovURLSessionPackage
 import Approov
 
 final class MyMutator: ApproovServiceMutator {
@@ -213,7 +213,7 @@ ApproovService.setLoggingLevel(.debug)
 This example implementation demonstrates how to customize the `ApproovServiceMutator` to apply different options to API requests based on the hostname.
 
 ```swift
-import ApproovURLSession
+import ApproovURLSessionPackage
 
 final class CustomLogic: ApproovServiceMutator {
     private let signer: ApproovServiceMutator
