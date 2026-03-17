@@ -241,7 +241,7 @@ public class ApproovURLSession: URLSession {
      *  https://developer.apple.com/documentation/foundation/urlsession
      */
     @available(iOS 13.0, *)
-    public func dataTaskPublisherWithApproov(for request: URLRequest) -> URLSession.DataTaskPublisher {
+    public func dataTaskPublisherWithApproov(for request: URLRequest) -> (URLSession.DataTaskPublisher , Error?) {
         // in this case we must perform the Approov update in the context of the caller - which may mean that the calling
         // thread experience some delay to the potential network request to Approov
         let approovUpdateResponse = ApproovService.updateRequestWithApproov(request: request, sessionConfig: urlSessionConfiguration)
