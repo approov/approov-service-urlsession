@@ -152,7 +152,9 @@ ApproovService.setServiceMutator(signer)
 If you have already customized the mutator, you can add message signing to it like so:
 
 ```swift
-ApproovService.setServiceMutator(MyMutator(signer: ApproovDefaultMessageSigning()))
+let signer = ApproovDefaultMessageSigning()
+    .setDefaultFactory(ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory())
+ApproovService.setServiceMutator(MyMutator(signer: signer))
 ```
 
 ### Customize behavior
@@ -299,5 +301,4 @@ This example shows how to log rejections with the ARC and device ID. It assumes 
 - Keep mutator logic fast and side-effect safe. These hooks run on the request path.
 - Use `ApproovServiceMutatorDefault.shared` to preserve the existing behavior and layer your changes on top.
 - If you override multiple hooks, keep them focused (one concern per hook) for easier testing and maintenance.
-
 

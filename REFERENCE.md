@@ -120,7 +120,7 @@ ApproovService.setLoggingLevel(.debug)
 ```
 
 ## setServiceMutator
-Installs a service mutator to customize behavior at key points in the service flow. Pass `nil` to restore defaults. See the `README.md` for more information and a custom mutator example implementation.
+Installs a service mutator to customize behavior at key points in the service flow. Pass `nil` to restore defaults. See the `USAGE.md` for more information and a custom mutator example implementation.
 
 ```swift
 ApproovService.setServiceMutator(myMutator)
