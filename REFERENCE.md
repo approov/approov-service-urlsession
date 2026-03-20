@@ -62,8 +62,7 @@ ApproovService.setDevKey(devKey: "<dev-key>")
 ## setApproovHeader
 Sets the header that the Approov token is added on, as well as an optional
 prefix String (such as "Bearer "). By default the token is provided on
-"Approov-Token" with no prefix. Message signing also uses this configured
-header name to determine whether a request should be signed.
+"Approov-Token" with no prefix.
 
 ```swift
 ApproovService.setApproovHeader(header: "Approov-Token", prefix: "Bearer ")
