@@ -286,7 +286,7 @@ public class ApproovService {
             approovTokenHeader = header
             approovTokenPrefix = prefix
             if loggingLevel >= .debug {
-                os_log("ApproovService: setApproovHeader: %@", type: .debug, header, prefix)
+                os_log("ApproovService: setApproovHeader: %@ %@", type: .debug, header, prefix)
             }
         }
     }
