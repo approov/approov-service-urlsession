@@ -4,6 +4,18 @@ All notable changes to this package will be documented in this file.
 
 The format is based on Keep a Changelog and this project adheres to Semantic Versioning.
 
+## [Unreleased]
+
+### Fixed
+- Restored default behavior: network failure cases (`.noNetwork`, `.poorNetwork`, `.mitmDetected`) now correctly block requests instead of silently proceeding without a token. This was a regression introduced when `setProceedOnNetworkFailure` was removed from the interceptor handler logic.
+- Made `loggingLevel` thread-safe with a dedicated `loggingQueue` to prevent data races on concurrent reads/writes.
+- Gated all `os_log` calls in `PinningURLSessionDelegate` and `ApproovSessionTaskObserver` behind `ApproovService.loggingLevel` so that `setLoggingLevel` controls all package logging consistently.
+- Fixed logging level guard mismatch in `ApproovDefaultMessageSigning` (`.info` → `.error`).
+- Fixed typo "skippng" → "skipping" in pin verification log message.
+
+### Deprecated
+- `setProceedOnNetworkFailure()` and `getProceedOnNetworkFailure()` are no longer used internally. Use `setServiceMutator` with a custom `ApproovServiceMutator` to customize network failure behavior.
+
 ## [3.5.7] - 2026-03-06
 
 ### Changed

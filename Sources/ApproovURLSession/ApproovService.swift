@@ -231,7 +231,7 @@ public class ApproovService {
      *
      * @param proceed is true if Approov networking fails should allow continuation
      */
-    @available(*, deprecated, message: "Use setServiceMutator instead")
+    @available(*, deprecated, message: "No longer used internally. Use setServiceMutator to customize network failure behavior.")
     public static func setProceedOnNetworkFailure(proceed: Bool) {
         stateQueue.sync {
             proceedOnNetworkFail = proceed
@@ -247,6 +247,7 @@ public class ApproovService {
      *
      * @return true if Approov networking fails should allow continuation, false otherwise
      */
+    @available(*, deprecated, message: "No longer used internally. Use setServiceMutator to customize network failure behavior.")
     public static func getProceedOnNetworkFailure() -> Bool {
         return stateQueue.sync {
             return proceedOnNetworkFail
