@@ -117,8 +117,16 @@ public class ApproovService {
     // behaviour defined in the default implementation of ApproovServiceMutator will be used.
     private static var serviceMutator: ApproovServiceMutator = ApproovServiceMutatorDefault.shared
 
+    // dedicated queue for thread-safe access to the logging level (separate from stateQueue to
+    // avoid nested sync deadlocks when logging is checked inside stateQueue-protected methods)
+    private static let loggingQueue = DispatchQueue(label: "ApproovService.logging", qos: .userInitiated)
+    private static var _loggingLevel: ApproovLogLevel = .info
+
     // the current logging level for os_log output from the ApproovService
-    static var loggingLevel: ApproovLogLevel = .info
+    static var loggingLevel: ApproovLogLevel {
+        get { loggingQueue.sync { _loggingLevel } }
+        set { loggingQueue.sync { _loggingLevel = newValue } }
+    }
 
     // map of headers that should have their values substituted for secure strings, mapped to their
     // required prefixes
@@ -366,11 +374,9 @@ public class ApproovService {
      * @param level the desired severity level
      */
     public static func setLoggingLevel(_ level: ApproovLogLevel) {
-        stateQueue.sync {
-            loggingLevel = level
-            if level >= .info {
-                os_log("ApproovService: logging level set to %d", type: .info, level.rawValue)
-            }
+        loggingLevel = level
+        if level >= .info {
+            os_log("ApproovService: logging level set to %d", type: .info, level.rawValue)
         }
     }
 
