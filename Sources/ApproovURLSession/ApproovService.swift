@@ -236,7 +236,7 @@ public class ApproovService {
         stateQueue.sync {
             proceedOnNetworkFail = proceed
             if loggingLevel >= .info {
-                os_log("ApproovService: setProceedOnNetworkFailure ", type: .info, proceed)
+                os_log("ApproovService: setProceedOnNetworkFailure %d", type: .info, proceed)
             }
         }
     }
