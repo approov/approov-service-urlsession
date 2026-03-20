@@ -311,7 +311,9 @@ public class ApproovSessionTaskObserver: NSObject {
                         } else {
                             // this means that URLRequest has removed the `updateCurrentRequest` method or we are observing an object that
                             // is not an instance of URLRequest. Both are fatal errors.
-                            os_log("ApproovService: Unable to modify NSURLRequest headers; object instance is of type %@", type: .error, type(of: task).description())
+                            if ApproovService.loggingLevel >= .error {
+                                os_log("ApproovService: Unable to modify NSURLRequest headers; object instance is of type %@", type: .error, type(of: task).description())
+                            }
                         }
                         
                         // the task execution can now be resumed to perform the actual network request (as long as it is
@@ -341,7 +343,9 @@ public class ApproovSessionTaskObserver: NSObject {
                                 )
                             }
                         } else {
-                            os_log("ApproovService: Task was not in suspended state after Approov processing", type: .error)
+                            if ApproovService.loggingLevel >= .error {
+                                os_log("ApproovService: Task was not in suspended state after Approov processing", type: .error)
+                            }
                         }
                         return
                     } else if updateResponse.decision == .ShouldIgnore {
@@ -435,10 +439,14 @@ public class ApproovSessionTaskObserver: NSObject {
                                     task.cancel()
                                 }
                             } else {
-                                os_log("ApproovService: Pinning Delegate from url session pointer is invalid", type: .error)
+                                if ApproovService.loggingLevel >= .error {
+                                    os_log("ApproovService: Pinning Delegate from url session pointer is invalid", type: .error)
+                                }
                             }
                         } else {
-                            os_log("ApproovService: Pinning Session pointer is invalid/not of type URLSession ", type: .error)
+                            if ApproovService.loggingLevel >= .error {
+                                os_log("ApproovService: Pinning Session pointer is invalid/not of type URLSession ", type: .error)
+                            }
                         }
                     }
                     //MARK: LOG_MESSAGE

@@ -150,7 +150,7 @@ public class ApproovDefaultMessageSigning: ApproovServiceMutator, CustomStringCo
                 sigId = "install"
                 guard let base64Signature = ApproovService.getInstallMessageSignature(message: message),
                       let decodedSignature = Data(base64Encoded: base64Signature) else {
-                    if ApproovService.loggingLevel >= .info {
+                    if ApproovService.loggingLevel >= .error {
                         os_log("ApproovService: install message signature unavailable, skipping signing", type: .error)
                     }
                     return request

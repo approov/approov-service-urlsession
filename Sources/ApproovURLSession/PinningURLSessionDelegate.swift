@@ -163,7 +163,9 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
                 return
             }
         } catch {
-            os_log("ApproovService: urlSession error %@", type: .error, error.localizedDescription)
+            if ApproovService.loggingLevel >= .error {
+                os_log("ApproovService: urlSession error %@", type: .error, error.localizedDescription)
+            }
         }
         completionHandler(.cancelAuthenticationChallenge, nil)
     }
@@ -217,7 +219,9 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
                 return
             }
         } catch {
-            os_log("ApproovService: urlSession error %@", type: .error, error.localizedDescription)
+            if ApproovService.loggingLevel >= .error {
+                os_log("ApproovService: urlSession error %@", type: .error, error.localizedDescription)
+            }
         }
         completionHandler(.cancelAuthenticationChallenge, nil)
     }
@@ -549,7 +553,9 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
         
         // get the dynamic pins from Approov
         guard let approovPins = Approov.getPins("public-key-sha256") else {
-            os_log("ApproovService: pin verification no Approov pins")
+            if ApproovService.loggingLevel >= .info {
+                os_log("ApproovService: pin verification no Approov pins", type: .info)
+            }
             return serverTrust
         }
         
@@ -563,7 +569,9 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
                 // there are no pins set for the host so use managed trust roots if available
                 if approovPins["*"] == nil {
                     // there are no managed trust roots so the host is truly unpinned
-                    os_log("ApproovService: pin verification %@ no pins", host)
+                    if ApproovService.loggingLevel >= .info {
+                        os_log("ApproovService: pin verification %@ no pins", type: .info, host)
+                    }
                     return serverTrust
                 } else {
                     // use the managed trust roots for pinning
@@ -572,7 +580,9 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
             }
         } else {
             // host is not pinned
-            os_log("ApproovService: pin verification %@ unpinned", host)
+            if ApproovService.loggingLevel >= .info {
+                os_log("ApproovService: pin verification %@ unpinned", type: .info, host)
+            }
             return serverTrust
         }
         
@@ -597,13 +607,17 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
                 // see if we have a match on a pin for this certificate in the chain
                 for pin in pinsForHost {
                     if publicKeyHashBase64 == pin {
-                        os_log("ApproovService: matched pin %@ for %@ from %d pins", pin, host, pinsForHost.count)
+                        if ApproovService.loggingLevel >= .debug {
+                            os_log("ApproovService: matched pin %@ for %@ from %d pins", type: .debug, pin, host, pinsForHost.count)
+                        }
                         return serverTrust
                     }
                 }
             }
             else {
-                os_log("ApproovService: skippng unsupported certificate type")
+                if ApproovService.loggingLevel >= .info {
+                    os_log("ApproovService: skipping unsupported certificate type", type: .info)
+                }
             }
             
             // move to the next certificate in the chain
@@ -611,7 +625,9 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
         }
         
         // we return nil if no match in current set of pins from Approov SDK and certificate chain seen during the TLS handshake
-        os_log("ApproovService: pin verification failed for %@ with no match for %d pins", host, pinsForHost.count)
+        if ApproovService.loggingLevel >= .error {
+            os_log("ApproovService: pin verification failed for %@ with no match for %d pins", type: .error, host, pinsForHost.count)
+        }
         return nil
     }
 }

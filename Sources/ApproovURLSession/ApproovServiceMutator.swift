@@ -195,7 +195,8 @@ public extension ApproovServiceMutator {
         case .noNetwork,
              .poorNetwork,
              .mitmDetected:
-            return false
+            throw ApproovError.networkingError(message: "Approov token fetch for \(url): " +
+                                               Approov.string(from: status))
         case .noApproovService,
              .unknownURL,
              .unprotectedURL:
@@ -219,7 +220,8 @@ public extension ApproovServiceMutator {
         case .noNetwork,
              .poorNetwork,
              .mitmDetected:
-            return false
+            throw ApproovError.networkingError(message: "Header substitution for \(header): " +
+                                               Approov.string(from: status))
         case .unknownKey:
             return false
         default:
@@ -241,7 +243,8 @@ public extension ApproovServiceMutator {
         case .noNetwork,
              .poorNetwork,
              .mitmDetected:
-            return false
+            throw ApproovError.networkingError(message: "Query parameter substitution for \(queryKey): " +
+                                               Approov.string(from: status))
         case .unknownKey:
             return false
         default:

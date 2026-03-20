@@ -198,8 +198,8 @@ public class ApproovService {
                     // If the error is due to the SDK being initilized already, we ignore it otherwise we throw
                     let nsError = error as NSError
                     if nsError.code == 0, nsError.domain == "Foundation._GenericObjCError" {
-                        if loggingLevel >= .error {
-                            os_log("ApproovService: Ignoring initialization error in Approov SDK: %@", type: .error, nsError.localizedDescription)
+                        if loggingLevel >= .info {
+                            os_log("ApproovService: Ignoring initialization error in Approov SDK: %@", type: .info, nsError.localizedDescription)
                         }
                     } else {
                         throw ApproovError.initializationFailure(message: "Error initializing Approov SDK: \(nsError.localizedDescription)")
