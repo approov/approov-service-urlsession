@@ -552,7 +552,7 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
         }
         
         // get the dynamic pins from Approov
-        guard let approovPins = Approov.getPins("public-key-sha256") else {
+        guard let approovPins = ApproovService.getSDKClient().getPins("public-key-sha256") else {
             if ApproovService.loggingLevel >= .info {
                 os_log("ApproovService: pin verification no Approov pins", type: .info)
             }

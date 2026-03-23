@@ -122,10 +122,19 @@ public class ApproovService {
     private static let loggingQueue = DispatchQueue(label: "ApproovService.logging", qos: .userInitiated)
     private static var _loggingLevel: ApproovLogLevel = .info
 
+    // dedicated queue for swapping the SDK client in tests without interfering with the main state queue
+    private static let sdkClientQueue = DispatchQueue(label: "ApproovService.sdkClient", qos: .userInitiated)
+    private static var _sdkClient: ApproovSDKClient = LiveApproovSDKClient()
+
     // the current logging level for os_log output from the ApproovService
     static var loggingLevel: ApproovLogLevel {
         get { loggingQueue.sync { _loggingLevel } }
         set { loggingQueue.sync { _loggingLevel = newValue } }
+    }
+
+    static var sdkClient: ApproovSDKClient {
+        get { sdkClientQueue.sync { _sdkClient } }
+        set { sdkClientQueue.sync { _sdkClient = newValue } }
     }
 
     // map of headers that should have their values substituted for secure strings, mapped to their
@@ -138,6 +147,42 @@ public class ApproovService {
     // map of URL regexs that should be excluded from any Approov protection, mapped to the compiled Pattern
     private static var exclusionURLRegexs: Dictionary<String, NSRegularExpression> = Dictionary()
 
+    static func getSDKClient() -> ApproovSDKClient {
+        return sdkClient
+    }
+
+    static func setSDKClientForTesting(_ client: ApproovSDKClient) {
+        sdkClient = client
+    }
+
+    static func resetForTesting() {
+        initializerQueue.sync {
+            configString = nil
+            isInitialized = false
+        }
+
+        stateQueue.sync {
+            proceedOnNetworkFail = false
+            bindingHeader = ""
+            approovTokenHeader = "Approov-Token"
+            approovTokenPrefix = ""
+            approovTraceIDHeader = "Approov-TraceID"
+            serviceMutator = ApproovServiceMutatorDefault.shared
+            substitutionHeaders = [:]
+            substitutionQueryParams = []
+            exclusionURLRegexs = [:]
+            useApproovStatusIfNoToken = false
+        }
+
+        loggingQueue.sync {
+            _loggingLevel = .info
+        }
+
+        sdkClientQueue.sync {
+            _sdkClient = LiveApproovSDKClient()
+        }
+    }
+
 
     
     /**
@@ -146,9 +191,10 @@ public class ApproovService {
      * @return String of the last ARC or empty string if there was none
      */
     public static func getLastARC() -> String {
+        let sdkClient = getSDKClient()
         // We have to get the current config and obtain one protected API endpoint at least
         // get the dynamic pins from Approov
-        guard let approovPins = Approov.getPins("public-key-sha256") else {
+        guard let approovPins = sdkClient.getPins("public-key-sha256") else {
             if loggingLevel >= .error {
                 os_log("ApproovService: no host pinning information available", type: .error)
             }
@@ -157,7 +203,7 @@ public class ApproovService {
         // The approovPins contains a map of hostnames to pin strings. We need to skip the '*' entry (Managed Trust Roots),
         // and use another hostname if available.
         if let hostname = approovPins.keys.first(where: { $0 != "*" }) {
-            let result = Approov.fetchTokenAndWait(hostname)
+            let result = sdkClient.fetchTokenAndWait(hostname)
             // Check if a token was fetched successfully and return its arc code
             if result.token.count > 0 {
                 return result.arc
@@ -184,7 +230,7 @@ public class ApproovService {
     public static func initialize(config: String, comment: String? = nil) throws {
         try initializerQueue.sync  {
             // check if we attempt to use a different configString
-            if isInitialized && ((comment?.hasPrefix("reinit")) == nil) {
+            if isInitialized && (comment?.hasPrefix("reinit") != true) {
                 // ignore multiple initialization calls that use the same configuration
                 if (config != configString) {
                     // throw exception indicating we are attempting to use different config
@@ -200,7 +246,7 @@ public class ApproovService {
                 do {
                     if !config.isEmpty {
                         // only initialize with a non-empty string as empty string used to bypass this
-                        try Approov.initialize(config, updateConfig: "auto", comment: comment)
+                        try getSDKClient().initialize(config, updateConfig: "auto", comment: comment)
                     }
                 } catch let error {
                     // If the error is due to the SDK being initiliazed already, we ignore it otherwise we throw
@@ -215,7 +261,7 @@ public class ApproovService {
                 }
                 isInitialized = true
                 configString = config
-                Approov.setUserProperty("approov-service-urlsession")
+                getSDKClient().setUserProperty("approov-service-urlsession")
             }
         }
     }
@@ -266,7 +312,7 @@ public class ApproovService {
      */
     public static func setDevKey(devKey: String) {
         stateQueue.sync {
-            Approov.setDevKey(devKey)
+            getSDKClient().setDevKey(devKey)
             if loggingLevel >= .debug {
                 os_log("ApproovService: setDevKey")
             }
@@ -595,14 +641,14 @@ public class ApproovService {
     public static func prefetch() {
         initializerQueue.sync {
             if isInitialized {
-                Approov.fetchToken({(approovResult: ApproovTokenFetchResult) in
+                getSDKClient().fetchToken({ (approovResult: ApproovTokenFetchResult) in
                     if approovResult.status == ApproovTokenFetchStatus.unknownURL {
                         if loggingLevel >= .debug {
                             os_log("ApproovService: prefetch: success", type: .debug)
                         }
                     } else {
                         if loggingLevel >= .debug {
-                            os_log("ApproovService: prefetch: %@", type: .debug, Approov.string(from: approovResult.status))
+                            os_log("ApproovService: prefetch: %@", type: .debug, getSDKClient().string(from: approovResult.status))
                         }
                     }
                 }, "approov.io")
@@ -624,14 +670,15 @@ public class ApproovService {
      */
     public static func precheck() throws {
         // try to fetch a non-existent secure string in order to check for a rejection
-        let approovResults = Approov.fetchSecureStringAndWait("precheck-dummy-key", nil)
+        let sdkClient = getSDKClient()
+        let approovResults = sdkClient.fetchSecureStringAndWait("precheck-dummy-key", nil)
         if approovResults.status == ApproovTokenFetchStatus.unknownKey {
             if loggingLevel >= .debug {
                 os_log("ApproovService: precheck: success", type: .debug)
             }
         } else {
             if loggingLevel >= .debug {
-                os_log("ApproovService: precheck: %@", type: .debug, Approov.string(from: approovResults.status))
+                os_log("ApproovService: precheck: %@", type: .debug, sdkClient.string(from: approovResults.status))
             }
         }
 
@@ -647,7 +694,7 @@ public class ApproovService {
      * @return String of the device ID or nil in case of an error
      */
     public static func getDeviceID() -> String? {
-        let deviceID = Approov.getDeviceID()
+        let deviceID = getSDKClient().getDeviceID()
         if (deviceID != nil) {
             if loggingLevel >= .debug {
                 os_log("ApproovService: getDeviceID %@", type: .debug, deviceID!)
@@ -669,7 +716,7 @@ public class ApproovService {
         if loggingLevel >= .debug {
             os_log("ApproovService: setDataHashInToken", type: .debug)
         }
-        Approov.setDataHashInToken(data)
+        getSDKClient().setDataHashInToken(data)
     }
 
     /**
@@ -687,9 +734,10 @@ public class ApproovService {
      */
     public static func fetchToken(url: String) throws -> String {
         // fetch the Approov token
-        let result: ApproovTokenFetchResult = Approov.fetchTokenAndWait(url)
+        let sdkClient = getSDKClient()
+        let result: ApproovTokenFetchResult = sdkClient.fetchTokenAndWait(url)
         if loggingLevel >= .debug {
-            os_log("ApproovService: fetchToken: %@", type: .debug, Approov.string(from: result.status))
+            os_log("ApproovService: fetchToken: %@", type: .debug, sdkClient.string(from: result.status))
         }
 
         // process the status
@@ -722,7 +770,7 @@ public class ApproovService {
         if loggingLevel >= .debug {
             os_log("ApproovService: getAccountMessageSignature", type: .debug)
         }
-        return Approov.getMessageSignature(message)
+        return getSDKClient().getMessageSignature(message)
     }
 
     /**
@@ -736,7 +784,7 @@ public class ApproovService {
         if loggingLevel >= .debug {
             os_log("ApproovService: getInstallMessageSignature", type: .debug)
         }
-        return Approov.getInstallMessageSignature(message)
+        return getSDKClient().getInstallMessageSignature(message)
     }
 
     /**
@@ -765,9 +813,10 @@ public class ApproovService {
         }
 
         // try and fetch the secure string
-        let approovResult = Approov.fetchSecureStringAndWait(key, newDef)
+        let sdkClient = getSDKClient()
+        let approovResult = sdkClient.fetchSecureStringAndWait(key, newDef)
         if loggingLevel >= .info {
-            os_log("ApproovService: fetchSecureString: %@: %@", type: .info, type, Approov.string(from: approovResult.status))
+            os_log("ApproovService: fetchSecureString: %@: %@", type: .info, type, sdkClient.string(from: approovResult.status))
         }
 
         // process the returned Approov status using decision maker
@@ -790,9 +839,10 @@ public class ApproovService {
      */
     public static func fetchCustomJWT(payload: String) throws -> String? {
         // fetch the custom JWT
-        let approovResult = Approov.fetchCustomJWTAndWait(payload)
+        let sdkClient = getSDKClient()
+        let approovResult = sdkClient.fetchCustomJWTAndWait(payload)
         if loggingLevel >= .info {
-            os_log("ApproovService: fetchCustomJWT: %@", type: .info, Approov.string(from: approovResult.status))
+            os_log("ApproovService: fetchCustomJWT: %@", type: .info, sdkClient.string(from: approovResult.status))
         }
 
         // process the returned Approov status using decision maker
@@ -853,6 +903,7 @@ public class ApproovService {
      */
     public static func updateRequestWithApproov(request: URLRequest, sessionConfig: URLSessionConfiguration?) -> ApproovUpdateResponse {
         var changes = ApproovRequestMutations()
+        let sdkClient = getSDKClient()
         guard let url = request.url else {
             if loggingLevel >= .info {
                 os_log("ApproovService: no url provided", type: .info)
@@ -906,25 +957,25 @@ public class ApproovService {
             // see if the binding header is present
             if let value = allHeaders[bindHeader] {
                 // add the binding header value as a data hash to Approov token
-                Approov.setDataHashInToken(value)
+                sdkClient.setDataHashInToken(value)
             }
         }
 
         // fetch an Approov token: request.url can not be nil here
-        let approovResult = Approov.fetchTokenAndWait(url.absoluteString)
+        let approovResult = sdkClient.fetchTokenAndWait(url.absoluteString)
         let hostname = hostnameFromURL(url: url)
         if loggingLevel >= .info {
             os_log("ApproovService: updateRequest %@: %@", type: .info, hostname, approovResult.loggableToken())
         }
         // log if a configuration update is received and call fetchConfig to clear the update state
         if approovResult.isConfigChanged {
-            Approov.fetchConfig()
+            sdkClient.fetchConfig()
             if loggingLevel >= .info {
                 os_log("ApproovService: dynamic configuration update received")
             }
         }
 
-        response.sdkMessage = Approov.string(from: approovResult.status)
+        response.sdkMessage = sdkClient.string(from: approovResult.status)
 
         var hasChanges = false
         var setTokenHeaderKey: String?
@@ -974,9 +1025,9 @@ public class ApproovService {
                 // check if the request contains the header we want to replace
                 if ((value.hasPrefix(prefix)) && (value.count > prefix.count)) {
                     let index = prefix.index(prefix.startIndex, offsetBy: prefix.count)
-                    let approovResults = Approov.fetchSecureStringAndWait(String(value.suffix(from:index)), nil)
+                    let approovResults = sdkClient.fetchSecureStringAndWait(String(value.suffix(from:index)), nil)
                     if loggingLevel >= .info {
-                        os_log("ApproovService: Substituting header: %@, %@", type: .info, header, Approov.string(from: approovResults.status))
+                        os_log("ApproovService: Substituting header: %@, %@", type: .info, header, sdkClient.string(from: approovResults.status))
                     }
 
                     do {
@@ -1006,7 +1057,8 @@ public class ApproovService {
         var updateURLString = url.absoluteString
         for entry in subsQueryParamsCopy {
             let urlStringRange = NSRange(updateURLString.startIndex..<updateURLString.endIndex, in: updateURLString)
-            let regex = try! NSRegularExpression(pattern: #"[\\?&]"# + entry + #"=([^&;]+)"#, options: [])
+            let escapedEntry = NSRegularExpression.escapedPattern(for: entry)
+            let regex = try! NSRegularExpression(pattern: #"[\\?&]"# + escapedEntry + #"=([^&;]+)"#, options: [])
             let matches: [NSTextCheckingResult] = regex.matches(in: updateURLString, options: [], range: urlStringRange)
             for match: NSTextCheckingResult in matches {
                 // we skip the range at index 0 as this is the match (e.g. ?Api-Key=api_key_placeholder) for the whole
@@ -1017,10 +1069,10 @@ public class ApproovService {
                     let matchRange = match.range(at: rangeIndex)
                     if let substringRange = Range(matchRange, in: updateURLString) {
                         let queryValue = String(updateURLString[substringRange])
-                        let approovResults = Approov.fetchSecureStringAndWait(String(queryValue), nil)
+                        let approovResults = sdkClient.fetchSecureStringAndWait(String(queryValue), nil)
                         if loggingLevel >= .info {
                             os_log("ApproovService: Attempting query parameter substitution: %@, %@", entry,
-                                Approov.string(from: approovResults.status))
+                                sdkClient.string(from: approovResults.status))
                         }
 
                         do {

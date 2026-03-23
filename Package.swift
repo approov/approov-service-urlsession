@@ -35,7 +35,15 @@ let package = Package(
                 .product(name: "RawStructuredFieldValues", package: "swift-http-structured-headers")
             ],
             path: "Sources/ApproovURLSession",
-            exclude: ["README.md", "LICENSE"]
+            exclude: ["README.md", "LICENSE", "util/sig/LICENSE"]
+        ),
+        .testTarget(
+            name: "ApproovURLSessionPackageTests",
+            dependencies: [
+                "ApproovURLSessionPackage",
+                .product(name: "Approov", package: "approov-ios-sdk")
+            ],
+            path: "Tests/ApproovURLSessionPackageTests"
         )
     ]
 )
