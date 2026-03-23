@@ -1,0 +1,421 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "handle fetch token result throws networking error for no network",
+      "operation": "fetchToken",
+      "result": {
+        "status": "noNetwork"
+      },
+      "expected": {
+        "error": {
+          "kind": "networkingError",
+          "message_contains": "fetchToken network error"
+        }
+      }
+    },
+    {
+      "name": "handle precheck result allows success",
+      "operation": "precheck",
+      "result": {
+        "status": "success"
+      },
+      "expected": {}
+    },
+    {
+      "name": "handle precheck result allows unknown key",
+      "operation": "precheck",
+      "result": {
+        "status": "unknownKey"
+      },
+      "expected": {}
+    },
+    {
+      "name": "handle precheck result throws rejection error",
+      "operation": "precheck",
+      "result": {
+        "status": "rejected",
+        "arc": "arc",
+        "rejection_reasons": "reason"
+      },
+      "expected": {
+        "error": {
+          "kind": "rejectionError",
+          "message_contains": "precheck",
+          "arc": "arc",
+          "rejection_reasons": "reason"
+        }
+      }
+    },
+    {
+      "name": "handle precheck result throws permanent error for unhandled status",
+      "operation": "precheck",
+      "result": {
+        "status": "badURL"
+      },
+      "expected": {
+        "error": {
+          "kind": "permanentError",
+          "message_contains": "precheck"
+        }
+      }
+    },
+    {
+      "name": "handle fetch token result allows success",
+      "operation": "fetchToken",
+      "result": {
+        "status": "success"
+      },
+      "expected": {}
+    },
+    {
+      "name": "handle fetch token result throws permanent error for unhandled status",
+      "operation": "fetchToken",
+      "result": {
+        "status": "badURL"
+      },
+      "expected": {
+        "error": {
+          "kind": "permanentError",
+          "message_contains": "fetchToken"
+        }
+      }
+    },
+    {
+      "name": "handle fetch secure string result allows success",
+      "operation": "fetchSecureString",
+      "result": {
+        "status": "success"
+      },
+      "operation_name": "lookup",
+      "key": "secret",
+      "expected": {}
+    },
+    {
+      "name": "handle fetch secure string result allows unknown key",
+      "operation": "fetchSecureString",
+      "result": {
+        "status": "unknownKey"
+      },
+      "operation_name": "lookup",
+      "key": "secret",
+      "expected": {}
+    },
+    {
+      "name": "handle fetch secure string result throws networking error",
+      "operation": "fetchSecureString",
+      "result": {
+        "status": "poorNetwork"
+      },
+      "operation_name": "lookup",
+      "key": "secret",
+      "expected": {
+        "error": {
+          "kind": "networkingError",
+          "message_contains": "fetchSecureString lookup for secret"
+        }
+      }
+    },
+    {
+      "name": "handle fetch secure string result throws rejection error",
+      "operation": "fetchSecureString",
+      "result": {
+        "status": "rejected",
+        "arc": "arc",
+        "rejection_reasons": "reasons"
+      },
+      "operation_name": "definition",
+      "key": "secret",
+      "expected": {
+        "error": {
+          "kind": "rejectionError",
+          "message_contains": "fetchSecureString definition for secret",
+          "arc": "arc",
+          "rejection_reasons": "reasons"
+        }
+      }
+    },
+    {
+      "name": "handle fetch custom jwt result allows success",
+      "operation": "fetchCustomJwt",
+      "result": {
+        "status": "success"
+      },
+      "expected": {}
+    },
+    {
+      "name": "handle fetch custom jwt result throws networking error",
+      "operation": "fetchCustomJwt",
+      "result": {
+        "status": "mitmDetected"
+      },
+      "expected": {
+        "error": {
+          "kind": "networkingError",
+          "message_contains": "fetchCustomJWT network error"
+        }
+      }
+    },
+    {
+      "name": "handle fetch custom jwt result throws rejection error",
+      "operation": "fetchCustomJwt",
+      "result": {
+        "status": "rejected",
+        "arc": "arc",
+        "rejection_reasons": "reasons"
+      },
+      "expected": {
+        "error": {
+          "kind": "rejectionError",
+          "message_contains": "fetchCustomJWT",
+          "arc": "arc",
+          "rejection_reasons": "reasons"
+        }
+      }
+    },
+    {
+      "name": "handle interceptor fetch token result returns false for unknown url",
+      "operation": "interceptorFetchToken",
+      "result": {
+        "status": "unknownURL"
+      },
+      "url": "https://example.com/unknown",
+      "expected": {
+        "return_value": false
+      }
+    },
+    {
+      "name": "handle interceptor fetch token result allows success",
+      "operation": "interceptorFetchToken",
+      "result": {
+        "status": "success"
+      },
+      "url": "https://example.com/protected",
+      "expected": {
+        "return_value": true
+      }
+    },
+    {
+      "name": "handle interceptor fetch token result throws networking error",
+      "operation": "interceptorFetchToken",
+      "result": {
+        "status": "poorNetwork"
+      },
+      "url": "https://example.com/protected",
+      "expected": {
+        "error": {
+          "kind": "networkingError",
+          "message_contains": "Approov token fetch for https://example.com/protected"
+        }
+      }
+    },
+    {
+      "name": "handle interceptor fetch token result throws permanent error",
+      "operation": "interceptorFetchToken",
+      "result": {
+        "status": "badURL"
+      },
+      "url": "https://example.com/protected",
+      "expected": {
+        "error": {
+          "kind": "permanentError",
+          "message_contains": "Approov token fetch"
+        }
+      }
+    },
+    {
+      "name": "handle interceptor header substitution result throws rejection error",
+      "operation": "interceptorHeaderSubstitution",
+      "result": {
+        "status": "rejected",
+        "arc": "arc-code",
+        "rejection_reasons": "rooted,hooked"
+      },
+      "header": "Api-Key",
+      "expected": {
+        "error": {
+          "kind": "rejectionError",
+          "message_contains": "Header substitution",
+          "arc": "arc-code",
+          "rejection_reasons": "rooted,hooked"
+        }
+      }
+    },
+    {
+      "name": "handle interceptor header substitution result allows success",
+      "operation": "interceptorHeaderSubstitution",
+      "result": {
+        "status": "success"
+      },
+      "header": "Api-Key",
+      "expected": {
+        "return_value": true
+      }
+    },
+    {
+      "name": "handle interceptor header substitution result returns false for unknown key",
+      "operation": "interceptorHeaderSubstitution",
+      "result": {
+        "status": "unknownKey"
+      },
+      "header": "Api-Key",
+      "expected": {
+        "return_value": false
+      }
+    },
+    {
+      "name": "handle interceptor header substitution result throws networking error",
+      "operation": "interceptorHeaderSubstitution",
+      "result": {
+        "status": "noNetwork"
+      },
+      "header": "Api-Key",
+      "expected": {
+        "error": {
+          "kind": "networkingError",
+          "message_contains": "Header substitution for Api-Key"
+        }
+      }
+    },
+    {
+      "name": "handle interceptor header substitution result throws permanent error",
+      "operation": "interceptorHeaderSubstitution",
+      "result": {
+        "status": "badKey"
+      },
+      "header": "Api-Key",
+      "expected": {
+        "error": {
+          "kind": "permanentError",
+          "message_contains": "Header substitution for Api-Key"
+        }
+      }
+    },
+    {
+      "name": "handle interceptor query param substitution result allows success",
+      "operation": "interceptorQueryParamSubstitution",
+      "result": {
+        "status": "success"
+      },
+      "query_key": "query",
+      "expected": {
+        "return_value": true
+      }
+    },
+    {
+      "name": "handle interceptor query param substitution result returns false for unknown key",
+      "operation": "interceptorQueryParamSubstitution",
+      "result": {
+        "status": "unknownKey"
+      },
+      "query_key": "query",
+      "expected": {
+        "return_value": false
+      }
+    },
+    {
+      "name": "handle interceptor query param substitution result throws rejection error",
+      "operation": "interceptorQueryParamSubstitution",
+      "result": {
+        "status": "rejected",
+        "arc": "arc",
+        "rejection_reasons": "reasons"
+      },
+      "query_key": "query",
+      "expected": {
+        "error": {
+          "kind": "rejectionError",
+          "message_contains": "Query parameter substitution for query",
+          "arc": "arc",
+          "rejection_reasons": "reasons"
+        }
+      }
+    },
+    {
+      "name": "handle interceptor query param substitution result throws networking error",
+      "operation": "interceptorQueryParamSubstitution",
+      "result": {
+        "status": "poorNetwork"
+      },
+      "query_key": "query",
+      "expected": {
+        "error": {
+          "kind": "networkingError",
+          "message_contains": "Query parameter substitution for query"
+        }
+      }
+    },
+    {
+      "name": "handle interceptor query param substitution result throws permanent error",
+      "operation": "interceptorQueryParamSubstitution",
+      "result": {
+        "status": "badKey"
+      },
+      "query_key": "query",
+      "expected": {
+        "error": {
+          "kind": "permanentError",
+          "message_contains": "Query parameter substitution for query"
+        }
+      }
+    },
+    {
+      "name": "handle interceptor should process request honors exclusion regex",
+      "operation": "interceptorShouldProcessRequest",
+      "service_setup": {
+        "exclusion_regexes": [
+          "example\\.com/skip"
+        ]
+      },
+      "request": {
+        "url": "https://example.com/skip"
+      },
+      "expected": {
+        "return_value": false
+      }
+    },
+    {
+      "name": "handle interceptor should process request throws for missing url",
+      "operation": "interceptorShouldProcessRequest",
+      "request": {
+        "url": null
+      },
+      "expected": {
+        "error": {
+          "kind": "permanentError",
+          "message_contains": "no URL"
+        }
+      }
+    },
+    {
+      "name": "handle interceptor should process request returns true when no exclusion matches",
+      "operation": "interceptorShouldProcessRequest",
+      "request": {
+        "url": "https://example.com/path"
+      },
+      "expected": {
+        "return_value": true
+      }
+    },
+    {
+      "name": "handle interceptor processed request returns original request",
+      "operation": "interceptorProcessedRequest",
+      "request": {
+        "url": "https://example.com/path"
+      },
+      "expected": {
+        "request_unchanged": true
+      }
+    },
+    {
+      "name": "handle pinning should process request returns true",
+      "operation": "pinningShouldProcessRequest",
+      "request": {
+        "url": "https://example.com/path"
+      },
+      "expected": {
+        "return_value": true
+      }
+    }
+  ]
+}

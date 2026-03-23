@@ -1,10 +1,10 @@
-import Approov
 import XCTest
 @testable import ApproovURLSessionPackage
 
 final class ApproovServiceTests: XCTestCase {
     override func setUp() {
         super.setUp()
+        FixtureRunReporter.shared.installIfNeeded()
         ApproovService.resetForTesting()
     }
 
@@ -13,481 +13,132 @@ final class ApproovServiceTests: XCTestCase {
         super.tearDown()
     }
 
-    func testInitializeRejectsDifferentConfigWithoutReinitComment() throws {
-        let sdkClient = FakeApproovSDKClient()
-        ApproovService.setSDKClientForTesting(sdkClient)
+    func testInitializeFixtures() throws {
+        let suiteName = "service-initialize-fixtures.json"
+        let harnessName = "ApproovServiceTests.testInitializeFixtures"
+        let suite = try FixtureLoader.load(FixtureSuite<InitializeFixtureCase>.self, named: "service-initialize-fixtures.json")
 
-        try ApproovService.initialize(config: "config-one", comment: "first-pass")
+        for fixture in suite.cases {
+            try FixtureRunReporter.shared.runFixture(testCase: self, suite: suiteName, harness: harnessName, fixture: fixture.name) {
+                ApproovService.resetForTesting()
+                let sdkClient = FakeApproovSDKClient()
+                ApproovService.setSDKClientForTesting(sdkClient)
 
-        XCTAssertThrowsError(try ApproovService.initialize(config: "config-two", comment: "ordinary comment")) { error in
-            guard case ApproovError.configurationError(let message) = error else {
-                return XCTFail("Expected configurationError, got \(error)")
+                for step in fixture.steps {
+                    if let expectedError = step.expectedError {
+                        XCTAssertThrowsError(try ApproovService.initialize(config: step.config, comment: step.comment)) { error in
+                            assertError(error, matches: expectedError)
+                        }
+                    } else {
+                        XCTAssertNoThrow(try ApproovService.initialize(config: step.config, comment: step.comment))
+                    }
+                }
+
+                if let expectedInitializedConfigsCount = fixture.expectedInitializedConfigsCount {
+                    XCTAssertEqual(sdkClient.initializedConfigs.count, expectedInitializedConfigsCount)
+                }
+                if let expectedInitializedConfigs = fixture.expectedInitializedConfigs {
+                    XCTAssertEqual(sdkClient.initializedConfigs.count, expectedInitializedConfigs.count)
+                    for (actual, expected) in zip(sdkClient.initializedConfigs, expectedInitializedConfigs) {
+                        XCTAssertEqual(actual.0, expected.config)
+                        if let updateConfig = expected.updateConfig {
+                            XCTAssertEqual(actual.1, updateConfig)
+                        }
+                        if let comment = expected.comment {
+                            XCTAssertEqual(actual.2, comment)
+                        }
+                    }
+                }
             }
-            XCTAssertTrue(message.contains("different configuration"))
         }
-        XCTAssertEqual(sdkClient.initializedConfigs.count, 1)
-        XCTAssertEqual(sdkClient.initializedConfigs.first?.0, "config-one")
     }
 
-    func testUpdateRequestWithApproovAppliesTokenAndSubstitutions() throws {
-        let sdkClient = FakeApproovSDKClient()
-        let url = try XCTUnwrap(URL(string: "https://example.com/path?a(b=query-placeholder"))
-        sdkClient.tokenResultsByURL[url.absoluteString] = FakeApproovTokenFetchResult(
-            status: .success,
-            token: "approov-token",
-            traceID: "trace-123",
-            isConfigChanged: true,
-            loggableToken: "loggable-token"
-        )
-        sdkClient.secureStringResultsByKey["header-secret"] = FakeApproovTokenFetchResult(
-            status: .success,
-            secureString: "live-header-secret"
-        )
-        sdkClient.secureStringResultsByKey["query-placeholder"] = FakeApproovTokenFetchResult(
-            status: .success,
-            secureString: "live-query-secret"
-        )
+    func testUpdateRequestFixtures() throws {
+        let suiteName = "service-update-request-fixtures.json"
+        let harnessName = "ApproovServiceTests.testUpdateRequestFixtures"
+        let suite = try FixtureLoader.load(FixtureSuite<UpdateRequestFixtureCase>.self, named: "service-update-request-fixtures.json")
 
-        let mutator = RecordingMutator()
-        ApproovService.setSDKClientForTesting(sdkClient)
-        try ApproovService.initialize(config: "config")
-        ApproovService.setApproovHeader(header: "Approov-Token", prefix: "Bearer ")
-        ApproovService.setBindingHeader(header: "Authorization")
-        ApproovService.addSubstitutionHeader(header: "Api-Key", prefix: "Bearer ")
-        ApproovService.addSubstitutionQueryParam(key: "a(b")
-        ApproovService.setServiceMutator(mutator)
+        for fixture in suite.cases {
+            try FixtureRunReporter.shared.runFixture(testCase: self, suite: suiteName, harness: harnessName, fixture: fixture.name) {
+                ApproovService.resetForTesting()
+                let sdkClient = FakeApproovSDKClient()
+                configureSDK(sdkClient, with: fixture.sdk)
+                ApproovService.setSDKClientForTesting(sdkClient)
 
-        var request = URLRequest(url: url)
-        request.setValue("Bearer binding-value", forHTTPHeaderField: "Authorization")
-        request.setValue("Bearer header-secret", forHTTPHeaderField: "Api-Key")
+                do {
+                    try applyServiceSetup(fixture.setup)
+                } catch {
+                    return XCTFail("Unable to apply setup for fixture \(fixture.name): \(error)")
+                }
 
-        let sessionConfig = URLSessionConfiguration.ephemeral
-        sessionConfig.httpAdditionalHeaders = ["X-Session": "session-value"]
+                let recordingMutator: FixtureBackedMutator?
+                if let mutatorFixture = fixture.mutator {
+                    let mutator = FixtureBackedMutator(fixture: mutatorFixture)
+                    recordingMutator = mutator
+                    ApproovService.setServiceMutator(mutator)
+                } else {
+                    recordingMutator = nil
+                }
 
-        let response = ApproovService.updateRequestWithApproov(request: request, sessionConfig: sessionConfig)
+                let requestAndSessionConfig: (URLRequest, URLSessionConfiguration?)
+                do {
+                    requestAndSessionConfig = try makeRequest(from: fixture.request)
+                } catch {
+                    return XCTFail("Unable to build request for fixture \(fixture.name): \(error)")
+                }
+                let (request, sessionConfig) = requestAndSessionConfig
+                let response = ApproovService.updateRequestWithApproov(request: request, sessionConfig: sessionConfig)
 
-        XCTAssertEqual(response.decision, .ShouldProceed)
-        XCTAssertEqual(response.sdkMessage, "SUCCESS")
-        XCTAssertNil(response.error)
-        XCTAssertEqual(response.request.value(forHTTPHeaderField: "Approov-Token"), "Bearer approov-token")
-        XCTAssertEqual(response.request.value(forHTTPHeaderField: "Approov-TraceID"), "trace-123")
-        XCTAssertEqual(response.request.value(forHTTPHeaderField: "Api-Key"), "Bearer live-header-secret")
-        XCTAssertEqual(response.request.value(forHTTPHeaderField: "X-Mutated"), "true")
-        XCTAssertTrue(response.request.url?.absoluteString.contains("live-query-secret") == true)
-        XCTAssertEqual(sdkClient.dataHashes, ["Bearer binding-value"])
-        XCTAssertEqual(sdkClient.fetchedConfigCount, 1)
-        XCTAssertEqual(mutator.tokenHeaderKey, "Approov-Token")
-        XCTAssertEqual(mutator.traceIDHeaderKey, "Approov-TraceID")
-        XCTAssertEqual(mutator.substitutionHeaderKeys, ["Api-Key"])
-        XCTAssertEqual(mutator.substitutionQueryParamKeys, ["a(b"])
-        XCTAssertEqual(mutator.originalURL, url.absoluteString)
-    }
+                XCTAssertEqual(response.decision, fixture.expected.decision.toDecision())
+                if let sdkMessage = fixture.expected.sdkMessage {
+                    XCTAssertEqual(response.sdkMessage, sdkMessage)
+                }
+                assertError(response.error, matches: fixture.expected.error)
 
-    func testUpdateRequestWithApproovReturnsRetryForNoNetwork() throws {
-        let sdkClient = FakeApproovSDKClient()
-        let url = try XCTUnwrap(URL(string: "https://example.com/protected"))
-        sdkClient.tokenResultsByURL[url.absoluteString] = FakeApproovTokenFetchResult(status: .noNetwork)
-        ApproovService.setSDKClientForTesting(sdkClient)
-        try ApproovService.initialize(config: "config")
+                if let requestUrl = fixture.expected.requestUrl {
+                    XCTAssertEqual(response.request.url?.absoluteString, requestUrl)
+                }
+                if let requestUrlContains = fixture.expected.requestUrlContains {
+                    XCTAssertTrue(response.request.url?.absoluteString.contains(requestUrlContains) == true)
+                }
+                fixture.expected.headerValues?.forEach { header, expectedValue in
+                    XCTAssertEqual(response.request.value(forHTTPHeaderField: header), expectedValue)
+                }
+                fixture.expected.absentHeaders?.forEach { header in
+                    XCTAssertNil(response.request.value(forHTTPHeaderField: header))
+                }
 
-        let response = ApproovService.updateRequestWithApproov(request: URLRequest(url: url), sessionConfig: nil)
+                if let sdkExpectation = fixture.expected.sdk {
+                    if let dataHashes = sdkExpectation.dataHashes {
+                        XCTAssertEqual(sdkClient.dataHashes, dataHashes)
+                    }
+                    if let fetchedConfigCount = sdkExpectation.fetchedConfigCount {
+                        XCTAssertEqual(sdkClient.fetchedConfigCount, fetchedConfigCount)
+                    }
+                    if let fetchedTokenUrls = sdkExpectation.fetchedTokenUrls {
+                        XCTAssertEqual(sdkClient.fetchedTokenURLs, fetchedTokenUrls)
+                    }
+                    if let fetchedSecureStringKeys = sdkExpectation.fetchedSecureStringKeys {
+                        let actual = sdkClient.fetchedSecureStringKeys.map { SecureStringFetchExpectation(key: $0.0, newDef: $0.1) }
+                        XCTAssertEqual(actual, fetchedSecureStringKeys)
+                    }
+                }
 
-        XCTAssertEqual(response.decision, .ShouldRetry)
-        guard case ApproovError.networkingError(let message)? = response.error else {
-            return XCTFail("Expected networking error, got \(String(describing: response.error))")
+                if let expectedMutations = fixture.expected.recordedMutations {
+                    guard let actualMutations = recordingMutator?.recordedMutations else {
+                        return XCTFail("Expected recorded mutations for fixture \(fixture.name)")
+                    }
+                    XCTAssertEqual(actualMutations.tokenHeaderKey, expectedMutations.tokenHeaderKey)
+                    XCTAssertEqual(actualMutations.traceIdHeaderKey, expectedMutations.traceIdHeaderKey)
+                    if let substitutionHeaderKeys = expectedMutations.substitutionHeaderKeys {
+                        XCTAssertEqual(actualMutations.substitutionHeaderKeys, substitutionHeaderKeys.sorted())
+                    }
+                    if let substitutionQueryParamKeys = expectedMutations.substitutionQueryParamKeys {
+                        XCTAssertEqual(actualMutations.substitutionQueryParamKeys, substitutionQueryParamKeys.sorted())
+                    }
+                    XCTAssertEqual(actualMutations.originalUrl, expectedMutations.originalUrl)
+                }
+            }
         }
-        XCTAssertTrue(message.contains("Approov token fetch"))
-    }
-
-    func testUpdateRequestWithApproovIgnoresRequestsWhenNotInitialized() throws {
-        let url = try XCTUnwrap(URL(string: "https://example.com/protected"))
-
-        let response = ApproovService.updateRequestWithApproov(request: URLRequest(url: url), sessionConfig: nil)
-
-        XCTAssertEqual(response.decision, .ShouldIgnore)
-        XCTAssertNil(response.error)
-    }
-
-    func testUpdateRequestWithApproovIgnoresRequestWithoutURL() {
-        var request = URLRequest(url: URL(string: "https://example.com/placeholder")!)
-        request.url = nil
-
-        let response = ApproovService.updateRequestWithApproov(request: request, sessionConfig: nil)
-
-        XCTAssertEqual(response.decision, .ShouldIgnore)
-        XCTAssertNil(response.error)
-    }
-
-    func testUpdateRequestWithApproovIgnoresRequestWhenMutatorExcludesIt() throws {
-        let sdkClient = FakeApproovSDKClient()
-        let mutator = ConfigurableMutator()
-        let url = try XCTUnwrap(URL(string: "https://example.com/protected"))
-        mutator.shouldProcessRequest = { _ in false }
-        ApproovService.setSDKClientForTesting(sdkClient)
-        ApproovService.setServiceMutator(mutator)
-        try ApproovService.initialize(config: "config")
-
-        let response = ApproovService.updateRequestWithApproov(request: URLRequest(url: url), sessionConfig: nil)
-
-        XCTAssertEqual(response.decision, .ShouldIgnore)
-        XCTAssertTrue(sdkClient.fetchedTokenURLs.isEmpty)
-    }
-
-    func testUpdateRequestWithApproovMapsMutatorShouldProcessErrors() throws {
-        let sdkClient = FakeApproovSDKClient()
-        let url = try XCTUnwrap(URL(string: "https://example.com/protected"))
-
-        let networkingMutator = ConfigurableMutator()
-        networkingMutator.shouldProcessRequest = { _ in
-            throw ApproovError.networkingError(message: "no network")
-        }
-        ApproovService.setSDKClientForTesting(sdkClient)
-        ApproovService.setServiceMutator(networkingMutator)
-        try ApproovService.initialize(config: "config")
-
-        let retryResponse = ApproovService.updateRequestWithApproov(request: URLRequest(url: url), sessionConfig: nil)
-        XCTAssertEqual(retryResponse.decision, .ShouldRetry)
-
-        ApproovService.resetForTesting()
-        let failingMutator = ConfigurableMutator()
-        failingMutator.shouldProcessRequest = { _ in
-            throw ApproovError.permanentError(message: "bad request")
-        }
-        ApproovService.setSDKClientForTesting(sdkClient)
-        ApproovService.setServiceMutator(failingMutator)
-        try ApproovService.initialize(config: "config")
-
-        let failResponse = ApproovService.updateRequestWithApproov(request: URLRequest(url: url), sessionConfig: nil)
-        XCTAssertEqual(failResponse.decision, .ShouldFail)
-    }
-
-    func testUpdateRequestWithApproovReturnsProceedWithoutMutationForUnknownURL() throws {
-        let sdkClient = FakeApproovSDKClient()
-        let url = try XCTUnwrap(URL(string: "https://example.com/unprotected"))
-        sdkClient.tokenResultsByURL[url.absoluteString] = FakeApproovTokenFetchResult(status: .unknownURL)
-        ApproovService.setSDKClientForTesting(sdkClient)
-        try ApproovService.initialize(config: "config")
-
-        let response = ApproovService.updateRequestWithApproov(request: URLRequest(url: url), sessionConfig: nil)
-
-        XCTAssertEqual(response.decision, .ShouldProceed)
-        XCTAssertNil(response.request.value(forHTTPHeaderField: "Approov-Token"))
-    }
-
-    func testUpdateRequestWithApproovReturnsProceedWithoutMutationForNoApproovService() throws {
-        let sdkClient = FakeApproovSDKClient()
-        let url = try XCTUnwrap(URL(string: "https://example.com/no-service"))
-        sdkClient.tokenResultsByURL[url.absoluteString] = FakeApproovTokenFetchResult(status: .noApproovService)
-        ApproovService.setSDKClientForTesting(sdkClient)
-        try ApproovService.initialize(config: "config")
-
-        let response = ApproovService.updateRequestWithApproov(request: URLRequest(url: url), sessionConfig: nil)
-
-        XCTAssertEqual(response.decision, .ShouldProceed)
-        XCTAssertNil(response.request.value(forHTTPHeaderField: "Approov-Token"))
-    }
-
-    func testUpdateRequestWithApproovReturnsProceedWithoutMutationForUnprotectedURL() throws {
-        let sdkClient = FakeApproovSDKClient()
-        let url = try XCTUnwrap(URL(string: "https://example.com/public"))
-        sdkClient.tokenResultsByURL[url.absoluteString] = FakeApproovTokenFetchResult(status: .unprotectedURL)
-        ApproovService.setSDKClientForTesting(sdkClient)
-        try ApproovService.initialize(config: "config")
-
-        let response = ApproovService.updateRequestWithApproov(request: URLRequest(url: url), sessionConfig: nil)
-
-        XCTAssertEqual(response.decision, .ShouldProceed)
-        XCTAssertNil(response.request.value(forHTTPHeaderField: "Approov-Token"))
-    }
-
-    func testUpdateRequestWithApproovUsesStatusHeaderWhenTokenEmpty() throws {
-        let sdkClient = FakeApproovSDKClient()
-        let url = try XCTUnwrap(URL(string: "https://example.com/protected"))
-        sdkClient.tokenResultsByURL[url.absoluteString] = FakeApproovTokenFetchResult(status: .success, token: "")
-        ApproovService.setSDKClientForTesting(sdkClient)
-        try ApproovService.initialize(config: "config")
-        ApproovService.setUseApproovStatusIfNoToken(shouldUse: true)
-
-        let response = ApproovService.updateRequestWithApproov(request: URLRequest(url: url), sessionConfig: nil)
-
-        XCTAssertEqual(response.decision, .ShouldProceed)
-        XCTAssertEqual(response.request.value(forHTTPHeaderField: "Approov-Token"), "SUCCESS")
-    }
-
-    func testUpdateRequestWithApproovOmitsTraceHeaderWhenDisabled() throws {
-        let sdkClient = FakeApproovSDKClient()
-        let url = try XCTUnwrap(URL(string: "https://example.com/protected"))
-        sdkClient.tokenResultsByURL[url.absoluteString] = FakeApproovTokenFetchResult(
-            status: .success,
-            token: "approov-token",
-            traceID: "trace-123"
-        )
-        ApproovService.setSDKClientForTesting(sdkClient)
-        try ApproovService.initialize(config: "config")
-        ApproovService.setApproovTraceIDHeader(header: nil)
-
-        let response = ApproovService.updateRequestWithApproov(request: URLRequest(url: url), sessionConfig: nil)
-
-        XCTAssertNil(response.request.value(forHTTPHeaderField: "Approov-TraceID"))
-    }
-
-    func testUpdateRequestWithApproovLeavesHeaderUnchangedWhenSecureStringUnknown() throws {
-        let sdkClient = FakeApproovSDKClient()
-        let url = try XCTUnwrap(URL(string: "https://example.com/protected"))
-        sdkClient.tokenResultsByURL[url.absoluteString] = FakeApproovTokenFetchResult(status: .success, token: "approov-token")
-        sdkClient.secureStringResultsByKey["header-secret"] = FakeApproovTokenFetchResult(status: .unknownKey)
-        ApproovService.setSDKClientForTesting(sdkClient)
-        try ApproovService.initialize(config: "config")
-        ApproovService.addSubstitutionHeader(header: "Api-Key", prefix: "Bearer ")
-
-        var request = URLRequest(url: url)
-        request.setValue("Bearer header-secret", forHTTPHeaderField: "Api-Key")
-
-        let response = ApproovService.updateRequestWithApproov(request: request, sessionConfig: nil)
-
-        XCTAssertEqual(response.decision, .ShouldProceed)
-        XCTAssertEqual(response.request.value(forHTTPHeaderField: "Api-Key"), "Bearer header-secret")
-    }
-
-    func testUpdateRequestWithApproovSubstitutesSessionConfigurationHeaderAndUsesSessionBindingHeader() throws {
-        let sdkClient = FakeApproovSDKClient()
-        let url = try XCTUnwrap(URL(string: "https://example.com/protected"))
-        sdkClient.tokenResultsByURL[url.absoluteString] = FakeApproovTokenFetchResult(status: .success, token: "approov-token")
-        sdkClient.secureStringResultsByKey["header-secret"] = FakeApproovTokenFetchResult(status: .success, secureString: "live-header-secret")
-        ApproovService.setSDKClientForTesting(sdkClient)
-        try ApproovService.initialize(config: "config")
-        ApproovService.setBindingHeader(header: "Authorization")
-        ApproovService.addSubstitutionHeader(header: "Api-Key", prefix: "Bearer ")
-
-        let sessionConfig = URLSessionConfiguration.ephemeral
-        sessionConfig.httpAdditionalHeaders = [
-            "Authorization": "Bearer session-binding",
-            "Api-Key": "Bearer header-secret"
-        ]
-
-        let response = ApproovService.updateRequestWithApproov(request: URLRequest(url: url), sessionConfig: sessionConfig)
-
-        XCTAssertEqual(response.decision, .ShouldProceed)
-        XCTAssertEqual(response.request.value(forHTTPHeaderField: "Api-Key"), "Bearer live-header-secret")
-        XCTAssertEqual(sdkClient.dataHashes, ["Bearer session-binding"])
-    }
-
-    func testUpdateRequestWithApproovFailsWhenHeaderSubstitutionReturnsNilString() throws {
-        let sdkClient = FakeApproovSDKClient()
-        let url = try XCTUnwrap(URL(string: "https://example.com/protected"))
-        sdkClient.tokenResultsByURL[url.absoluteString] = FakeApproovTokenFetchResult(status: .success, token: "approov-token")
-        sdkClient.secureStringResultsByKey["header-secret"] = FakeApproovTokenFetchResult(status: .success, secureString: nil)
-        ApproovService.setSDKClientForTesting(sdkClient)
-        try ApproovService.initialize(config: "config")
-        ApproovService.addSubstitutionHeader(header: "Api-Key", prefix: "Bearer ")
-
-        var request = URLRequest(url: url)
-        request.setValue("Bearer header-secret", forHTTPHeaderField: "Api-Key")
-
-        let response = ApproovService.updateRequestWithApproov(request: request, sessionConfig: nil)
-
-        XCTAssertEqual(response.decision, .ShouldFail)
-        guard case ApproovError.permanentError(let message)? = response.error else {
-            return XCTFail("Expected permanentError, got \(String(describing: response.error))")
-        }
-        XCTAssertTrue(message.contains("Header substitution"))
-    }
-
-    func testUpdateRequestWithApproovMapsHeaderSubstitutionMutatorErrors() throws {
-        let sdkClient = FakeApproovSDKClient()
-        let url = try XCTUnwrap(URL(string: "https://example.com/protected"))
-        sdkClient.tokenResultsByURL[url.absoluteString] = FakeApproovTokenFetchResult(status: .success, token: "approov-token")
-        sdkClient.secureStringResultsByKey["header-secret"] = FakeApproovTokenFetchResult(status: .success, secureString: "live-secret")
-
-        let retryMutator = ConfigurableMutator()
-        retryMutator.headerSubstitutionResult = { _, _ in
-            throw ApproovError.networkingError(message: "retry")
-        }
-        ApproovService.setSDKClientForTesting(sdkClient)
-        ApproovService.setServiceMutator(retryMutator)
-        try ApproovService.initialize(config: "config")
-        ApproovService.addSubstitutionHeader(header: "Api-Key", prefix: "Bearer ")
-
-        var request = URLRequest(url: url)
-        request.setValue("Bearer header-secret", forHTTPHeaderField: "Api-Key")
-
-        let retryResponse = ApproovService.updateRequestWithApproov(request: request, sessionConfig: nil)
-        XCTAssertEqual(retryResponse.decision, .ShouldRetry)
-
-        ApproovService.resetForTesting()
-        let failMutator = ConfigurableMutator()
-        failMutator.headerSubstitutionResult = { _, _ in
-            throw ApproovError.permanentError(message: "fail")
-        }
-        ApproovService.setSDKClientForTesting(sdkClient)
-        ApproovService.setServiceMutator(failMutator)
-        try ApproovService.initialize(config: "config")
-        ApproovService.addSubstitutionHeader(header: "Api-Key", prefix: "Bearer ")
-
-        request = URLRequest(url: url)
-        request.setValue("Bearer header-secret", forHTTPHeaderField: "Api-Key")
-
-        let failResponse = ApproovService.updateRequestWithApproov(request: request, sessionConfig: nil)
-        XCTAssertEqual(failResponse.decision, .ShouldFail)
-    }
-
-    func testUpdateRequestWithApproovLeavesQueryUnchangedWhenSecureStringUnknown() throws {
-        let sdkClient = FakeApproovSDKClient()
-        let url = try XCTUnwrap(URL(string: "https://example.com/path?query=placeholder"))
-        sdkClient.tokenResultsByURL[url.absoluteString] = FakeApproovTokenFetchResult(status: .success, token: "approov-token")
-        sdkClient.secureStringResultsByKey["placeholder"] = FakeApproovTokenFetchResult(status: .unknownKey)
-        ApproovService.setSDKClientForTesting(sdkClient)
-        try ApproovService.initialize(config: "config")
-        ApproovService.addSubstitutionQueryParam(key: "query")
-
-        let response = ApproovService.updateRequestWithApproov(request: URLRequest(url: url), sessionConfig: nil)
-
-        XCTAssertEqual(response.decision, .ShouldProceed)
-        XCTAssertEqual(response.request.url?.absoluteString, url.absoluteString)
-    }
-
-    func testUpdateRequestWithApproovSubstitutesRepeatedQueryParameters() throws {
-        let sdkClient = FakeApproovSDKClient()
-        let url = try XCTUnwrap(URL(string: "https://example.com/path?query=first&query=second"))
-        sdkClient.tokenResultsByURL[url.absoluteString] = FakeApproovTokenFetchResult(status: .success, token: "approov-token")
-        sdkClient.secureStringResultsByKey["first"] = FakeApproovTokenFetchResult(status: .success, secureString: "first-live")
-        sdkClient.secureStringResultsByKey["second"] = FakeApproovTokenFetchResult(status: .success, secureString: "second-live")
-        ApproovService.setSDKClientForTesting(sdkClient)
-        try ApproovService.initialize(config: "config")
-        ApproovService.addSubstitutionQueryParam(key: "query")
-
-        let response = ApproovService.updateRequestWithApproov(request: URLRequest(url: url), sessionConfig: nil)
-
-        XCTAssertEqual(response.decision, .ShouldProceed)
-        XCTAssertEqual(
-            response.request.url?.absoluteString,
-            "https://example.com/path?query=first-live&query=second-live"
-        )
-    }
-
-    func testUpdateRequestWithApproovPercentEncodesUnsafeQuerySubstitutionCharacters() throws {
-        let sdkClient = FakeApproovSDKClient()
-        let url = try XCTUnwrap(URL(string: "https://example.com/path?query=placeholder"))
-        sdkClient.tokenResultsByURL[url.absoluteString] = FakeApproovTokenFetchResult(status: .success, token: "approov-token")
-        sdkClient.secureStringResultsByKey["placeholder"] = FakeApproovTokenFetchResult(status: .success, secureString: "\n")
-        ApproovService.setSDKClientForTesting(sdkClient)
-        try ApproovService.initialize(config: "config")
-        ApproovService.addSubstitutionQueryParam(key: "query")
-
-        let response = ApproovService.updateRequestWithApproov(request: URLRequest(url: url), sessionConfig: nil)
-
-        XCTAssertEqual(response.decision, .ShouldProceed)
-        XCTAssertNil(response.error)
-        XCTAssertEqual(response.request.url?.absoluteString, "https://example.com/path?query=%0A")
-    }
-
-    func testUpdateRequestWithApproovMapsQuerySubstitutionMutatorErrors() throws {
-        let sdkClient = FakeApproovSDKClient()
-        let url = try XCTUnwrap(URL(string: "https://example.com/path?query=placeholder"))
-        sdkClient.tokenResultsByURL[url.absoluteString] = FakeApproovTokenFetchResult(status: .success, token: "approov-token")
-        sdkClient.secureStringResultsByKey["placeholder"] = FakeApproovTokenFetchResult(status: .success, secureString: "live-query")
-
-        let retryMutator = ConfigurableMutator()
-        retryMutator.querySubstitutionResult = { _, _ in
-            throw ApproovError.networkingError(message: "retry")
-        }
-        ApproovService.setSDKClientForTesting(sdkClient)
-        ApproovService.setServiceMutator(retryMutator)
-        try ApproovService.initialize(config: "config")
-        ApproovService.addSubstitutionQueryParam(key: "query")
-
-        let retryResponse = ApproovService.updateRequestWithApproov(request: URLRequest(url: url), sessionConfig: nil)
-        XCTAssertEqual(retryResponse.decision, .ShouldRetry)
-
-        ApproovService.resetForTesting()
-        let failMutator = ConfigurableMutator()
-        failMutator.querySubstitutionResult = { _, _ in
-            throw ApproovError.permanentError(message: "fail")
-        }
-        ApproovService.setSDKClientForTesting(sdkClient)
-        ApproovService.setServiceMutator(failMutator)
-        try ApproovService.initialize(config: "config")
-        ApproovService.addSubstitutionQueryParam(key: "query")
-
-        let failResponse = ApproovService.updateRequestWithApproov(request: URLRequest(url: url), sessionConfig: nil)
-        XCTAssertEqual(failResponse.decision, .ShouldFail)
-    }
-
-    func testUpdateRequestWithApproovMapsProcessedRequestMutatorErrors() throws {
-        let sdkClient = FakeApproovSDKClient()
-        let url = try XCTUnwrap(URL(string: "https://example.com/protected"))
-        sdkClient.tokenResultsByURL[url.absoluteString] = FakeApproovTokenFetchResult(status: .success, token: "approov-token")
-
-        let retryMutator = ConfigurableMutator()
-        retryMutator.processedRequest = { _, _ in
-            throw ApproovError.networkingError(message: "retry")
-        }
-        ApproovService.setSDKClientForTesting(sdkClient)
-        ApproovService.setServiceMutator(retryMutator)
-        try ApproovService.initialize(config: "config")
-
-        let retryResponse = ApproovService.updateRequestWithApproov(request: URLRequest(url: url), sessionConfig: nil)
-        XCTAssertEqual(retryResponse.decision, .ShouldRetry)
-
-        ApproovService.resetForTesting()
-        let failMutator = ConfigurableMutator()
-        failMutator.processedRequest = { _, _ in
-            throw ApproovError.permanentError(message: "fail")
-        }
-        ApproovService.setSDKClientForTesting(sdkClient)
-        ApproovService.setServiceMutator(failMutator)
-        try ApproovService.initialize(config: "config")
-
-        let failResponse = ApproovService.updateRequestWithApproov(request: URLRequest(url: url), sessionConfig: nil)
-        XCTAssertEqual(failResponse.decision, .ShouldFail)
-    }
-}
-
-private final class RecordingMutator: ApproovServiceMutator {
-    var tokenHeaderKey: String?
-    var traceIDHeaderKey: String?
-    var substitutionHeaderKeys: [String] = []
-    var originalURL: String?
-    var substitutionQueryParamKeys: [String] = []
-
-    func handleInterceptorProcessedRequest(_ request: URLRequest,
-                                           changes: ApproovRequestMutations) throws -> URLRequest {
-        tokenHeaderKey = changes.getTokenHeaderKey()
-        traceIDHeaderKey = changes.getTraceIDHeaderKey()
-        substitutionHeaderKeys = changes.getSubstitutionHeaderKeys().sorted()
-        originalURL = changes.getOriginalURL()
-        substitutionQueryParamKeys = changes.getSubstitutionQueryParamKeys().sorted()
-
-        var request = request
-        request.setValue("true", forHTTPHeaderField: "X-Mutated")
-        return request
-    }
-}
-
-private final class ConfigurableMutator: ApproovServiceMutator {
-    var shouldProcessRequest: ((URLRequest) throws -> Bool)?
-    var headerSubstitutionResult: ((ApproovTokenFetchResult, String) throws -> Bool)?
-    var querySubstitutionResult: ((ApproovTokenFetchResult, String) throws -> Bool)?
-    var processedRequest: ((URLRequest, ApproovRequestMutations) throws -> URLRequest)?
-
-    func handleInterceptorShouldProcessRequest(_ request: URLRequest) throws -> Bool {
-        return try shouldProcessRequest?(request) ?? true
-    }
-
-    func handleInterceptorHeaderSubstitutionResult(_ approovResults: ApproovTokenFetchResult,
-                                                   header: String) throws -> Bool {
-        return try headerSubstitutionResult?(approovResults, header) ??
-            ApproovServiceMutatorDefault.shared.handleInterceptorHeaderSubstitutionResult(approovResults, header: header)
-    }
-
-    func handleInterceptorQueryParamSubstitutionResult(_ approovResults: ApproovTokenFetchResult,
-                                                       queryKey: String) throws -> Bool {
-        return try querySubstitutionResult?(approovResults, queryKey) ??
-            ApproovServiceMutatorDefault.shared.handleInterceptorQueryParamSubstitutionResult(approovResults, queryKey: queryKey)
-    }
-
-    func handleInterceptorProcessedRequest(_ request: URLRequest,
-                                           changes: ApproovRequestMutations) throws -> URLRequest {
-        return try processedRequest?(request, changes) ?? request
     }
 }

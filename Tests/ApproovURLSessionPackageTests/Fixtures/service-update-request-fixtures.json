@@ -1,0 +1,917 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "applies token and substitutions",
+      "setup": {
+        "initialize": {
+          "config": "config"
+        },
+        "approov_header": {
+          "header": "Approov-Token",
+          "prefix": "Bearer "
+        },
+        "binding_header": "Authorization",
+        "substitution_headers": [
+          {
+            "header": "Api-Key",
+            "prefix": "Bearer "
+          }
+        ],
+        "substitution_query_params": [
+          "a(b"
+        ]
+      },
+      "request": {
+        "url": "https://example.com/path?a(b=query-placeholder",
+        "headers": {
+          "Authorization": "Bearer binding-value",
+          "Api-Key": "Bearer header-secret"
+        },
+        "session_headers": {
+          "X-Session": "session-value"
+        }
+      },
+      "sdk": {
+        "token_results": [
+          {
+            "url": "https://example.com/path?a(b=query-placeholder",
+            "result": {
+              "status": "success",
+              "token": "approov-token",
+              "trace_id": "trace-123",
+              "is_config_changed": true,
+              "loggable_token": "loggable-token"
+            }
+          }
+        ],
+        "secure_string_results": [
+          {
+            "key": "header-secret",
+            "result": {
+              "status": "success",
+              "secure_string": "live-header-secret"
+            }
+          },
+          {
+            "key": "query-placeholder",
+            "result": {
+              "status": "success",
+              "secure_string": "live-query-secret"
+            }
+          }
+        ]
+      },
+      "mutator": {
+        "processed_request": {
+          "mode": "recordAndAddHeader",
+          "header": "X-Mutated",
+          "value": "true"
+        }
+      },
+      "expected": {
+        "decision": "proceed",
+        "sdk_message": "SUCCESS",
+        "request_url_contains": "live-query-secret",
+        "header_values": {
+          "Approov-Token": "Bearer approov-token",
+          "Approov-TraceID": "trace-123",
+          "Api-Key": "Bearer live-header-secret",
+          "X-Mutated": "true"
+        },
+        "sdk": {
+          "data_hashes": [
+            "Bearer binding-value"
+          ],
+          "fetched_config_count": 1
+        },
+        "recorded_mutations": {
+          "token_header_key": "Approov-Token",
+          "trace_id_header_key": "Approov-TraceID",
+          "substitution_header_keys": [
+            "Api-Key"
+          ],
+          "substitution_query_param_keys": [
+            "a(b"
+          ],
+          "original_url": "https://example.com/path?a(b=query-placeholder"
+        }
+      }
+    },
+    {
+      "name": "returns retry for no network",
+      "setup": {
+        "initialize": {
+          "config": "config"
+        }
+      },
+      "request": {
+        "url": "https://example.com/protected"
+      },
+      "sdk": {
+        "token_results": [
+          {
+            "url": "https://example.com/protected",
+            "result": {
+              "status": "noNetwork"
+            }
+          }
+        ]
+      },
+      "expected": {
+        "decision": "retry",
+        "error": {
+          "kind": "networkingError",
+          "message_contains": "Approov token fetch"
+        }
+      }
+    },
+    {
+      "name": "ignores requests when not initialized",
+      "request": {
+        "url": "https://example.com/protected"
+      },
+      "expected": {
+        "decision": "ignore"
+      }
+    },
+    {
+      "name": "ignores request without url",
+      "request": {
+        "url": null
+      },
+      "expected": {
+        "decision": "ignore"
+      }
+    },
+    {
+      "name": "ignores request when mutator excludes it",
+      "setup": {
+        "initialize": {
+          "config": "config"
+        }
+      },
+      "request": {
+        "url": "https://example.com/protected"
+      },
+      "mutator": {
+        "should_process_request": {
+          "mode": "returnValue",
+          "value": false
+        }
+      },
+      "expected": {
+        "decision": "ignore",
+        "sdk": {
+          "fetched_token_urls": []
+        }
+      }
+    },
+    {
+      "name": "maps mutator should process networking error",
+      "setup": {
+        "initialize": {
+          "config": "config"
+        }
+      },
+      "request": {
+        "url": "https://example.com/protected"
+      },
+      "mutator": {
+        "should_process_request": {
+          "mode": "throwError",
+          "error": {
+            "kind": "networkingError",
+            "message_contains": "no network"
+          }
+        }
+      },
+      "expected": {
+        "decision": "retry",
+        "error": {
+          "kind": "networkingError",
+          "message_contains": "no network"
+        }
+      }
+    },
+    {
+      "name": "maps mutator should process permanent error",
+      "setup": {
+        "initialize": {
+          "config": "config"
+        }
+      },
+      "request": {
+        "url": "https://example.com/protected"
+      },
+      "mutator": {
+        "should_process_request": {
+          "mode": "throwError",
+          "error": {
+            "kind": "permanentError",
+            "message_contains": "bad request"
+          }
+        }
+      },
+      "expected": {
+        "decision": "fail",
+        "error": {
+          "kind": "permanentError",
+          "message_contains": "bad request"
+        }
+      }
+    },
+    {
+      "name": "returns proceed without mutation for unknown url",
+      "setup": {
+        "initialize": {
+          "config": "config"
+        }
+      },
+      "request": {
+        "url": "https://example.com/unprotected"
+      },
+      "sdk": {
+        "token_results": [
+          {
+            "url": "https://example.com/unprotected",
+            "result": {
+              "status": "unknownURL"
+            }
+          }
+        ]
+      },
+      "expected": {
+        "decision": "proceed",
+        "absent_headers": [
+          "Approov-Token"
+        ]
+      }
+    },
+    {
+      "name": "returns proceed without mutation for no approov service",
+      "setup": {
+        "initialize": {
+          "config": "config"
+        }
+      },
+      "request": {
+        "url": "https://example.com/no-service"
+      },
+      "sdk": {
+        "token_results": [
+          {
+            "url": "https://example.com/no-service",
+            "result": {
+              "status": "noApproovService"
+            }
+          }
+        ]
+      },
+      "expected": {
+        "decision": "proceed",
+        "absent_headers": [
+          "Approov-Token"
+        ]
+      }
+    },
+    {
+      "name": "returns proceed without mutation for unprotected url",
+      "setup": {
+        "initialize": {
+          "config": "config"
+        }
+      },
+      "request": {
+        "url": "https://example.com/public"
+      },
+      "sdk": {
+        "token_results": [
+          {
+            "url": "https://example.com/public",
+            "result": {
+              "status": "unprotectedURL"
+            }
+          }
+        ]
+      },
+      "expected": {
+        "decision": "proceed",
+        "absent_headers": [
+          "Approov-Token"
+        ]
+      }
+    },
+    {
+      "name": "uses status header when token empty",
+      "setup": {
+        "initialize": {
+          "config": "config"
+        },
+        "use_approov_status_if_no_token": true
+      },
+      "request": {
+        "url": "https://example.com/protected"
+      },
+      "sdk": {
+        "token_results": [
+          {
+            "url": "https://example.com/protected",
+            "result": {
+              "status": "success",
+              "token": ""
+            }
+          }
+        ]
+      },
+      "expected": {
+        "decision": "proceed",
+        "header_values": {
+          "Approov-Token": "SUCCESS"
+        }
+      }
+    },
+    {
+      "name": "omits trace header when disabled",
+      "setup": {
+        "initialize": {
+          "config": "config"
+        },
+        "disable_trace_header": true
+      },
+      "request": {
+        "url": "https://example.com/protected"
+      },
+      "sdk": {
+        "token_results": [
+          {
+            "url": "https://example.com/protected",
+            "result": {
+              "status": "success",
+              "token": "approov-token",
+              "trace_id": "trace-123"
+            }
+          }
+        ]
+      },
+      "expected": {
+        "decision": "proceed",
+        "absent_headers": [
+          "Approov-TraceID"
+        ]
+      }
+    },
+    {
+      "name": "leaves header unchanged when secure string unknown",
+      "setup": {
+        "initialize": {
+          "config": "config"
+        },
+        "substitution_headers": [
+          {
+            "header": "Api-Key",
+            "prefix": "Bearer "
+          }
+        ]
+      },
+      "request": {
+        "url": "https://example.com/protected",
+        "headers": {
+          "Api-Key": "Bearer header-secret"
+        }
+      },
+      "sdk": {
+        "token_results": [
+          {
+            "url": "https://example.com/protected",
+            "result": {
+              "status": "success",
+              "token": "approov-token"
+            }
+          }
+        ],
+        "secure_string_results": [
+          {
+            "key": "header-secret",
+            "result": {
+              "status": "unknownKey"
+            }
+          }
+        ]
+      },
+      "expected": {
+        "decision": "proceed",
+        "header_values": {
+          "Api-Key": "Bearer header-secret"
+        }
+      }
+    },
+    {
+      "name": "substitutes session configuration header and uses session binding header",
+      "setup": {
+        "initialize": {
+          "config": "config"
+        },
+        "binding_header": "Authorization",
+        "substitution_headers": [
+          {
+            "header": "Api-Key",
+            "prefix": "Bearer "
+          }
+        ]
+      },
+      "request": {
+        "url": "https://example.com/protected",
+        "session_headers": {
+          "Authorization": "Bearer session-binding",
+          "Api-Key": "Bearer header-secret"
+        }
+      },
+      "sdk": {
+        "token_results": [
+          {
+            "url": "https://example.com/protected",
+            "result": {
+              "status": "success",
+              "token": "approov-token"
+            }
+          }
+        ],
+        "secure_string_results": [
+          {
+            "key": "header-secret",
+            "result": {
+              "status": "success",
+              "secure_string": "live-header-secret"
+            }
+          }
+        ]
+      },
+      "expected": {
+        "decision": "proceed",
+        "header_values": {
+          "Api-Key": "Bearer live-header-secret"
+        },
+        "sdk": {
+          "data_hashes": [
+            "Bearer session-binding"
+          ]
+        }
+      }
+    },
+    {
+      "name": "fails when header substitution returns nil string",
+      "setup": {
+        "initialize": {
+          "config": "config"
+        },
+        "substitution_headers": [
+          {
+            "header": "Api-Key",
+            "prefix": "Bearer "
+          }
+        ]
+      },
+      "request": {
+        "url": "https://example.com/protected",
+        "headers": {
+          "Api-Key": "Bearer header-secret"
+        }
+      },
+      "sdk": {
+        "token_results": [
+          {
+            "url": "https://example.com/protected",
+            "result": {
+              "status": "success",
+              "token": "approov-token"
+            }
+          }
+        ],
+        "secure_string_results": [
+          {
+            "key": "header-secret",
+            "result": {
+              "status": "success"
+            }
+          }
+        ]
+      },
+      "expected": {
+        "decision": "fail",
+        "error": {
+          "kind": "permanentError",
+          "message_contains": "Header substitution"
+        }
+      }
+    },
+    {
+      "name": "maps header substitution mutator networking error",
+      "setup": {
+        "initialize": {
+          "config": "config"
+        },
+        "substitution_headers": [
+          {
+            "header": "Api-Key",
+            "prefix": "Bearer "
+          }
+        ]
+      },
+      "request": {
+        "url": "https://example.com/protected",
+        "headers": {
+          "Api-Key": "Bearer header-secret"
+        }
+      },
+      "sdk": {
+        "token_results": [
+          {
+            "url": "https://example.com/protected",
+            "result": {
+              "status": "success",
+              "token": "approov-token"
+            }
+          }
+        ],
+        "secure_string_results": [
+          {
+            "key": "header-secret",
+            "result": {
+              "status": "success",
+              "secure_string": "live-secret"
+            }
+          }
+        ]
+      },
+      "mutator": {
+        "header_substitution": {
+          "mode": "throwError",
+          "error": {
+            "kind": "networkingError",
+            "message_contains": "retry"
+          }
+        }
+      },
+      "expected": {
+        "decision": "retry",
+        "error": {
+          "kind": "networkingError",
+          "message_contains": "retry"
+        }
+      }
+    },
+    {
+      "name": "maps header substitution mutator permanent error",
+      "setup": {
+        "initialize": {
+          "config": "config"
+        },
+        "substitution_headers": [
+          {
+            "header": "Api-Key",
+            "prefix": "Bearer "
+          }
+        ]
+      },
+      "request": {
+        "url": "https://example.com/protected",
+        "headers": {
+          "Api-Key": "Bearer header-secret"
+        }
+      },
+      "sdk": {
+        "token_results": [
+          {
+            "url": "https://example.com/protected",
+            "result": {
+              "status": "success",
+              "token": "approov-token"
+            }
+          }
+        ],
+        "secure_string_results": [
+          {
+            "key": "header-secret",
+            "result": {
+              "status": "success",
+              "secure_string": "live-secret"
+            }
+          }
+        ]
+      },
+      "mutator": {
+        "header_substitution": {
+          "mode": "throwError",
+          "error": {
+            "kind": "permanentError",
+            "message_contains": "fail"
+          }
+        }
+      },
+      "expected": {
+        "decision": "fail",
+        "error": {
+          "kind": "permanentError",
+          "message_contains": "fail"
+        }
+      }
+    },
+    {
+      "name": "leaves query unchanged when secure string unknown",
+      "setup": {
+        "initialize": {
+          "config": "config"
+        },
+        "substitution_query_params": [
+          "query"
+        ]
+      },
+      "request": {
+        "url": "https://example.com/path?query=placeholder"
+      },
+      "sdk": {
+        "token_results": [
+          {
+            "url": "https://example.com/path?query=placeholder",
+            "result": {
+              "status": "success",
+              "token": "approov-token"
+            }
+          }
+        ],
+        "secure_string_results": [
+          {
+            "key": "placeholder",
+            "result": {
+              "status": "unknownKey"
+            }
+          }
+        ]
+      },
+      "expected": {
+        "decision": "proceed",
+        "request_url": "https://example.com/path?query=placeholder"
+      }
+    },
+    {
+      "name": "substitutes repeated query parameters",
+      "setup": {
+        "initialize": {
+          "config": "config"
+        },
+        "substitution_query_params": [
+          "query"
+        ]
+      },
+      "request": {
+        "url": "https://example.com/path?query=first&query=second"
+      },
+      "sdk": {
+        "token_results": [
+          {
+            "url": "https://example.com/path?query=first&query=second",
+            "result": {
+              "status": "success",
+              "token": "approov-token"
+            }
+          }
+        ],
+        "secure_string_results": [
+          {
+            "key": "first",
+            "result": {
+              "status": "success",
+              "secure_string": "first-live"
+            }
+          },
+          {
+            "key": "second",
+            "result": {
+              "status": "success",
+              "secure_string": "second-live"
+            }
+          }
+        ]
+      },
+      "expected": {
+        "decision": "proceed",
+        "request_url": "https://example.com/path?query=first-live&query=second-live"
+      }
+    },
+    {
+      "name": "percent encodes unsafe query substitution characters",
+      "setup": {
+        "initialize": {
+          "config": "config"
+        },
+        "substitution_query_params": [
+          "query"
+        ]
+      },
+      "request": {
+        "url": "https://example.com/path?query=placeholder"
+      },
+      "sdk": {
+        "token_results": [
+          {
+            "url": "https://example.com/path?query=placeholder",
+            "result": {
+              "status": "success",
+              "token": "approov-token"
+            }
+          }
+        ],
+        "secure_string_results": [
+          {
+            "key": "placeholder",
+            "result": {
+              "status": "success",
+              "secure_string": "\n"
+            }
+          }
+        ]
+      },
+      "expected": {
+        "decision": "proceed",
+        "request_url": "https://example.com/path?query=%0A"
+      }
+    },
+    {
+      "name": "maps query substitution mutator networking error",
+      "setup": {
+        "initialize": {
+          "config": "config"
+        },
+        "substitution_query_params": [
+          "query"
+        ]
+      },
+      "request": {
+        "url": "https://example.com/path?query=placeholder"
+      },
+      "sdk": {
+        "token_results": [
+          {
+            "url": "https://example.com/path?query=placeholder",
+            "result": {
+              "status": "success",
+              "token": "approov-token"
+            }
+          }
+        ],
+        "secure_string_results": [
+          {
+            "key": "placeholder",
+            "result": {
+              "status": "success",
+              "secure_string": "live-query"
+            }
+          }
+        ]
+      },
+      "mutator": {
+        "query_substitution": {
+          "mode": "throwError",
+          "error": {
+            "kind": "networkingError",
+            "message_contains": "retry"
+          }
+        }
+      },
+      "expected": {
+        "decision": "retry",
+        "error": {
+          "kind": "networkingError",
+          "message_contains": "retry"
+        }
+      }
+    },
+    {
+      "name": "maps query substitution mutator permanent error",
+      "setup": {
+        "initialize": {
+          "config": "config"
+        },
+        "substitution_query_params": [
+          "query"
+        ]
+      },
+      "request": {
+        "url": "https://example.com/path?query=placeholder"
+      },
+      "sdk": {
+        "token_results": [
+          {
+            "url": "https://example.com/path?query=placeholder",
+            "result": {
+              "status": "success",
+              "token": "approov-token"
+            }
+          }
+        ],
+        "secure_string_results": [
+          {
+            "key": "placeholder",
+            "result": {
+              "status": "success",
+              "secure_string": "live-query"
+            }
+          }
+        ]
+      },
+      "mutator": {
+        "query_substitution": {
+          "mode": "throwError",
+          "error": {
+            "kind": "permanentError",
+            "message_contains": "fail"
+          }
+        }
+      },
+      "expected": {
+        "decision": "fail",
+        "error": {
+          "kind": "permanentError",
+          "message_contains": "fail"
+        }
+      }
+    },
+    {
+      "name": "maps processed request mutator networking error",
+      "setup": {
+        "initialize": {
+          "config": "config"
+        }
+      },
+      "request": {
+        "url": "https://example.com/protected"
+      },
+      "sdk": {
+        "token_results": [
+          {
+            "url": "https://example.com/protected",
+            "result": {
+              "status": "success",
+              "token": "approov-token"
+            }
+          }
+        ]
+      },
+      "mutator": {
+        "processed_request": {
+          "mode": "throwError",
+          "error": {
+            "kind": "networkingError",
+            "message_contains": "retry"
+          }
+        }
+      },
+      "expected": {
+        "decision": "retry",
+        "error": {
+          "kind": "networkingError",
+          "message_contains": "retry"
+        }
+      }
+    },
+    {
+      "name": "maps processed request mutator permanent error",
+      "setup": {
+        "initialize": {
+          "config": "config"
+        }
+      },
+      "request": {
+        "url": "https://example.com/protected"
+      },
+      "sdk": {
+        "token_results": [
+          {
+            "url": "https://example.com/protected",
+            "result": {
+              "status": "success",
+              "token": "approov-token"
+            }
+          }
+        ]
+      },
+      "mutator": {
+        "processed_request": {
+          "mode": "throwError",
+          "error": {
+            "kind": "permanentError",
+            "message_contains": "fail"
+          }
+        }
+      },
+      "expected": {
+        "decision": "fail",
+        "error": {
+          "kind": "permanentError",
+          "message_contains": "fail"
+        }
+      }
+    }
+  ]
+}

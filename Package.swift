@@ -43,7 +43,10 @@ let package = Package(
                 "ApproovURLSessionPackage",
                 .product(name: "Approov", package: "approov-ios-sdk")
             ],
-            path: "Tests/ApproovURLSessionPackageTests"
+            path: "Tests/ApproovURLSessionPackageTests",
+            resources: [
+                .process("Fixtures")
+            ]
         )
     ]
 )

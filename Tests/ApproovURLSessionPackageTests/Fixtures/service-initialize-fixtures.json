@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "initialize rejects different config without reinit comment",
+      "steps": [
+        {
+          "config": "config-one",
+          "comment": "first-pass"
+        },
+        {
+          "config": "config-two",
+          "comment": "ordinary comment",
+          "expected_error": {
+            "kind": "configurationError",
+            "message_contains": "different configuration"
+          }
+        }
+      ],
+      "expected_initialized_configs_count": 1,
+      "expected_initialized_configs": [
+        {
+          "config": "config-one",
+          "update_config": null,
+          "comment": "first-pass"
+        }
+      ]
+    }
+  ]
+}
