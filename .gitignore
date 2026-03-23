@@ -1,3 +1,4 @@
 .build
+.derivedData-tests
 .DS_Store
 .swiftpm

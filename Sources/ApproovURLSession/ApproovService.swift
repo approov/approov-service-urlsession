@@ -1060,10 +1060,11 @@ public class ApproovService {
             let escapedEntry = NSRegularExpression.escapedPattern(for: entry)
             let regex = try! NSRegularExpression(pattern: #"[\\?&]"# + escapedEntry + #"=([^&;]+)"#, options: [])
             let matches: [NSTextCheckingResult] = regex.matches(in: updateURLString, options: [], range: urlStringRange)
-            for match: NSTextCheckingResult in matches {
+            // Apply replacements from the end of the URL back to the start so earlier match ranges stay valid.
+            for match: NSTextCheckingResult in matches.reversed() {
                 // we skip the range at index 0 as this is the match (e.g. ?Api-Key=api_key_placeholder) for the whole
                 // regex, but we only want to replace the query parameter value part (e.g. api_key_placeholder)
-                for rangeIndex in 1..<match.numberOfRanges {
+                for rangeIndex in stride(from: match.numberOfRanges - 1, through: 1, by: -1) {
                     // we have found an occurrence of the query parameter to be replaced so we look up the existing
                     // value as a key for a secure string
                     let matchRange = match.range(at: rangeIndex)
