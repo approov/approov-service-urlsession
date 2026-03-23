@@ -8,6 +8,7 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 
 ### Breaking changes
 - Renamed the Swift Package Manager package to `ApproovURLSessionPackage`.
+- Renamed the CocoaPods `module_name` to `ApproovURLSessionPackage`; CocoaPods integrations must update their `import` statements to use the new module name.
 - Renamed the CocoaPods module name to `ApproovURLSessionPackage`. CocoaPods consumers must update imports to `import ApproovURLSessionPackage`.
 - `setProceedOnNetworkFailure()` and `getProceedOnNetworkFailure()` are no longer used internally and no longer affect behavior. To customize network failure handling, use `setServiceMutator` with a custom `ApproovServiceMutator`. By default, `.noNetwork`, `.poorNetwork`, and `.mitmDetected` now block the request unless a custom mutator overrides that behavior. See `USAGE.md` for details.
 
