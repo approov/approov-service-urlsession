@@ -16,7 +16,7 @@ The `ApproovServiceMutator` allows you to customize the behavior of the Approov 
 
 ## Default Behavior
 
-By default, the `ApproovService` processes requests based on the attestation status. It relies on the underlying SDK to provide a proof of attestation, which is a cryptographically signed JWT token. Requesting this attestation typically returns the token immediately; however, a network connection to the Approov cloud is required upon app launch or when the token is nearing expiration. Note that the SDK only knows if an attestation token has been obtained; it cannot determine if the token is valid (validity is checked by your backend). The default behavior is described in more detail in the official documentation section [Approov Token Fetch Results](https://approov.io/docs/latest/approov-usage-documentation/#approov-token-fetch-results) and is summarized in the table below:
+By default, the `ApproovService` processes requests based on the attestation status. It relies on the underlying SDK to provide a proof of attestation, which is a cryptographically signed JWT token. Requesting this attestation typically returns the token immediately; however, a network connection to the Approov cloud is required upon app launch or when the token is nearing expiration. Note that the SDK only knows if an attestation token has been obtained; it cannot determine if the token is valid (validity is checked by your backend). The default behavior is described in more detail in the official documentation section [Approov Token Fetch Results](https://ext.approov.io/docs/latest/approov-direct-sdk-integration/#fetch-status-handling) and is summarized in the table below:
 
 | Approov Fetch Status | Action | Result |
 | :--- | :--- | :--- |
@@ -24,6 +24,18 @@ By default, the `ApproovService` processes requests based on the attestation sta
 | **No Network / Poor Network** | Throw Exception | An `ApproovError.networkingError` is thrown. The request is marked as `.ShouldRetry`. |
 | **Rejection** | Throw Exception | An `ApproovError.rejectionError` is thrown. The request is marked as `.ShouldFail`. |
 | **No Approov Service / Unknown URL** | Proceed | The request is sent **without** an `Approov-Token`. |
+
+## Multiple Service Layers
+
+It is possible to use more than one Approov service layer in the same app, for example the URLSession and Alamofire packages together. The underlying Approov SDK can only be initialized once, so if another service layer later calls `ApproovService.initialize(...)` with the same configuration, the duplicate SDK initialization is detected and ignored.
+
+In that case you may see a log entry similar to:
+
+```text
+ApproovService: Ignoring initialization error in Approov SDK: The operation couldn’t be completed. (Foundation._GenericObjCError error 0.)
+```
+
+This log is informational only. Execution continues and this condition is not surfaced as an exception. If a later initialization attempts to use a different configuration, that is still treated as a real configuration error.
 
 ## Customizing Request Handling with Mutators
 
@@ -40,7 +52,7 @@ You can use a mutator to enforce this policy by throwing an error or returning `
 Override `handleInterceptorFetchTokenResult` to check for `noApproovService` and prevent the request to your API from continuing; instead log the event. Since `NO_APPROOV_SERVICE` implies the SDK cannot reach the Approov servers, this could be a transient issue (e.g., no DNS server available) or a permanent configuration/network restriction. You might choose to retry the request once to handle transient errors, or if the issue persists, inform the user of a network issue and suggest checking their connection or changing networks.
 
 ```swift
-import ApproovURLSession
+import ApproovURLSessionPackage
 import Approov
 
 final class EnforceTokenMutator: ApproovServiceMutator {
@@ -102,7 +114,7 @@ final class MyMutator: ApproovServiceMutator {
 Create a mutator, then install it once during app startup (for example in your AppDelegate or app initialization path).
 
 ```swift
-import ApproovURLSession
+import ApproovURLSessionPackage
 import Approov
 
 final class MyMutator: ApproovServiceMutator {
@@ -140,7 +152,9 @@ ApproovService.setServiceMutator(signer)
 If you have already customized the mutator, you can add message signing to it like so:
 
 ```swift
-ApproovService.setServiceMutator(MyMutator(signer: ApproovDefaultMessageSigning()))
+let signer = ApproovDefaultMessageSigning()
+    .setDefaultFactory(ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory())
+ApproovService.setServiceMutator(MyMutator(signer: signer))
 ```
 
 ### Customize behavior
@@ -189,6 +203,23 @@ ApproovService.setUseApproovStatusIfNoToken(shouldUse: true)
 
 When enabled, if the Approov token fetch fails or returns an empty token, the `Approov-Token` header will be populated with the status string (with the configured prefix) instead of being left empty.
 
+## Logging
+
+You can customize the log level emitted by the `ApproovService` using the `ApproovLogLevel` enum. This controls the verbosity of unified logging (`os_log`) output generated internally by the package.
+
+The available log levels are:
+*   `.off`: Disables all logging from the `ApproovService` package.
+*   `.error`: Only logs critical errors (e.g., initialization failures, missing pins).
+*   `.warning`: Logs warnings and errors (e.g., duplicated initializations with identical configurations).
+*   `.info` (Default): Logs informative events, configuration receipts, and the token states being set.
+*   `.debug`: Logs highly verbose tracing information for every request, initialization step, and token fetch. Use only for in-depth debugging.
+
+To configure the log level:
+
+```swift
+ApproovService.setLoggingLevel(.debug)
+```
+
 ## Real-world examples
 
 ### Policy-driven mutator (host scoping, offline fallback, message signing, pinning)
@@ -196,7 +227,7 @@ When enabled, if the Approov token fetch fails or returns an empty token, the `A
 This example implementation demonstrates how to customize the `ApproovServiceMutator` to apply different options to API requests based on the hostname.
 
 ```swift
-import ApproovURLSession
+import ApproovURLSessionPackage
 
 final class CustomLogic: ApproovServiceMutator {
     private let signer: ApproovServiceMutator
@@ -270,5 +301,4 @@ This example shows how to log rejections with the ARC and device ID. It assumes 
 - Keep mutator logic fast and side-effect safe. These hooks run on the request path.
 - Use `ApproovServiceMutatorDefault.shared` to preserve the existing behavior and layer your changes on top.
 - If you override multiple hooks, keep them focused (one concern per hook) for easier testing and maintenance.
-
 

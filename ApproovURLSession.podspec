@@ -1,6 +1,6 @@
 Pod::Spec.new do |s|
   s.name         = "ApproovURLSession"
-  s.version      = "3.5.6"
+  s.version      = "3.5.7"
   s.summary      = "Approov mobile attestation SDK"
   s.description  = <<-DESC
     Approov SDK integrates security attestation and secure string fetching for both iOS and watchOS apps.
@@ -9,7 +9,8 @@ Pod::Spec.new do |s|
   s.license      = { :type => "Commercial", :file => "LICENSE" }
   s.authors      = { "CriticalBlue, Ltd." => "support@approov.io" }
   s.source       = { :git => "https://github.com/approov/approov-service-urlsession", :tag => s.version }
-  
+  s.module_name = 'ApproovURLSessionPackage'
+
   # Supported platforms
   s.ios.deployment_target = '11.0'
   s.watchos.deployment_target = '9.0'

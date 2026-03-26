@@ -1,9 +1,9 @@
 # Reference
 
-This provides a reference for the public methods defined on `ApproovService`. These are available when you import:
+This provides a reference for the public methods defined on `ApproovService`. These are available when you import the Swift Package Manager module:
 
 ```swift
-import ApproovURLSession
+import ApproovURLSessionPackage
 ```
 
 Most methods either throw an `ApproovError` or return an `ApproovUpdateResponse`. The error cases to be aware of are:
@@ -104,8 +104,22 @@ otherwise be empty or missing.
 ApproovService.setUseApproovStatusIfNoToken(shouldUse: true)
 ```
 
+## setLoggingLevel
+Sets the service-layer logging level. This controls the verbosity of unified logging (`os_log`) output generated internally by the package. All log statements are gated by this level.
+
+Available levels (in order of increasing verbosity):
+- `.off`: Disables all logging from the `ApproovService` package.
+- `.error`: Only logs critical errors (e.g., initialization failures, missing pins).
+- `.warning`: Logs warnings and errors (e.g., duplicated initializations with identical configurations).
+- `.info` (Default): Logs informative events, configuration receipts, and the token states being set.
+- `.debug`: Logs highly verbose tracing information for every request, initialization step, and token fetch.
+
+```swift
+ApproovService.setLoggingLevel(.debug)
+```
+
 ## setServiceMutator
-Installs a service mutator to customize behavior at key points in the service flow. Pass `nil` to restore defaults. See the `README.md` for more information and a custom mutator example implementation.
+Installs a service mutator to customize behavior at key points in the service flow. Pass `nil` to restore defaults. See the `USAGE.md` for more information and a custom mutator example implementation.
 
 ```swift
 ApproovService.setServiceMutator(myMutator)

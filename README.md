@@ -4,6 +4,17 @@ A wrapper for the [Approov SDK](https://github.com/approov/approov-ios-sdk) to e
 
 Please see the [Quickstart](https://github.com/approov/quickstart-ios-swift-urlsession) for example integration.
 
+## Swift Package Manager Import
+
+When adding this package with Swift Package Manager, import the module as:
+
+```swift
+import ApproovURLSessionPackage
+import Approov
+```
+
+The primary session type remains `ApproovURLSession`.
+
 # Changelog
 
 Please see the [CHANGELOG.md](CHANGELOG.md) for more information on the changes in each version.

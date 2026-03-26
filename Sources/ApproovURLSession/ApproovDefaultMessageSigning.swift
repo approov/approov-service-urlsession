@@ -129,7 +129,7 @@ public class ApproovDefaultMessageSigning: ApproovServiceMutator, CustomStringCo
     @available(*, deprecated, message: "Use handleInterceptorProcessedRequest instead.")
     public func processedRequest(_ request: URLRequest, changes: ApproovRequestMutations) throws -> URLRequest {
         // If the request doesn't have an Approov token, we don't need to sign it
-        if (request.allHTTPHeaderFields?["Approov-Token"]) != nil {
+        if (request.allHTTPHeaderFields?[ApproovService.getApproovTokenHeader()]) != nil {
             // Generate and add a message signature
             let provider = ApproovURLSessionComponentProvider(request: request)
             guard let params = try buildSignatureParameters(provider: provider, changes: changes) else {
@@ -150,7 +150,9 @@ public class ApproovDefaultMessageSigning: ApproovServiceMutator, CustomStringCo
                 sigId = "install"
                 guard let base64Signature = ApproovService.getInstallMessageSignature(message: message),
                       let decodedSignature = Data(base64Encoded: base64Signature) else {
-                    os_log("ApproovService: install message signature unavailable, skipping signing", type: .error)
+                    if ApproovService.loggingLevel >= .error {
+                        os_log("ApproovService: install message signature unavailable, skipping signing", type: .error)
+                    }
                     return request
                 }
                 // decode the signature from ASN.1 DER format
@@ -190,7 +192,9 @@ public class ApproovDefaultMessageSigning: ApproovServiceMutator, CustomStringCo
                 if let sigBaseDigestHeader = try SFV.serializeDictionary(key: "sha-256", data: digest) {
                     signedRequest.addValue(sigBaseDigestHeader, forHTTPHeaderField: "Signature-Base-Digest")
                 } else {
-                    os_log("ApproovService: Failed to get digest algorithm - no debug entry", type: .debug)
+                    if ApproovService.loggingLevel >= .debug {
+                        os_log("ApproovService: Failed to get digest algorithm - no debug entry", type: .debug)
+                    }
                 }
             }
 
@@ -321,7 +325,9 @@ public class ApproovDefaultMessageSigning: ApproovServiceMutator, CustomStringCo
             try defaultSignatureParametersFactory.setBodyDigestConfig(ApproovDefaultMessageSigning.DIGEST_SHA256, required: false)
         } catch {
             // ApproovDefaultMessageSigning.DIGEST_SHA256 is a supported body digest algorithm - will never throw
-            os_log("ApproovDefaultMessageSigning - generateDefaultSignatureParametersFactory: Failed to set default body digest algorithm", type: .error)
+            if ApproovService.loggingLevel >= .error {
+                os_log("ApproovDefaultMessageSigning - generateDefaultSignatureParametersFactory: Failed to set default body digest algorithm", type: .error)
+            }
         }
         return defaultSignatureParametersFactory
     }
