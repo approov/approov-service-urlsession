@@ -6,6 +6,13 @@ import CryptoKit
 import Approov
 import MiniSDKTestSupport
 
+/// Integration tests for the ApproovService URLSession service layer.
+///
+/// Tests are organized to match the sections defined in TESTING_REQUIREMENTS.md
+/// from the core-service-layers-testing repository. Each test includes a comment
+/// referencing the requirement(s) it covers.
+///
+/// - SeeAlso: `TESTING_REQUIREMENTS.md` in core-service-layers-testing
 final class ApproovServiceMiniSDKTests: XCTestCase {
     private let validInitialConfig = "#cb-ivol#mAxOF0ekJUOC36J5XWmVmVipOcUoEdMjhPSp2FVtyTo="
     private var cancellables = Set<AnyCancellable>()
@@ -20,11 +27,19 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
 
     override func tearDown() {
         cancellables.removeAll()
+        ApproovService.setServiceMutator(nil)
         MiniSDKAttesterProxyController.reset()
         ApproovService.resetForTesting()
         super.tearDown()
     }
 
+    // MARK: - §1 Initialization
+    // TESTING_REQUIREMENTS.md §1
+
+    /// §1 Same Config Re-initialization / Different Config Re-initialization
+    ///
+    /// Re-initialize with the same config string should not fail.
+    /// Re-initialize with a different config string should fail with an exception.
     func testInitializeIgnoresSameConfigAndRejectsDifferentConfig() throws {
         XCTAssertNoThrow(try ApproovService.initialize(config: validInitialConfig, comment: nil))
 
@@ -37,14 +52,71 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
         }
     }
 
+    // MARK: - §2 Request Processing & Token Behaviors
+    // TESTING_REQUIREMENTS.md §2
+
+    /// §2 Precheck Evaluation
+    ///
+    /// A call to precheck() should trigger a secure string fetch and evaluate
+    /// UNKNOWN_KEY as a success path.
     func testPrecheckTreatsUnknownKeyAsSuccess() throws {
         XCTAssertNoThrow(try ApproovService.precheck())
     }
 
+    /// §2 (Supporting test)
+    ///
+    /// Verifies the Mini SDK returns a stable device ID for the test environment.
     func testGetDeviceIDReturnsMiniSDKDeviceID() {
         XCTAssertEqual(ApproovService.getDeviceID(), "daIvmEWBA2gvZny7a/RC/w==")
     }
 
+    /// §2 Protected Request Processing / Token Binding Hash
+    ///
+    /// A protected request is processed and modified by the service layer.
+    /// The token's `pay` claim should contain the SHA256 hash of the binding header value.
+    /// Also tests header and query parameter substitution.
+    func testUpdateRequestAddsTokenTraceBindingHashAndSubstitutions() throws {
+        let targetHost = try XCTUnwrap(URL(string: targetURLString)?.host)
+        try reinitializeService(
+            scenarioJSON: scenarioJSON(
+                caseName: uniqueCaseName(prefix: "substitutions"),
+                body: """
+                "protectedDomains": ["\(targetHost)"],
+                "initialSecureStrings": {
+                  "header-key": "header-secret",
+                  "query-key": "query-secret"
+                }
+                """
+            ),
+            comment: "reinit-substitutions"
+        )
+
+        ApproovService.setBindingHeader(header: "Authorization")
+        ApproovService.addSubstitutionHeader(header: "Api-Key", prefix: nil)
+        ApproovService.addSubstitutionQueryParam(key: "api_key")
+
+        var request = URLRequest(url: try XCTUnwrap(URL(string: "\(targetURLString)?api_key=query-key")))
+        request.setValue("Bearer oauth-token", forHTTPHeaderField: "Authorization")
+        request.setValue("header-key", forHTTPHeaderField: "Api-Key")
+
+        let reply = fetchNetworkReply(for: request)
+
+        let token = try XCTUnwrap(getHeader(from: reply, key: "Approov-Token"))
+        XCTAssertFalse(token.isEmpty)
+        XCTAssertNotNil(getHeader(from: reply, key: "Approov-TraceID"))
+        XCTAssertEqual(getHeader(from: reply, key: "Api-Key"), "header-secret")
+
+        let urlFromReply = try XCTUnwrap(reply?["url"] as? String)
+        XCTAssertTrue(urlFromReply.contains("api_key=query-secret"))
+
+        let payload = try XCTUnwrap(decodeJWTBody(token))
+        XCTAssertEqual(payload["pay"] as? String, sha256Base64("Bearer oauth-token"))
+    }
+
+    /// §2 Protected Request Processing
+    ///
+    /// Verifies that a protected request receives a signed token with expected
+    /// standard claims (ip, did, mskid, arc, exp).
     func testFetchTokenReturnsSignedTokenWithExpectedClaims() throws {
         try reinitializeServiceWithTargetHost()
         let token = try ApproovService.fetchToken(url: targetURLString)
@@ -57,6 +129,49 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
         XCTAssertNotNil(payload["exp"] as? NSNumber)
     }
 
+    /// §2 Missing Artifacts Fallback
+    ///
+    /// When the Approov service is unavailable (NO_APPROOV_SERVICE), the request
+    /// should proceed without an Approov token or trace ID.
+    func testUpdateRequestNoApproovServiceProceedsWithoutToken() throws {
+        try reinitializeServiceWithTargetHost()
+        setDirective(
+            """
+            {
+              "operation": "fetchApproovToken",
+              "response": {
+                "status": "NO_APPROOV_SERVICE"
+              }
+            }
+            """
+        )
+
+        let request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
+        let reply = fetchNetworkReply(for: request)
+
+        XCTAssertNotNil(reply, "Expected to receive a reply from worker when proceeding without token")
+        XCTAssertNil(getHeader(from: reply, key: "Approov-Token"))
+        XCTAssertNil(getHeader(from: reply, key: "Approov-TraceID"))
+    }
+
+    /// §2 Exclusion URL Matching
+    ///
+    /// An excluded URL (using regular expression checks) should not be processed
+    /// by the service layer.
+    func testUpdateRequestCanIgnoreExcludedURL() throws {
+        let exclusionStr = "^.*excluded.*$"
+        ApproovService.addExclusionURLRegex(urlRegex: exclusionStr)
+
+        let request = URLRequest(url: try XCTUnwrap(URL(string: "\(targetURLString)/excluded")))
+        let reply = fetchNetworkReply(for: request)
+
+        XCTAssertNotNil(reply, "Expected to receive a reply even for ignored domains")
+        XCTAssertNil(getHeader(from: reply, key: "Approov-Token"))
+    }
+
+    /// §2 Token Fallback Status (error status mapping)
+    ///
+    /// NO_NETWORK → networkingError
     func testFetchTokenThrowsNetworkingErrorForNoNetwork() throws {
         try reinitializeServiceWithTargetHost()
         setDirective(
@@ -78,6 +193,306 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
         }
     }
 
+    /// §2 Protected Request Processing (Combine publisher)
+    ///
+    /// Verifies that Combine's dataTaskPublisher correctly receives Approov-mutated
+    /// request headers (token and trace ID).
+    @available(macOS 10.15, *)
+    func testDataTaskPublisherWithApproovSendsMutatedRequest() throws {
+        try reinitializeServiceWithTargetHost()
+
+        let expectation = expectation(description: "publisher completion")
+        var receivedData: Data?
+
+        let configuration = URLSessionConfiguration.ephemeral
+        let session = ApproovURLSession(configuration: configuration)
+        let request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
+
+        let (publisher, error) = session.dataTaskPublisherWithApproov(for: request)
+        XCTAssertNil(error)
+
+        publisher
+            .sink(
+                receiveCompletion: { completion in
+                    if case let .failure(error) = completion {
+                        XCTFail("Unexpected publisher failure: \(error)")
+                    }
+                    expectation.fulfill()
+                },
+                receiveValue: { data, _ in
+                    receivedData = data
+                }
+            )
+            .store(in: &cancellables)
+
+        waitForExpectations(timeout: 5.0)
+
+        let reply = try XCTUnwrap(try? JSONSerialization.jsonObject(with: receivedData ?? Data()) as? [String: Any])
+        XCTAssertNotNil(getHeader(from: reply, key: "Approov-Token"))
+        XCTAssertNotNil(getHeader(from: reply, key: "Approov-TraceID"))
+    }
+
+    // MARK: - §3 Service Mutators & Decision Overrides
+    // TESTING_REQUIREMENTS.md §3
+
+    struct AlwaysProceedMutator: ApproovServiceMutator {
+        func handleInterceptorFetchTokenResult(_ approovResults: ApproovTokenFetchResult, url: String) throws -> Bool {
+            return false // proceed without throwing
+        }
+    }
+
+    /// §3 Custom Mutators / Decision Overrides
+    ///
+    /// Overriding the default fail-closed behavior for MITM_DETECTED via a custom
+    /// ApproovServiceMutator allows the request to proceed without a token.
+    func testServiceMutatorOverridesFailClosedBehavior() throws {
+        try reinitializeServiceWithTargetHost()
+        
+        // Simulating MITM_DETECTED which normally throws a networkingError
+        setDirective(
+            """
+            {
+              "operation": "fetchApproovToken",
+              "response": {
+                "status": "MITM_DETECTED"
+              }
+            }
+            """
+        )
+        
+        ApproovService.setServiceMutator(AlwaysProceedMutator())
+
+        let request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
+        let reply = fetchNetworkReply(for: request)
+
+        XCTAssertNotNil(reply, "Expected to receive a reply from worker when proceeding due to overridden mutator")
+        XCTAssertNil(getHeader(from: reply, key: "Approov-Token"))
+    }
+
+    // MARK: - §4 Pinning Configuration & Scenarios
+    // TESTING_REQUIREMENTS.md §4
+
+    /// §4 Accept Any Pins
+    ///
+    /// The SDK provides no specific pins for the API and suppresses the wildcard
+    /// fallback pins, allowing the connection to succeed without pinning validation.
+    func testPinningAcceptAny() throws {
+        try reinitializeServiceWithTargetHost()
+        
+        MiniSDKAttesterProxyController.setNextPinningDirectiveJSON("{\"operation\": \"getPins\", \"acceptAny\": true}")
+        
+        let request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
+        let reply = fetchNetworkReply(for: request)
+        
+        XCTAssertNotNil(reply, "Expected the request to succeed when acceptAny is used")
+    }
+
+    /// §4 Generate Invalid Pins
+    ///
+    /// When the SDK provides invalid (dummy) pins for the target host, the connection
+    /// should fail with a pinning error.
+    func testPinningFailureTriggersPinningError() throws {
+        try reinitializeServiceWithTargetHost()
+        
+        // Set pinning failure directive
+        MiniSDKAttesterProxyController.setNextPinningDirectiveJSON("{\"operation\": \"getPins\", \"shouldFail\": true}")
+        
+        let expectation = self.expectation(description: "network request failure")
+        var receivedError: Error?
+        
+        let configuration = URLSessionConfiguration.ephemeral
+        let session = ApproovURLSession(configuration: configuration)
+        let request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
+        let task = session.dataTask(with: request) { _, _, error in
+            receivedError = error
+            expectation.fulfill()
+        }
+        task.resume()
+        
+        waitForExpectations(timeout: 5.0)
+        
+        XCTAssertNotNil(receivedError, "Expected pinning failure but got success")
+    }
+
+    /// §4 Dynamic Pinning Updates
+    ///
+    /// When pins are updated dynamically to an invalid state, subsequent requests
+    /// on a new session should fail. Note: URLSession caches connections natively,
+    /// so the session must be invalidated and a fresh one created.
+    func testDynamicPinningUpdatesFailureOnNewSession() throws {
+        // Setup initial valid pinning
+        try reinitializeServiceWithTargetHost()
+        
+        let configuration = URLSessionConfiguration.ephemeral
+        var session = ApproovURLSession(configuration: configuration)
+        let request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
+        
+        // Warm up connection
+        let expectation1 = self.expectation(description: "first network request success")
+        var receivedError1: Error?
+        let task1 = session.dataTask(with: request) { _, _, error in
+            receivedError1 = error
+            expectation1.fulfill()
+        }
+        task1.resume()
+        waitForExpectations(timeout: 5.0)
+        XCTAssertNil(receivedError1, "Expected first request to succeed")
+        
+        // Now rotate pins to trigger failure, and we must create a new session since URLSession caches connections natively
+        MiniSDKAttesterProxyController.setNextPinningDirectiveJSON("{\"operation\": \"getPins\", \"shouldFail\": true}")
+        session.invalidateAndCancel()
+        session = ApproovURLSession(configuration: URLSessionConfiguration.ephemeral)
+        
+        let expectation2 = self.expectation(description: "second network request failure")
+        var receivedError2: Error?
+        let task2 = session.dataTask(with: request) { _, _, error in
+            receivedError2 = error
+            expectation2.fulfill()
+        }
+        task2.resume()
+        waitForExpectations(timeout: 5.0)
+        XCTAssertNotNil(receivedError2, "Expected pinning update failure on new session")
+    }
+
+    // MARK: - §5 Message Signing
+    // TESTING_REQUIREMENTS.md §5
+
+    /// §5 Install Signature Success / Single Signature Application
+    /// §2 Unprotected Request Processing
+    ///
+    /// Install message signing successfully generates signature headers (install=...)
+    /// only once per request. Unprotected requests receive no signature headers.
+    func testUpdateRequestInstallMessageSigningAddsSignatureHeaders() throws {
+        try reinitializeServiceWithTargetHost()
+        
+        let factory = ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory()
+            .setUseInstallMessageSigning()
+        let signer = ApproovDefaultMessageSigning().setDefaultFactory(factory)
+        ApproovService.setServiceMutator(signer)
+
+        var request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
+        request.httpMethod = "GET"
+        let protectedReply = fetchNetworkReply(for: request)
+
+        XCTAssertNotNil(getHeader(from: protectedReply, key: "Approov-Token"))
+        let signatureInput = try XCTUnwrap(getHeader(from: protectedReply, key: "Signature-Input"))
+        XCTAssertTrue(signatureInput.hasPrefix("install="))
+        XCTAssertEqual(signatureInput.components(separatedBy: "install=").count, 2, "Should contain exactly one install signature input")
+        XCTAssertFalse(signatureInput.contains("account="))
+        
+        let signature = try XCTUnwrap(getHeader(from: protectedReply, key: "Signature"))
+        XCTAssertTrue(signature.hasPrefix("install="))
+        XCTAssertEqual(signature.components(separatedBy: "install=").count, 2, "Should contain exactly one install signature")
+        XCTAssertFalse(signature.contains("account="))
+        
+        var unprotectedRequest = URLRequest(url: try XCTUnwrap(URL(string: unprotectedURLString)))
+        unprotectedRequest.httpMethod = "GET"
+        let unprotectedReply = fetchNetworkReply(for: unprotectedRequest)
+        
+        XCTAssertNil(getHeader(from: unprotectedReply, key: "Approov-Token"))
+        XCTAssertNil(getHeader(from: unprotectedReply, key: "Signature"))
+        XCTAssertNil(getHeader(from: unprotectedReply, key: "Signature-Input"))
+    }
+
+    /// §5 Account Message Signing
+    ///
+    /// Account message signing produces the expected signature headers (account=...).
+    func testUpdateRequestAccountMessageSigningAddsSignatureHeaders() throws {
+        try reinitializeServiceWithTargetHost()
+        
+        let factory = ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory()
+            .setUseAccountMessageSigning()
+        let signer = ApproovDefaultMessageSigning().setDefaultFactory(factory)
+        ApproovService.setServiceMutator(signer)
+
+        var request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
+        request.httpMethod = "GET"
+        let protectedReply = fetchNetworkReply(for: request)
+
+        XCTAssertNotNil(getHeader(from: protectedReply, key: "Approov-Token"))
+        let signatureInput = try XCTUnwrap(getHeader(from: protectedReply, key: "Signature-Input"))
+        XCTAssertTrue(signatureInput.hasPrefix("account="))
+        XCTAssertEqual(signatureInput.components(separatedBy: "account=").count, 2, "Should contain exactly one account signature input")
+        XCTAssertFalse(signatureInput.contains("install="))
+        
+        let signature = try XCTUnwrap(getHeader(from: protectedReply, key: "Signature"))
+        XCTAssertTrue(signature.hasPrefix("account="))
+        XCTAssertEqual(signature.components(separatedBy: "account=").count, 2, "Should contain exactly one account signature")
+        XCTAssertFalse(signature.contains("install="))
+        
+        var unprotectedRequest = URLRequest(url: try XCTUnwrap(URL(string: unprotectedURLString)))
+        unprotectedRequest.httpMethod = "GET"
+        let unprotectedReply = fetchNetworkReply(for: unprotectedRequest)
+        
+        XCTAssertNil(getHeader(from: unprotectedReply, key: "Approov-Token"))
+        XCTAssertNil(getHeader(from: unprotectedReply, key: "Signature"))
+        XCTAssertNil(getHeader(from: unprotectedReply, key: "Signature-Input"))
+    }
+
+    /// §5 Install Key Generation Failure / Signing Failure Fallback
+    ///
+    /// Install message signature fails if key pair generation fails; no signature
+    /// headers are added to the request, but the request proceeds with a token.
+    func testInstallMessageSigningFailsGracefullyIfKeyGenerationFails() throws {
+        // Target host setup with no-install-key comment
+        let targetHost = try XCTUnwrap(URL(string: targetURLString)?.host)
+        let domainsJSON = "\"protectedDomains\": [\"\(targetHost)\"]"
+        try reinitializeService(
+            scenarioJSON: scenarioJSON(
+                caseName: uniqueCaseName(prefix: "no-install-key"),
+                body: domainsJSON
+            ),
+            comment: "options:no-install-key"
+        )
+        
+        let factory = ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory()
+            .setUseInstallMessageSigning()
+        let signer = ApproovDefaultMessageSigning().setDefaultFactory(factory)
+        ApproovService.setServiceMutator(signer)
+
+        var request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
+        request.httpMethod = "GET"
+        let protectedReply = fetchNetworkReply(for: request)
+
+        XCTAssertNotNil(getHeader(from: protectedReply, key: "Approov-Token"))
+        XCTAssertNil(getHeader(from: protectedReply, key: "Signature"))
+        XCTAssertNil(getHeader(from: protectedReply, key: "Signature-Input"))
+    }
+
+    /// §5 Digest Body Application
+    ///
+    /// The digest body (Content-Digest) for an install message signature is present
+    /// for POST, PUT, and PATCH requests when body digest is configured.
+    func testDigestBodyAppendedForPOSTPUTPATCHRequests() throws {
+        try reinitializeServiceWithTargetHost()
+        
+        let factory = try ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory()
+            .setUseInstallMessageSigning()
+            .setBodyDigestConfig(ApproovDefaultMessageSigning.DIGEST_SHA256, required: true) // Required enforces body generation
+        let signer = ApproovDefaultMessageSigning().setDefaultFactory(factory)
+        ApproovService.setServiceMutator(signer)
+
+        for method in ["POST", "PUT", "PATCH"] {
+            var request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
+            request.httpMethod = method
+            request.httpBody = Data("{\"test\": 1}".utf8)
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            
+            let protectedReply = fetchNetworkReply(for: request)
+            
+            XCTAssertNotNil(getHeader(from: protectedReply, key: "Approov-Token"))
+            let signatureInput = try XCTUnwrap(getHeader(from: protectedReply, key: "Signature-Input"), "Failed on \\\(method)")
+            XCTAssertTrue(signatureInput.contains("content-digest"), "Signature-Input should include content-digest for \\\(method)")
+            XCTAssertNotNil(getHeader(from: protectedReply, key: "Content-Digest"), "Content-Digest should be generated for \\\(method)")
+        }
+    }
+
+    // MARK: - §6 Secure Strings & Custom JWT
+    // TESTING_REQUIREMENTS.md §6
+
+    /// §6 Valid Secure String Key
+    ///
+    /// Fetch a secure string using a valid key returns the expected value.
     func testFetchSecureStringReturnsConfiguredValue() throws {
         setDirective(
             """
@@ -95,6 +510,9 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
         XCTAssertEqual(secureString, "mini-secret")
     }
 
+    /// §6 Non-existent Secure String Key
+    ///
+    /// Fetch a secure string using a non-existent key returns nil.
     func testFetchSecureStringReturnsNilForUnknownKey() throws {
         setDirective(
             """
@@ -111,15 +529,21 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
         XCTAssertNil(secureString)
     }
 
+    /// §6 Empty Secure String Key
+    ///
+    /// Fetch a secure string using an empty key throws a permanent error.
     func testFetchSecureStringEmptyKeyReturnsNil() throws {
         XCTAssertThrowsError(try ApproovService.fetchSecureString(key: "", newDef: nil)) { error in
             guard case let ApproovError.permanentError(message) = error else {
-                return XCTFail("Expected permanentError, got \\(error)")
+                return XCTFail("Expected permanentError, got \\\(error)")
             }
             XCTAssertTrue(message.contains("bad key"), "Expected bad key message")
         }
     }
 
+    /// §6 Custom JWT Fetch
+    ///
+    /// Fetching a Custom JWT should accurately return the marshaled payload as a token.
     func testFetchCustomJWTReturnsSignedJWT() throws {
         let jwt = try XCTUnwrap(ApproovService.fetchCustomJWT(payload: "{\"role\":\"tester\"}"))
         let payload = try XCTUnwrap(decodeJWTBody(jwt))
@@ -133,6 +557,9 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
         let data: String
     }
 
+    /// §6 Custom JWT Fetch (18KB payload)
+    ///
+    /// Fetching a Custom JWT with an 18KB JSON payload should work correctly.
     func testFetchCustomJWT18KBPayload() throws {
         let largePayload = String(repeating: "A", count: 18 * 1024)
         let payloadStruct = CustomPayload(data: largePayload)
@@ -145,6 +572,9 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
         XCTAssertEqual(payloadMap["data"] as? String, largePayload)
     }
 
+    /// §6 Custom JWT Fetch (disabled)
+    ///
+    /// Fetching a Custom JWT when the feature is disabled throws a permanent error.
     func testFetchCustomJWTDisabledRaisesPermanentError() throws {
         try reinitializeService(
             scenarioJSON: scenarioJSON(
@@ -164,6 +594,9 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
         }
     }
 
+    /// §6 Custom JWT Fetch (malformatted JSON)
+    ///
+    /// Fetching a Custom JWT with a malformatted JSON string throws a permanent error.
     func testFetchCustomJWTBadPayloadRaisesPermanentError() {
         XCTAssertThrowsError(try ApproovService.fetchCustomJWT(payload: "not-json")) { error in
             guard case let ApproovError.permanentError(message) = error else {
@@ -172,6 +605,8 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
             XCTAssertEqual(message, "fetchCustomJWT: bad payload")
         }
     }
+
+    // MARK: - Test Helpers
 
     private var targetURLString: String {
         guard let url = ProcessInfo.processInfo.environment["TESTING_REPLY_URL"] else {
@@ -233,326 +668,6 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
             ),
             comment: "reinit-target-host"
         )
-    }
-
-    func testUpdateRequestAddsTokenTraceBindingHashAndSubstitutions() throws {
-        let targetHost = try XCTUnwrap(URL(string: targetURLString)?.host)
-        try reinitializeService(
-            scenarioJSON: scenarioJSON(
-                caseName: uniqueCaseName(prefix: "substitutions"),
-                body: """
-                "protectedDomains": ["\(targetHost)"],
-                "initialSecureStrings": {
-                  "header-key": "header-secret",
-                  "query-key": "query-secret"
-                }
-                """
-            ),
-            comment: "reinit-substitutions"
-        )
-
-        ApproovService.setBindingHeader(header: "Authorization")
-        ApproovService.addSubstitutionHeader(header: "Api-Key", prefix: nil)
-        ApproovService.addSubstitutionQueryParam(key: "api_key")
-
-        var request = URLRequest(url: try XCTUnwrap(URL(string: "\(targetURLString)?api_key=query-key")))
-        request.setValue("Bearer oauth-token", forHTTPHeaderField: "Authorization")
-        request.setValue("header-key", forHTTPHeaderField: "Api-Key")
-
-        let reply = fetchNetworkReply(for: request)
-
-        let token = try XCTUnwrap(getHeader(from: reply, key: "Approov-Token"))
-        XCTAssertFalse(token.isEmpty)
-        XCTAssertNotNil(getHeader(from: reply, key: "Approov-TraceID"))
-        XCTAssertEqual(getHeader(from: reply, key: "Api-Key"), "header-secret")
-
-        let urlFromReply = try XCTUnwrap(reply?["url"] as? String)
-        XCTAssertTrue(urlFromReply.contains("api_key=query-secret"))
-
-        let payload = try XCTUnwrap(decodeJWTBody(token))
-        XCTAssertEqual(payload["pay"] as? String, sha256Base64("Bearer oauth-token"))
-    }
-
-    func testUpdateRequestNoApproovServiceProceedsWithoutToken() throws {
-        try reinitializeServiceWithTargetHost()
-        setDirective(
-            """
-            {
-              "operation": "fetchApproovToken",
-              "response": {
-                "status": "NO_APPROOV_SERVICE"
-              }
-            }
-            """
-        )
-
-        let request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
-        let reply = fetchNetworkReply(for: request)
-
-        XCTAssertNotNil(reply, "Expected to receive a reply from worker when proceeding without token")
-        XCTAssertNil(getHeader(from: reply, key: "Approov-Token"))
-        XCTAssertNil(getHeader(from: reply, key: "Approov-TraceID"))
-    }
-
-    func testUpdateRequestInstallMessageSigningAddsSignatureHeaders() throws {
-        try reinitializeServiceWithTargetHost()
-        
-        let factory = ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory()
-            .setUseInstallMessageSigning()
-        let signer = ApproovDefaultMessageSigning().setDefaultFactory(factory)
-        ApproovService.setServiceMutator(signer)
-
-        var request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
-        request.httpMethod = "GET"
-        let protectedReply = fetchNetworkReply(for: request)
-
-        XCTAssertNotNil(getHeader(from: protectedReply, key: "Approov-Token"))
-        let signatureInput = try XCTUnwrap(getHeader(from: protectedReply, key: "Signature-Input"))
-        XCTAssertTrue(signatureInput.hasPrefix("install="))
-        XCTAssertEqual(signatureInput.components(separatedBy: "install=").count, 2, "Should contain exactly one install signature input")
-        XCTAssertFalse(signatureInput.contains("account="))
-        
-        let signature = try XCTUnwrap(getHeader(from: protectedReply, key: "Signature"))
-        XCTAssertTrue(signature.hasPrefix("install="))
-        XCTAssertEqual(signature.components(separatedBy: "install=").count, 2, "Should contain exactly one install signature")
-        XCTAssertFalse(signature.contains("account="))
-        
-        var unprotectedRequest = URLRequest(url: try XCTUnwrap(URL(string: unprotectedURLString)))
-        unprotectedRequest.httpMethod = "GET"
-        let unprotectedReply = fetchNetworkReply(for: unprotectedRequest)
-        
-        XCTAssertNil(getHeader(from: unprotectedReply, key: "Approov-Token"))
-        XCTAssertNil(getHeader(from: unprotectedReply, key: "Signature"))
-        XCTAssertNil(getHeader(from: unprotectedReply, key: "Signature-Input"))
-    }
-
-    func testUpdateRequestAccountMessageSigningAddsSignatureHeaders() throws {
-        try reinitializeServiceWithTargetHost()
-        
-        let factory = ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory()
-            .setUseAccountMessageSigning()
-        let signer = ApproovDefaultMessageSigning().setDefaultFactory(factory)
-        ApproovService.setServiceMutator(signer)
-
-        var request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
-        request.httpMethod = "GET"
-        let protectedReply = fetchNetworkReply(for: request)
-
-        XCTAssertNotNil(getHeader(from: protectedReply, key: "Approov-Token"))
-        let signatureInput = try XCTUnwrap(getHeader(from: protectedReply, key: "Signature-Input"))
-        XCTAssertTrue(signatureInput.hasPrefix("account="))
-        XCTAssertEqual(signatureInput.components(separatedBy: "account=").count, 2, "Should contain exactly one account signature input")
-        XCTAssertFalse(signatureInput.contains("install="))
-        
-        let signature = try XCTUnwrap(getHeader(from: protectedReply, key: "Signature"))
-        XCTAssertTrue(signature.hasPrefix("account="))
-        XCTAssertEqual(signature.components(separatedBy: "account=").count, 2, "Should contain exactly one account signature")
-        XCTAssertFalse(signature.contains("install="))
-        
-        var unprotectedRequest = URLRequest(url: try XCTUnwrap(URL(string: unprotectedURLString)))
-        unprotectedRequest.httpMethod = "GET"
-        let unprotectedReply = fetchNetworkReply(for: unprotectedRequest)
-        
-        XCTAssertNil(getHeader(from: unprotectedReply, key: "Approov-Token"))
-        XCTAssertNil(getHeader(from: unprotectedReply, key: "Signature"))
-        XCTAssertNil(getHeader(from: unprotectedReply, key: "Signature-Input"))
-    }
-
-    func testUpdateRequestCanIgnoreExcludedURL() throws {
-        let exclusionStr = "^.*excluded.*$"
-        ApproovService.addExclusionURLRegex(urlRegex: exclusionStr)
-
-        let request = URLRequest(url: try XCTUnwrap(URL(string: "\(targetURLString)/excluded")))
-        let reply = fetchNetworkReply(for: request)
-
-        XCTAssertNotNil(reply, "Expected to receive a reply even for ignored domains")
-        XCTAssertNil(getHeader(from: reply, key: "Approov-Token"))
-    }
-
-    func testPinningAcceptAny() throws {
-        try reinitializeServiceWithTargetHost()
-        
-        MiniSDKAttesterProxyController.setNextPinningDirectiveJSON("{\"operation\": \"getPins\", \"acceptAny\": true}")
-        
-        let request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
-        let reply = fetchNetworkReply(for: request)
-        
-        XCTAssertNotNil(reply, "Expected the request to succeed when acceptAny is used")
-    }
-    func testPinningFailureTriggersPinningError() throws {
-        try reinitializeServiceWithTargetHost()
-        
-        // Set pinning failure directive
-        MiniSDKAttesterProxyController.setNextPinningDirectiveJSON("{\"operation\": \"getPins\", \"shouldFail\": true}")
-        
-        let expectation = self.expectation(description: "network request failure")
-        var receivedError: Error?
-        
-        let configuration = URLSessionConfiguration.ephemeral
-        let session = ApproovURLSession(configuration: configuration)
-        let request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
-        let task = session.dataTask(with: request) { _, _, error in
-            receivedError = error
-            expectation.fulfill()
-        }
-        task.resume()
-        
-        waitForExpectations(timeout: 5.0)
-        
-        XCTAssertNotNil(receivedError, "Expected pinning failure but got success")
-        // The error will likely be an URLError with code .serverCertificateHasBadDate or similar depending on the OS's interpretation of a garbage pin, 
-        // but the key is that it's NOT nil.
-    }
-
-    func testDynamicPinningUpdatesFailureOnNewSession() throws {
-        // Setup initial valid pinning
-        try reinitializeServiceWithTargetHost()
-        
-        let configuration = URLSessionConfiguration.ephemeral
-        var session = ApproovURLSession(configuration: configuration)
-        let request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
-        
-        // Warm up connection
-        let expectation1 = self.expectation(description: "first network request success")
-        var receivedError1: Error?
-        let task1 = session.dataTask(with: request) { _, _, error in
-            receivedError1 = error
-            expectation1.fulfill()
-        }
-        task1.resume()
-        waitForExpectations(timeout: 5.0)
-        XCTAssertNil(receivedError1, "Expected first request to succeed")
-        
-        // Now rotate pins to trigger failure, and we must create a new session since URLSession caches connections natively
-        MiniSDKAttesterProxyController.setNextPinningDirectiveJSON("{\"operation\": \"getPins\", \"shouldFail\": true}")
-        session.invalidateAndCancel()
-        session = ApproovURLSession(configuration: URLSessionConfiguration.ephemeral)
-        
-        let expectation2 = self.expectation(description: "second network request failure")
-        var receivedError2: Error?
-        let task2 = session.dataTask(with: request) { _, _, error in
-            receivedError2 = error
-            expectation2.fulfill()
-        }
-        task2.resume()
-        waitForExpectations(timeout: 5.0)
-        XCTAssertNotNil(receivedError2, "Expected pinning update failure on new session")
-    }
-
-
-    @available(macOS 10.15, *)
-    func testDataTaskPublisherWithApproovSendsMutatedRequest() throws {
-        try reinitializeServiceWithTargetHost()
-
-        let expectation = expectation(description: "publisher completion")
-        var receivedData: Data?
-
-        let configuration = URLSessionConfiguration.ephemeral
-        let session = ApproovURLSession(configuration: configuration)
-        let request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
-
-        let (publisher, error) = session.dataTaskPublisherWithApproov(for: request)
-        XCTAssertNil(error)
-
-        publisher
-            .sink(
-                receiveCompletion: { completion in
-                    if case let .failure(error) = completion {
-                        XCTFail("Unexpected publisher failure: \(error)")
-                    }
-                    expectation.fulfill()
-                },
-                receiveValue: { data, _ in
-                    receivedData = data
-                }
-            )
-            .store(in: &cancellables)
-
-        waitForExpectations(timeout: 5.0)
-
-        let reply = try XCTUnwrap(try? JSONSerialization.jsonObject(with: receivedData ?? Data()) as? [String: Any])
-        XCTAssertNotNil(getHeader(from: reply, key: "Approov-Token"))
-        XCTAssertNotNil(getHeader(from: reply, key: "Approov-TraceID"))
-    }
-
-    func testInstallMessageSigningFailsGracefullyIfKeyGenerationFails() throws {
-        // Target host setup with no-install-key comment
-        let targetHost = try XCTUnwrap(URL(string: targetURLString)?.host)
-        let domainsJSON = "\"protectedDomains\": [\"\\(targetHost)\"]"
-        try reinitializeService(
-            scenarioJSON: scenarioJSON(
-                caseName: uniqueCaseName(prefix: "no-install-key"),
-                body: domainsJSON
-            ),
-            comment: "options:no-install-key"
-        )
-        
-        let factory = ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory()
-            .setUseInstallMessageSigning()
-        let signer = ApproovDefaultMessageSigning().setDefaultFactory(factory)
-        ApproovService.setServiceMutator(signer)
-
-        var request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
-        request.httpMethod = "GET"
-        let protectedReply = fetchNetworkReply(for: request)
-
-        XCTAssertNotNil(getHeader(from: protectedReply, key: "Approov-Token"))
-        XCTAssertNil(getHeader(from: protectedReply, key: "Signature"))
-        XCTAssertNil(getHeader(from: protectedReply, key: "Signature-Input"))
-    }
-
-    func testDigestBodyAppendedForPOSTPUTPATCHRequests() throws {
-        try reinitializeServiceWithTargetHost()
-        
-        let factory = try ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory()
-            .setUseInstallMessageSigning()
-            .setBodyDigestConfig(ApproovDefaultMessageSigning.DIGEST_SHA256, required: true) // Required enforces body generation
-        let signer = ApproovDefaultMessageSigning().setDefaultFactory(factory)
-        ApproovService.setServiceMutator(signer)
-
-        for method in ["POST", "PUT", "PATCH"] {
-            var request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
-            request.httpMethod = method
-            request.httpBody = Data("{\"test\": 1}".utf8)
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            
-            let protectedReply = fetchNetworkReply(for: request)
-            
-            XCTAssertNotNil(getHeader(from: protectedReply, key: "Approov-Token"))
-            let signatureInput = try XCTUnwrap(getHeader(from: protectedReply, key: "Signature-Input"), "Failed on \\(method)")
-            XCTAssertTrue(signatureInput.contains("content-digest"), "Signature-Input should include content-digest for \\(method)")
-            XCTAssertNotNil(getHeader(from: protectedReply, key: "Content-Digest"), "Content-Digest should be generated for \\(method)")
-        }
-    }
-
-    struct AlwaysProceedMutator: ApproovServiceMutator {
-        func handleInterceptorFetchTokenResult(_ approovResults: ApproovTokenFetchResult, url: String) throws -> Bool {
-            return false // proceed without throwing
-        }
-    }
-
-    func testServiceMutatorOverridesFailClosedBehavior() throws {
-        try reinitializeServiceWithTargetHost()
-        
-        // Simulating MITM_DETECTED which normally throws a networkingError
-        setDirective(
-            """
-            {
-              "operation": "fetchApproovToken",
-              "response": {
-                "status": "MITM_DETECTED"
-              }
-            }
-            """
-        )
-        
-        ApproovService.setServiceMutator(AlwaysProceedMutator())
-
-        let request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
-        let reply = fetchNetworkReply(for: request)
-
-        XCTAssertNotNil(reply, "Expected to receive a reply from worker when proceeding due to overridden mutator")
-        XCTAssertNil(getHeader(from: reply, key: "Approov-Token"))
     }
 
     private func initializeService(comment: String?) throws {
@@ -624,4 +739,3 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
         }
     }
 }
-
