@@ -9,6 +9,7 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 ### Added
 - Integrated a localized testing framework for comprehensive service layer verification.
 - Added extensive test coverage for core service flows, including initialization, token management, and request mutation.
+- Added `ApproovService.isInitialized()` to expose the service-layer initialization state.
 
 ### Changes
 - Updated the build manifest to support flexible dependency resolution for verification suites.
@@ -17,6 +18,7 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 ### Fixed
 - Enabled macOS host-side compilation for the package in local testing framework mode by extending the relevant availability annotations in `PinningURLSessionDelegate`.
 - Excluded the vendored `util/sig/LICENSE` file from the main package target to avoid SwiftPM unhandled file warnings during tests.
+- Initializing with an empty config string now keeps the service layer initialized while forwarding requests without Approov processing.
 
 ## [3.5.7] - 2026-03-06
 

@@ -92,7 +92,7 @@ public class ApproovService {
     private static var configString: String?
 
     // status of Approov SDK initialization
-    private static var isInitialized = false
+    private static var serviceIsInitialized = false
 
     // the dispatch queue to manage serial access to other ApproovService state
     private static let stateQueue = DispatchQueue(label: "ApproovService.state", qos: .userInitiated)
@@ -184,7 +184,7 @@ public class ApproovService {
     public static func initialize(config: String, comment: String? = nil) throws {
         try initializerQueue.sync  {
             // check if we attempt to use a different configString
-            if isInitialized && ((comment?.hasPrefix("reinit")) == nil) {
+            if serviceIsInitialized && ((comment?.hasPrefix("reinit")) == nil) {
                 // ignore multiple initialization calls that use the same configuration
                 if (config != configString) {
                     // throw exception indicating we are attempting to use different config
@@ -213,10 +213,31 @@ public class ApproovService {
                         throw ApproovError.initializationFailure(message: "Error initializing Approov SDK: \(nsError.localizedDescription)")
                     }
                 }
-                isInitialized = true
+                serviceIsInitialized = true
                 configString = config
                 Approov.setUserProperty("approov-service-urlsession")
             }
+        }
+    }
+
+    /**
+     * Indicates whether the service layer has been initialized.
+     *
+     * When initialized with an empty config string this still returns true, even
+     * though Approov SDK calls are bypassed and networking proceeds without
+     * Approov protection.
+     *
+     * @return true if the service layer has been initialized, false otherwise
+     */
+    public static func isInitialized() -> Bool {
+        initializerQueue.sync {
+            serviceIsInitialized
+        }
+    }
+
+    static func isApproovEnabled() -> Bool {
+        initializerQueue.sync {
+            serviceIsInitialized && !(configString?.isEmpty ?? true)
         }
     }
 
@@ -847,9 +868,9 @@ public class ApproovService {
             }
             return ApproovUpdateResponse(request: request, decision: .ShouldIgnore, sdkMessage: "", error: nil)
         }
-        if !isInitialized {
+        if !isApproovEnabled() {
             if loggingLevel >= .info {
-                os_log("ApproovService: not initialized, forwarding: %@", type: .info, url.absoluteString)
+                os_log("ApproovService: Approov unavailable, forwarding: %@", type: .info, url.absoluteString)
             }
             return ApproovUpdateResponse(request: request, decision: .ShouldIgnore, sdkMessage: "", error: nil)
         }
@@ -1075,7 +1096,7 @@ public class ApproovService {
 
     static func resetForTesting() {
         initializerQueue.sync {
-            isInitialized = false
+            serviceIsInitialized = false
             configString = nil
         }
         stateQueue.sync {

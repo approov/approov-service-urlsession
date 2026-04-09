@@ -52,6 +52,24 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
         }
     }
 
+    /// §1 Empty Configuration (Valid Comment) / Empty Configuration (Empty Comment)
+    ///
+    /// Initializing with an empty config should keep the service layer initialized
+    /// while forwarding requests without Approov mutations.
+    func testInitializeWithEmptyConfigForwardsPlainRequests() throws {
+        try reinitializeServiceWithTargetHost()
+        try ApproovService.initialize(config: "", comment: "reinit-empty-config")
+
+        XCTAssertTrue(ApproovService.isInitialized())
+
+        let request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
+        let reply = fetchNetworkReply(for: request)
+
+        XCTAssertNotNil(reply)
+        XCTAssertNil(getHeader(from: reply, key: "Approov-Token"))
+        XCTAssertNil(getHeader(from: reply, key: "Approov-TraceID"))
+    }
+
     // MARK: - §2 Request Processing & Token Behaviors
     // TESTING_REQUIREMENTS.md §2
 

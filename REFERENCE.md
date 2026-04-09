@@ -30,6 +30,17 @@ Optional comment can be provided to configure the platform SDK:
 try ApproovService.initialize(config: "<config-string>", comment: "my-comment")
 ```
 
+Passing an empty config string bypasses Approov SDK initialization. In that mode the service layer still reports itself as initialized, but requests are forwarded as plain `URLSession` traffic without Approov token injection, message signing, secure strings, or pinning.
+
+## isInitialized
+Returns whether the service layer has been initialized.
+
+```swift
+let initialized = ApproovService.isInitialized()
+```
+
+This reports the service-layer state, not whether Approov protection is active. If initialization used an empty config string then this still returns `true`, while the layer operates without Approov support.
+
 ## setProceedOnNetworkFailure
 *OBSOLETE* Use `setServiceMutator` instead to customize the behavior of the service.
 Controls whether network calls should proceed when Approov cannot fetch due to network errors. Use with *CAUTION* because it may allow requests before pins are updated.
