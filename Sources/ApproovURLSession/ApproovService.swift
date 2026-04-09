@@ -593,20 +593,8 @@ public class ApproovService {
      */
     @available(*, deprecated, message: "This method is now automatically called when the service is initialized.")
     public static func prefetch() {
-        initializerQueue.sync {
-            if isInitialized {
-                Approov.fetchToken({(approovResult: ApproovTokenFetchResult) in
-                    if approovResult.status == ApproovTokenFetchStatus.unknownURL {
-                        if loggingLevel >= .debug {
-                            os_log("ApproovService: prefetch: success", type: .debug)
-                        }
-                    } else {
-                        if loggingLevel >= .debug {
-                            os_log("ApproovService: prefetch: %@", type: .debug, Approov.string(from: approovResult.status))
-                        }
-                    }
-                }, "approov.io")
-            }
+        if loggingLevel >= .warning {
+            os_log("ApproovService: prefetch is no longer used and does nothing.", type: .error)
         }
     }
 
@@ -1083,5 +1071,25 @@ public class ApproovService {
         }
 
         return response
+    }
+
+    static func resetForTesting() {
+        initializerQueue.sync {
+            isInitialized = false
+            configString = nil
+        }
+        stateQueue.sync {
+            proceedOnNetworkFail = false
+            bindingHeader = ""
+            approovTokenHeader = "Approov-Token"
+            approovTokenPrefix = ""
+            approovTraceIDHeader = "Approov-TraceID"
+            serviceMutator = ApproovServiceMutatorDefault.shared
+            substitutionHeaders = Dictionary()
+            substitutionQueryParams = Set()
+            exclusionURLRegexs = Dictionary()
+            useApproovStatusIfNoToken = false
+        }
+        loggingLevel = .info
     }
 }

@@ -4,6 +4,20 @@ All notable changes to this package will be documented in this file.
 
 The format is based on Keep a Changelog and this project adheres to Semantic Versioning.
 
+## [3.5.8] - 2026-04-08
+
+### Added
+- Added a local testing framework mode that allows CI and local test runs to replace the public Approov SDK with a generic local testing framework via `APPROOV_USE_MOCK_FRAMEWORK` and `APPROOV_MOCK_FRAMEWORK_PATH`.
+- Added a dedicated test suite that exercises initialization, token fetches, secure strings, custom JWTs, request mutation, message signing, exclusions, and publisher flows against the testing framework.
+
+### Changes
+- Updated the Swift package manifest so test builds can resolve `Approov` from the local testing framework while normal builds continue to use the public SDK package.
+- Added an internal `ApproovService.resetForTesting()` hook to make repeated local testing framework driven test runs deterministic within a single test process.
+
+### Fixed
+- Enabled macOS host-side compilation for the package in local testing framework mode by extending the relevant availability annotations in `PinningURLSessionDelegate`.
+- Excluded the vendored `util/sig/LICENSE` file from the main package target to avoid SwiftPM unhandled file warnings during tests.
+
 ## [3.5.7] - 2026-03-06
 
 ### Breaking changes
