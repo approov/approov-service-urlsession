@@ -108,7 +108,7 @@ jobs:
           exit 1
 
       # -----------------------------------------------------------------------
-      # 4. Build and run tests
+      # 5. Build and run tests
       #    Swift is invoked from inside the checked-out service directory.
       #    The mini-sdk is already available via the sibling path wired into
       #    Package.swift — no extra configuration needed here.
@@ -118,4 +118,81 @@ jobs:
         env:
           TESTING_REPLY_URL: ${{ env.TESTING_REPLY_URL }}
           TESTING_REPLY_URL_UNPROTECTED: ${{ env.TESTING_REPLY_URL_UNPROTECTED }}
-        run: swift test --parallel
+        run: |
+          # Use tee to capture output for the summary script while still 
+          # showing it in the console.
+          swift test --verbose 2>&1 | tee test_output.txt
+
+      # -----------------------------------------------------------------------
+      # 6. Print test summary
+      #    Parses the Swift test output captured in the previous step.
+      # -----------------------------------------------------------------------
+      - name: Print test summary
+        if: always()
+        working-directory: approov-service-urlsession
+        run: |
+          python3 - <<'EOF'
+          import os, sys, re
+
+          PASS  = "\u2705"
+          FAIL  = "\u274c"
+          SKIP  = "\u23ed\ufe0f"
+
+          output_path = "test_output.txt"
+          if not os.path.exists(output_path):
+              print("No test output found.")
+              sys.exit(0)
+
+          with open(output_path, "r") as f:
+              lines = f.readlines()
+
+          # Regex for Swift/XCTest output:
+          # Test Case '-[Suite.TestClass testName]' passed (0.123 seconds).
+          test_re = re.compile(r"Test Case '-\[(?P<suite>[^. ]+)\.(?P<class>[^ ]+) (?P<name>[^\]]+)\]' (?P<status>passed|failed) \((?P<time>[0-9.]+) seconds\)")
+          
+          results = []
+          for line in lines:
+              match = test_re.search(line)
+              if match:
+                  results.append({
+                      "name": match.group("name"),
+                      "class": match.group("class"),
+                      "status": match.group("status"),
+                      "time": float(match.group("time"))
+                  })
+
+          if not results:
+              print("No tests were detected in the output.")
+              # If we saw "0 tests passed" in the log, let's look for why.
+              sys.exit(0)
+
+          total = len(results)
+          passed = sum(1 for r in results if r["status"] == "passed")
+          failed = total - passed
+          overall_ok = (failed == 0)
+
+          # ── Console output ──────────────────────────────────────────────────
+          icon = PASS if overall_ok else FAIL
+          print()
+          print(f"{'='*70}")
+          print(f"  {icon}  Swift Test Summary  |  {passed}/{total} passed  |  {failed} failed")
+          print(f"{'='*70}")
+          for r in results:
+              print(f"  {PASS if r['status'] == 'passed' else FAIL}  {r['name']:<55} ({r['time']:.3f}s)")
+          print()
+
+          # ── GitHub Job Summary (markdown) ───────────────────────────────────
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY", "")
+          if summary_path:
+              with open(summary_path, "a") as md:
+                  badge = "\U0001f7e2 PASSED" if overall_ok else "\U0001f534 FAILED"
+                  md.write(f"### Swift Tests &nbsp; {badge}\n\n")
+                  md.write(f"> **{passed} passed** &nbsp;|&nbsp; **{failed} failed** &nbsp;|&nbsp; **{total} total**\n\n")
+                  md.write("| Status | Test Case | Time |\n")
+                  md.write("|--------|-----------|-----:|\n")
+                  for r in results:
+                      icon = "\U0001f7e2" if r["status"] == "passed" else "\U0001f534"
+                      md.write(f"| {icon} | `{r['name']}` | {r['time']:.3f}s |\n")
+
+          sys.exit(0 if overall_ok else 1)
+          EOF
