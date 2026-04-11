@@ -45,6 +45,15 @@ let initialized = ApproovService.isInitialized()
 
 This reports the service-layer state, not whether Approov protection is active. If initialization used an empty config string then this still returns `true`, while the layer operates without Approov support.
 
+## isApproovEnabled
+Returns whether Approov protection is currently enabled.
+
+```swift
+let enabled = ApproovService.isApproovEnabled()
+```
+
+This returns `true` only if the service layer has been initialized with a valid, non-empty configuration string. If initialized with an empty string, or not initialized at all, it returns `false`.
+
 ## setProceedOnNetworkFailure
 *OBSOLETE* Use `setServiceMutator` instead to customize the behavior of the service.
 Controls whether network calls should proceed when Approov cannot fetch due to network errors. Use with *CAUTION* because it may allow requests before pins are updated.
@@ -81,6 +90,13 @@ prefix String (such as "Bearer "). By default the token is provided on
 
 ```swift
 ApproovService.setApproovHeader(header: "Approov-Token", prefix: "Bearer ")
+```
+
+## getApproovTokenHeader
+Returns the name of the header used to carry the Approov token.
+
+```swift
+let header = ApproovService.getApproovTokenHeader()
 ```
 
 ## setApproovTraceIDHeader
@@ -167,6 +183,13 @@ Removes a header previously added for substitution.
 ApproovService.removeSubstitutionHeader(header: "Api-Key")
 ```
 
+## getSubstitutionHeaders
+Returns the map of headers currently subject to secure string substitution, mapped to their required prefixes.
+
+```swift
+let headers = ApproovService.getSubstitutionHeaders()
+```
+
 ## addSubstitutionQueryParam
 Adds a key name for a query parameter that should be subject to secure strings substitution.
 This means that if the query parameter is present in a URL then the value will be used as a
@@ -182,6 +205,13 @@ Removes a query parameter key name previously added using addSubstitutionQueryPa
 
 ```swift
 ApproovService.removeSubstitutionQueryParam(key: "api_key")
+```
+
+## getSubstitutionQueryParams
+Returns the set of query parameter keys currently subject to secure string substitution.
+
+```swift
+let params = ApproovService.getSubstitutionQueryParams()
 ```
 
 ## addExclusionURLRegex
@@ -205,6 +235,13 @@ Removes an exclusion URL regular expression previously added using addExclusionU
 
 ```swift
 ApproovService.removeExclusionURLRegex(urlRegex: "^https://example\\.com/unprotected/.*$")
+```
+
+## getExclusionURLRegexs
+Returns the current map of exclusion URL regular expressions and their compiled `NSRegularExpression` patterns.
+
+```swift
+let regexs = ApproovService.getExclusionURLRegexs()
 ```
 
 ## prefetch
