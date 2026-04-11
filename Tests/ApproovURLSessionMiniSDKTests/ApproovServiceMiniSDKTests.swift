@@ -43,7 +43,7 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
     func testInitializeIgnoresSameConfigAndRejectsDifferentConfig() throws {
         XCTAssertNoThrow(try ApproovService.initialize(config: validInitialConfig, comment: nil))
 
-        let differentConfig = "#stg1006#aprv2stg-attest.api.approov.io#https://dev.approoval.com/token#dpcv6jv45r6LGC4E6ZXSMLhBVLrrhAoDcjizU/t9/Eg="
+        let differentConfig = "#cb-other#mAxOF0ekJUOC36J5XWmVmVipOcUoEdMjhPSp2FVtyTo="
         XCTAssertThrowsError(try ApproovService.initialize(config: differentConfig, comment: nil)) { error in
             guard case let ApproovError.configurationError(message) = error else {
                 return XCTFail("Expected configurationError, got \(error)")
@@ -68,6 +68,67 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
         XCTAssertNotNil(reply)
         XCTAssertNil(getHeader(from: reply, key: "Approov-Token"))
         XCTAssertNil(getHeader(from: reply, key: "Approov-TraceID"))
+    }
+
+    /// §1 Empty Configuration then Valid Configuration
+    ///
+    /// Initializing first with an empty config should allow a later valid config
+    /// to enable Approov protection at runtime.
+    func testInitializeWithEmptyConfigCanLaterEnableApproov() throws {
+        try reinitializeServiceWithTargetHost()
+        try ApproovService.initialize(config: "", comment: "reinit-empty-config")
+
+        XCTAssertTrue(ApproovService.isInitialized())
+        XCTAssertFalse(ApproovService.isApproovEnabled())
+
+        let plainRequest = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
+        let plainReply = fetchNetworkReply(for: plainRequest)
+        XCTAssertNotNil(plainReply)
+        XCTAssertNil(getHeader(from: plainReply, key: "Approov-Token"))
+        XCTAssertNil(getHeader(from: plainReply, key: "Approov-TraceID"))
+
+        try ApproovService.initialize(config: validInitialConfig, comment: nil)
+
+        XCTAssertTrue(ApproovService.isInitialized())
+        XCTAssertTrue(ApproovService.isApproovEnabled())
+
+        let protectedRequest = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
+        let protectedReply = fetchNetworkReply(for: protectedRequest)
+        XCTAssertNotNil(protectedReply)
+        XCTAssertNotNil(getHeader(from: protectedReply, key: "Approov-Token"))
+    }
+
+    /// §1 Cross-Service-Layer Same Config Initialization
+    ///
+    /// If another service layer has already initialized the native SDK with the
+    /// same config, this service layer should still initialize successfully when
+    /// it is unaware of that earlier initialization.
+    func testInitializeSucceedsWhenNativeSdkAlreadyInitializedWithSameConfig() throws {
+        ApproovService.resetForTesting()
+
+        XCTAssertNoThrow(try ApproovService.initialize(config: validInitialConfig, comment: nil))
+        XCTAssertTrue(ApproovService.isInitialized())
+        XCTAssertTrue(ApproovService.isApproovEnabled())
+    }
+
+    /// §1 Cross-Service-Layer Different Config Initialization
+    ///
+    /// If another service layer has already initialized the native SDK with a
+    /// different config, this service layer should surface the native error rather
+    /// than silently accepting it.
+    func testInitializeRejectsWhenNativeSdkAlreadyInitializedWithDifferentConfig() throws {
+        ApproovService.resetForTesting()
+        let differentConfig = "#stg1006#aprv2stg-attest.api.approov.io#https://dev.approoval.com/token#dpcv6jv45r6LGC4E6ZXSMLhBVLrrhAoDcjizU/t9/Eg="
+
+        XCTAssertThrowsError(try ApproovService.initialize(config: differentConfig, comment: nil)) { error in
+            guard case let ApproovError.initializationFailure(message) = error else {
+                return XCTFail("Expected initializationFailure, got \(error)")
+            }
+            XCTAssertEqual(message, "Error initializing Approov SDK: Approov SDK already initialized with a different configuration")
+        }
+
+        XCTAssertFalse(ApproovService.isInitialized())
+        XCTAssertFalse(ApproovService.isApproovEnabled())
     }
 
     // MARK: - §2 Request Processing & Token Behaviors

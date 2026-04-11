@@ -183,8 +183,13 @@ public class ApproovService {
      */
     public static func initialize(config: String, comment: String? = nil) throws {
         try initializerQueue.sync  {
+            let allowReinitialize = comment?.hasPrefix("reinit") == true
+            let allowEnableAfterEmptyInitialization =
+                serviceIsInitialized &&
+                (configString?.isEmpty == true) &&
+                !config.isEmpty
             // check if we attempt to use a different configString
-            if serviceIsInitialized && ((comment?.hasPrefix("reinit")) == nil) {
+            if serviceIsInitialized && !allowReinitialize && !allowEnableAfterEmptyInitialization {
                 // ignore multiple initialization calls that use the same configuration
                 if (config != configString) {
                     // throw exception indicating we are attempting to use different config

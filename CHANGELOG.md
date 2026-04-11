@@ -19,6 +19,9 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 - Enabled macOS host-side compilation for the package in local testing framework mode by extending the relevant availability annotations in `PinningURLSessionDelegate`.
 - Excluded the vendored `util/sig/LICENSE` file from the main package target to avoid SwiftPM unhandled file warnings during tests.
 - Initializing with an empty config string now keeps the service layer initialized while forwarding requests without Approov processing.
+- Initializing first with an empty config string and later with a valid non-empty config string now enables Approov at runtime instead of being rejected as a different-configuration initialization.
+- Tightened the initialization guard so only actual `reinit...` comments bypass same-config enforcement.
+- Added explicit cross-service-layer initialization handling and tests so a benign same-config already-initialized native SDK outcome is tolerated, while real different-configuration failures still surface as initialization errors.
 
 ## [3.5.7] - 2026-03-06
 

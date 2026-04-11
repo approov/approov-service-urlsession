@@ -32,6 +32,10 @@ try ApproovService.initialize(config: "<config-string>", comment: "my-comment")
 
 Passing an empty config string bypasses Approov SDK initialization. In that mode the service layer still reports itself as initialized, but requests are forwarded as plain `URLSession` traffic without Approov token injection, message signing, secure strings, or pinning.
 
+This empty-config mode is intended as a bootstrap or bypass state for advanced integrations. A later call to `initialize()` with a valid non-empty config string is allowed and will then enable the native Approov SDK at runtime. By contrast, reinitializing from one non-empty config string to a different non-empty config string is still rejected unless you are intentionally using a supported same-config `reinit...` flow.
+
+Initialization comments starting with `options:` should be treated as initial-call options, not as a repeated runtime update path. Repeated same-config `options:...` calls may fail at the native SDK level. If another service layer has already initialized the native SDK with the same config, URLSession tolerates the benign already-initialized outcome, while still surfacing real different-configuration failures.
+
 ## isInitialized
 Returns whether the service layer has been initialized.
 
@@ -97,8 +101,8 @@ let header = ApproovService.getApproovTraceIDHeader()
 ## setBindingHeader
 Sets a binding header that must be present on all requests using the Approov service. A
 header should be chosen whose value is unchanging for most requests (such as an
-Authorization header). A hash of the header value is included in the issued Approov tokens
-to bind them to the value. This may then be verified by the backend API integration. This
+Authorization header). A hash of the header value is supplied to Approov so the issued token can
+carry the corresponding `pay` claim and be bound to the value. This may then be verified by the backend API integration. This
 method should typically only be called once.
 
 ```swift
@@ -235,10 +239,10 @@ let deviceId = ApproovService.getDeviceID()
 ```
 
 ## setDataHashInToken
-Directly sets the data hash to be included in subsequently fetched Approov tokens. If the hash is
+Directly sets the data hash for subsequently fetched Approov tokens. If the hash is
 different from any previously set value then this will cause the next token fetch operation to
-fetch a new token with the correct payload data hash. The hash appears in the
-'pay' claim of the Approov token as a base64 encoded string of the SHA256 hash of the
+fetch a new token with the correct payload data hash. The resulting token is expected to carry the
+`pay` claim as a base64 encoded string of the SHA256 hash of the
 data. Note that the data is hashed locally and never sent to the Approov cloud service. This method is an alternative to `setBindingHeader`. While both methods bind a header value to a token, this function sets the bound value directly, whereas `setBindingHeader` uses the value from a specified header. You should use one or the other, but not both.
 
 ```swift
