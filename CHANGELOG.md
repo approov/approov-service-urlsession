@@ -10,6 +10,7 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 - Integrated a localized testing framework for comprehensive service layer verification.
 - Added extensive test coverage for core service flows, including initialization, token management, and request mutation.
 - Added `ApproovService.isInitialized()` to expose the service-layer initialization state.
+- Thread-safe failure mode caching for the interceptor path when the platform SDK returns a failure status (`NO_NETWORK`, `POOR_NETWORK`, `MITM_DETECTED`, `NO_APPROOV_SERVICE`).
 
 ### Changes
 - Updated the build manifest to support flexible dependency resolution for verification suites.

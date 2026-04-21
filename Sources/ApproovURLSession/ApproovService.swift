@@ -138,6 +138,14 @@ public class ApproovService {
     // map of URL regexs that should be excluded from any Approov protection, mapped to the compiled Pattern
     private static var exclusionURLRegexs: Dictionary<String, NSRegularExpression> = Dictionary()
 
+    // Cached failure result from the last Approov token fetch that returned a failure status.
+    // Protected by failureCacheQueue for thread-safe access. This avoids redundant ~1s SDK calls
+    // when the platform is in a sustained failure state (e.g. no network, MITM detected).
+    private static let failureCacheQueue = DispatchQueue(label: "ApproovService.failureCache", qos: .userInitiated)
+    private static var cachedFailureResult: ApproovTokenFetchResult? = nil
+    private static var cachedFailureTime: Date? = nil
+    private static let failureCacheTTL: TimeInterval = 0.5 // seconds
+
 
     
     /**
@@ -857,6 +865,37 @@ public class ApproovService {
         }
     }
 
+    /// Returns a cached failure result if one exists and hasn't expired.
+    /// Returns nil if no cache exists or it has expired (caller should fetch from SDK).
+    private static func getCachedFailure() -> ApproovTokenFetchResult? {
+        return failureCacheQueue.sync {
+            guard let result = cachedFailureResult,
+                  let time = cachedFailureTime,
+                  Date().timeIntervalSince(time) < failureCacheTTL else {
+                // Cache miss or expired — clear and allow a fresh SDK call
+                cachedFailureResult = nil
+                cachedFailureTime = nil
+                return nil
+            }
+            return result
+        }
+    }
+
+    /// Caches a failure result. Only failure statuses are cached; success is never cached.
+    private static func cacheFailureIfNeeded(_ result: ApproovTokenFetchResult) {
+        let status = result.status
+        switch status {
+        case .noNetwork, .poorNetwork, .mitmDetected, .noApproovService:
+            failureCacheQueue.sync {
+                cachedFailureResult = result
+                cachedFailureTime = Date()
+            }
+        default:
+            // Success and other statuses are never cached
+            break
+        }
+    }
+
     /**
      * Convenience function fetching the Approov token and updating the request with it. This will also
      * perform header or query parameter substitutions to include protected secrets.
@@ -924,8 +963,21 @@ public class ApproovService {
             }
         }
 
-        // fetch an Approov token: request.url can not be nil here
-        let approovResult = Approov.fetchTokenAndWait(url.absoluteString)
+        // Check for a cached failure before calling the platform SDK. This avoids redundant
+        // SDK calls when the platform is in a sustained failure state.
+        let approovResult: ApproovTokenFetchResult
+        if let cachedResult = getCachedFailure() {
+            approovResult = cachedResult
+            if loggingLevel >= .debug {
+                os_log("ApproovService: using cached failure: %@", type: .debug,
+                       Approov.string(from: cachedResult.status))
+            }
+        } else {
+            // fetch an Approov token: request.url can not be nil here
+            approovResult = Approov.fetchTokenAndWait(url.absoluteString)
+            // Cache the result if it is a failure
+            cacheFailureIfNeeded(approovResult)
+        }
         let hostname = hostnameFromURL(url: url)
         if loggingLevel >= .info {
             os_log("ApproovService: updateRequest %@: %@", type: .info, hostname, approovResult.loggableToken())
@@ -1100,6 +1152,10 @@ public class ApproovService {
     }
 
     static func resetForTesting() {
+        failureCacheQueue.sync {
+            cachedFailureResult = nil
+            cachedFailureTime = nil
+        }
         initializerQueue.sync {
             serviceIsInitialized = false
             configString = nil
