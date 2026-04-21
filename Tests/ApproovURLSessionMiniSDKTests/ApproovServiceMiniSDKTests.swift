@@ -118,7 +118,7 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
     /// than silently accepting it.
     func testInitializeRejectsWhenNativeSdkAlreadyInitializedWithDifferentConfig() throws {
         ApproovService.resetForTesting()
-        let differentConfig = "#stg1006#aprv2stg-attest.api.approov.io#https://dev.approoval.com/token#dpcv6jv45r6LGC4E6ZXSMLhBVLrrhAoDcjizU/t9/Eg="
+        let differentConfig = "#cb-other#mAxOF0ekJUOC36J5XWmVmVipOcUoEdMjhPSp2FVtyTo="
 
         XCTAssertThrowsError(try ApproovService.initialize(config: differentConfig, comment: nil)) { error in
             guard case let ApproovError.initializationFailure(message) = error else {
