@@ -645,6 +645,12 @@ public class ApproovService {
      * @throws ApproovError if there was a problem
      */
     public static func precheck() throws {
+        if !isApproovEnabled() {
+            if loggingLevel >= .error {
+                os_log("ApproovService: precheck: SDK not initialized", type: .error)
+            }
+            return
+        }
         // try to fetch a non-existent secure string in order to check for a rejection
         let approovResults = Approov.fetchSecureStringAndWait("precheck-dummy-key", nil)
         if approovResults.status == ApproovTokenFetchStatus.unknownKey {
@@ -708,6 +714,12 @@ public class ApproovService {
      * @throws ApproovError if there was a problem
      */
     public static func fetchToken(url: String) throws -> String {
+        if !isApproovEnabled() {
+            if loggingLevel >= .error {
+                os_log("ApproovService: fetchToken: SDK not initialized", type: .error)
+            }
+            return "SDK not initialized"
+        }
         // fetch the Approov token
         let result: ApproovTokenFetchResult = Approov.fetchTokenAndWait(url)
         if loggingLevel >= .debug {
@@ -780,6 +792,12 @@ public class ApproovService {
      * @throws ApproovError if there was a problem
      */
     public static func fetchSecureString(key: String, newDef: String?) throws -> String? {
+        if !isApproovEnabled() {
+            if loggingLevel >= .error {
+                os_log("ApproovService: fetchSecureString: SDK not initialized", type: .error)
+            }
+            return "SDK not initialized"
+        }
         // determine the type of operation as the values themselves cannot be logged
         var type = "lookup"
         if newDef != nil {
@@ -811,6 +829,12 @@ public class ApproovService {
      * @throws ApproovError if there was a problem
      */
     public static func fetchCustomJWT(payload: String) throws -> String? {
+        if !isApproovEnabled() {
+            if loggingLevel >= .error {
+                os_log("ApproovService: fetchCustomJWT: SDK not initialized", type: .error)
+            }
+            return "SDK not initialized"
+        }
         // fetch the custom JWT
         let approovResult = Approov.fetchCustomJWTAndWait(payload)
         if loggingLevel >= .info {
