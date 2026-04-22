@@ -611,7 +611,7 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
     /// §6 Empty Secure String Key
     ///
     /// Fetch a secure string using an empty key throws a permanent error.
-    func testFetchSecureStringEmptyKeyReturnsNil() throws {
+    func testFetchSecureStringEmptyKeyRaisesPermanentError() throws {
         XCTAssertThrowsError(try ApproovService.fetchSecureString(key: "", newDef: nil)) { error in
             guard case let ApproovError.permanentError(message) = error else {
                 return XCTFail("Expected permanentError, got \\\(error)")
