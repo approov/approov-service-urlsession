@@ -248,7 +248,14 @@ public class ApproovService {
         }
     }
 
-    static func isApproovEnabled() -> Bool {
+    /**
+     * Indicates whether Approov protection is enabled for this service layer
+     * instance. If initialization used an empty config string then the layer is
+     * initialized but Approov protection is bypassed.
+     *
+     * @return true if Approov protection is enabled, false otherwise
+     */
+    public static func isApproovEnabled() -> Bool {
         initializerQueue.sync {
             serviceIsInitialized && !(configString?.isEmpty ?? true)
         }
