@@ -803,7 +803,7 @@ public class ApproovService {
             if loggingLevel >= .error {
                 os_log("ApproovService: fetchSecureString: SDK not initialized", type: .error)
             }
-            return "SDK not initialized"
+            return nil
         }
         // determine the type of operation as the values themselves cannot be logged
         var type = "lookup"
@@ -840,7 +840,7 @@ public class ApproovService {
             if loggingLevel >= .error {
                 os_log("ApproovService: fetchCustomJWT: SDK not initialized", type: .error)
             }
-            return "SDK not initialized"
+            return nil
         }
         // fetch the custom JWT
         let approovResult = Approov.fetchCustomJWTAndWait(payload)
