@@ -763,8 +763,8 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
             """
         )
 
-        // 3. Sleep slightly beyond the 500ms TTL
-        Thread.sleep(forTimeInterval: 0.6)
+        // 3. Sleep well beyond the 500ms TTL to avoid timing-related flakiness in CI.
+        Thread.sleep(forTimeInterval: 1.0)
 
         let response2 = ApproovService.updateRequestWithApproov(request: request, sessionConfig: nil)
         XCTAssertEqual(response2.decision, .ShouldProceed)
