@@ -1,0 +1,23 @@
+{
+  "pins" : [
+    {
+      "identity" : "approov-ios-sdk",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/approov/approov-ios-sdk.git",
+      "state" : {
+        "revision" : "ddeee49a8116df7e48daddbe2eebcdacf642eab8",
+        "version" : "3.5.3"
+      }
+    },
+    {
+      "identity" : "swift-http-structured-headers",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-http-structured-headers.git",
+      "state" : {
+        "revision" : "8e769facea6b7d46ea60e5e93635a384fd573480",
+        "version" : "1.2.1"
+      }
+    }
+  ],
+  "version" : 2
+}
