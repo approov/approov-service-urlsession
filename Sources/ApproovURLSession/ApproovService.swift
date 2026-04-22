@@ -682,6 +682,12 @@ public class ApproovService {
      * @return String of the device ID or nil in case of an error
      */
     public static func getDeviceID() -> String? {
+        if !isApproovEnabled() {
+            if loggingLevel >= .error {
+                os_log("ApproovService: getDeviceID: SDK not initialized", type: .error)
+            }
+            return nil
+        }
         let deviceID = Approov.getDeviceID()
         if (deviceID != nil) {
             if loggingLevel >= .debug {
@@ -701,6 +707,12 @@ public class ApproovService {
      * @param data is the data to be hashed and set in the token
      */
     public static func setDataHashInToken(data: String) {
+        if !isApproovEnabled() {
+            if loggingLevel >= .error {
+                os_log("ApproovService: setDataHashInToken: SDK not initialized", type: .error)
+            }
+            return
+        }
         if loggingLevel >= .debug {
             os_log("ApproovService: setDataHashInToken", type: .debug)
         }
@@ -760,6 +772,12 @@ public class ApproovService {
      * @return String of the base64 encoded message signature
      */
     public static func getAccountMessageSignature(message: String) -> String? {
+        if !isApproovEnabled() {
+            if loggingLevel >= .error {
+                os_log("ApproovService: getAccountMessageSignature: SDK not initialized", type: .error)
+            }
+            return nil
+        }
         if loggingLevel >= .debug {
             os_log("ApproovService: getAccountMessageSignature", type: .debug)
         }
@@ -774,6 +792,12 @@ public class ApproovService {
      * @return String of the base64 encoded message signature
      */
     public static func getInstallMessageSignature(message: String) -> String? {
+        if !isApproovEnabled() {
+            if loggingLevel >= .error {
+                os_log("ApproovService: getInstallMessageSignature: SDK not initialized", type: .error)
+            }
+            return nil
+        }
         if loggingLevel >= .debug {
             os_log("ApproovService: getInstallMessageSignature", type: .debug)
         }
