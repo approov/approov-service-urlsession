@@ -656,7 +656,7 @@ public class ApproovService {
             if loggingLevel >= .error {
                 os_log("ApproovService: precheck: SDK not initialized", type: .error)
             }
-            return
+            throw ApproovError.permanentError(message: "precheck: SDK not initialized")
         }
         // try to fetch a non-existent secure string in order to check for a rejection
         let approovResults = Approov.fetchSecureStringAndWait("precheck-dummy-key", nil)
@@ -725,7 +725,7 @@ public class ApproovService {
             if loggingLevel >= .error {
                 os_log("ApproovService: fetchToken: SDK not initialized", type: .error)
             }
-            return "SDK not initialized"
+            throw ApproovError.permanentError(message: "fetchToken: SDK not initialized")
         }
         // fetch the Approov token
         let result: ApproovTokenFetchResult = Approov.fetchTokenAndWait(url)
@@ -803,7 +803,7 @@ public class ApproovService {
             if loggingLevel >= .error {
                 os_log("ApproovService: fetchSecureString: SDK not initialized", type: .error)
             }
-            return nil
+            throw ApproovError.permanentError(message: "fetchSecureString: SDK not initialized")
         }
         // determine the type of operation as the values themselves cannot be logged
         var type = "lookup"
@@ -840,7 +840,7 @@ public class ApproovService {
             if loggingLevel >= .error {
                 os_log("ApproovService: fetchCustomJWT: SDK not initialized", type: .error)
             }
-            return nil
+            throw ApproovError.permanentError(message: "fetchCustomJWT: SDK not initialized")
         }
         // fetch the custom JWT
         let approovResult = Approov.fetchCustomJWTAndWait(payload)
