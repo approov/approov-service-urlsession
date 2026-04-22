@@ -635,7 +635,7 @@ public class ApproovService {
     @available(*, deprecated, message: "This method is now automatically called when the service is initialized.")
     public static func prefetch() {
         if loggingLevel >= .warning {
-            os_log("ApproovService: prefetch is no longer used and does nothing.", type: .error)
+            os_log("ApproovService: prefetch is no longer used and does nothing.")
         }
     }
 
