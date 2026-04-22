@@ -119,8 +119,7 @@ jobs:
           TESTING_REPLY_URL: ${{ env.TESTING_REPLY_URL }}
           TESTING_REPLY_URL_UNPROTECTED: ${{ env.TESTING_REPLY_URL_UNPROTECTED }}
         run: |
-          # Use tee to capture output for the summary script while still 
-          # showing it in the console.
+          set -o pipefail
           swift test --verbose 2>&1 | tee test_output.txt
 
       # -----------------------------------------------------------------------
@@ -164,7 +163,7 @@ jobs:
           if not results:
               print("No tests were detected in the output.")
               # If we saw "0 tests passed" in the log, let's look for why.
-              sys.exit(0)
+              sys.exit(1)
 
           total = len(results)
           passed = sum(1 for r in results if r["status"] == "passed")
