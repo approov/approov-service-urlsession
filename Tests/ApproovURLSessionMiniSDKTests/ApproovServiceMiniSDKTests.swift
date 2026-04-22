@@ -685,6 +685,92 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
         }
     }
 
+    /// §7 Failure Caching
+    ///
+    /// Verifies that SDK failures (e.g., NO_NETWORK) are cached and short-circuit
+    /// subsequent requests within the TTL window without querying the SDK again.
+    func testCachedFailureShortCircuitsSDKFetchWithinTTL() throws {
+        try reinitializeServiceWithTargetHost()
+
+        // 1. Force a NO_NETWORK failure which should populate the cache
+        setDirective(
+            """
+            {
+              "operation": "fetchApproovToken",
+              "response": {
+                "status": "NO_NETWORK"
+              }
+            }
+            """
+        )
+
+        let request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
+        let response1 = ApproovService.updateRequestWithApproov(request: request, sessionConfig: nil)
+        XCTAssertEqual(response1.decision, .ShouldRetry)
+        XCTAssertEqual(response1.sdkMessage, "no network")
+
+        // 2. Change the underlying directive to SUCCESS.
+        // Since the cache is still valid, the SDK should be bypassed and
+        // the response should still be the cached NO_NETWORK.
+        setDirective(
+            """
+            {
+              "operation": "fetchApproovToken",
+              "response": {
+                "status": "SUCCESS",
+                "token": "fresh-token-that-should-be-ignored"
+              }
+            }
+            """
+        )
+
+        let response2 = ApproovService.updateRequestWithApproov(request: request, sessionConfig: nil)
+        XCTAssertEqual(response2.decision, .ShouldRetry)
+        XCTAssertEqual(response2.sdkMessage, "no network")
+    }
+
+    /// Verifies that the cached failure expires after the TTL.
+    func testCachedFailureExpiresAfterTTL() throws {
+        try reinitializeServiceWithTargetHost()
+
+        // 1. Force a NO_NETWORK failure which should populate the cache
+        setDirective(
+            """
+            {
+              "operation": "fetchApproovToken",
+              "response": {
+                "status": "NO_NETWORK"
+              }
+            }
+            """
+        )
+
+        let request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
+        let response1 = ApproovService.updateRequestWithApproov(request: request, sessionConfig: nil)
+        XCTAssertEqual(response1.decision, .ShouldRetry)
+        XCTAssertEqual(response1.sdkMessage, "no network")
+
+        // 2. Change the underlying directive to SUCCESS.
+        setDirective(
+            """
+            {
+              "operation": "fetchApproovToken",
+              "response": {
+                "status": "SUCCESS",
+                "token": "fresh-token-after-ttl"
+              }
+            }
+            """
+        )
+
+        // 3. Sleep slightly beyond the 500ms TTL
+        Thread.sleep(forTimeInterval: 0.6)
+
+        let response2 = ApproovService.updateRequestWithApproov(request: request, sessionConfig: nil)
+        XCTAssertEqual(response2.decision, .ShouldProceed)
+        XCTAssertEqual(response2.sdkMessage, "success")
+    }
+
     // MARK: - Test Helpers
 
     private var targetURLString: String {
