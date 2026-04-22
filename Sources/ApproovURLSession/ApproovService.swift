@@ -143,7 +143,7 @@ public class ApproovService {
     // when the platform is in a sustained failure state (e.g. no network, MITM detected).
     private static let failureCacheQueue = DispatchQueue(label: "ApproovService.failureCache", qos: .userInitiated)
     private static var cachedFailureResult: ApproovTokenFetchResult? = nil
-    private static var cachedFailureTime: Date? = nil
+    private static var cachedFailureTime: TimeInterval? = nil
     private static let failureCacheTTL: TimeInterval = 0.5 // seconds
 
 
@@ -926,7 +926,7 @@ public class ApproovService {
         return failureCacheQueue.sync {
             guard let result = cachedFailureResult,
                   let time = cachedFailureTime,
-                  Date().timeIntervalSince(time) < failureCacheTTL else {
+                  (ProcessInfo.processInfo.systemUptime - time) < failureCacheTTL else {
                 // Cache miss or expired — clear and allow a fresh SDK call
                 cachedFailureResult = nil
                 cachedFailureTime = nil
@@ -943,7 +943,7 @@ public class ApproovService {
         case .noNetwork, .poorNetwork, .mitmDetected, .noApproovService:
             failureCacheQueue.sync {
                 cachedFailureResult = result
-                cachedFailureTime = Date()
+                cachedFailureTime = ProcessInfo.processInfo.systemUptime
             }
         default:
             // Success and other statuses are never cached
