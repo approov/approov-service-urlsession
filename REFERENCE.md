@@ -245,8 +245,8 @@ let regexs = ApproovService.getExclusionURLRegexs()
 ```
 
 ## prefetch
-*OBSOLETE* This method is now automatically called when the service is initialized.
-Starts a background token fetch to reduce latency for the next request.
+*OBSOLETE* This method is obsolete and is now a no-op. The underlying Approov SDK manages prefetching automatically.
+
 
 ```swift
 ApproovService.prefetch()

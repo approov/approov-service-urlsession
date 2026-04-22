@@ -627,12 +627,12 @@ public class ApproovService {
     }
 
     /**
-     * Allows an Approov fetch operation to be performed as early as possible. This
-     * permits a token or secure strings to be available while an application might
-     * be loading resources or is awaiting user input. Since the initial fetch is the
-     * most expensive the prefetch can hide the most latency.
+     * Allows an Approov fetch operation to be performed as early as possible.
+     * 
+     * Note: This method is obsolete and is now a no-op. The underlying Approov 
+     * SDK manages prefetching automatically.
      */
-    @available(*, deprecated, message: "This method is now automatically called when the service is initialized.")
+    @available(*, deprecated, message: "This method is obsolete and is now a no-op. The underlying Approov SDK manages prefetching automatically.")
     public static func prefetch() {
         if loggingLevel >= .warning {
             os_log("ApproovService: prefetch is no longer used and does nothing.")
