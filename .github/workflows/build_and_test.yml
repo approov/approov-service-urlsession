@@ -140,7 +140,7 @@ jobs:
           output_path = "test_output.txt"
           if not os.path.exists(output_path):
               print("No test output found.")
-              sys.exit(0)
+              sys.exit(1)
 
           with open(output_path, "r") as f:
               lines = f.readlines()
