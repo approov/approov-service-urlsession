@@ -337,7 +337,7 @@ public class ApproovService {
      *
      * @return the name of the header used for the Approov token
      */
-    static func getApproovTokenHeader() -> String {
+    public static func getApproovTokenHeader() -> String {
         return stateQueue.sync {
             return approovTokenHeader
         }
