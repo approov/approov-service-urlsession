@@ -925,14 +925,18 @@ public class ApproovService {
     private static func getCachedFailure() -> ApproovTokenFetchResult? {
         return failureCacheQueue.sync {
             guard let result = cachedFailureResult,
-                  let time = cachedFailureTime,
-                  (ProcessInfo.processInfo.systemUptime - time) < failureCacheTTL else {
-                // Cache miss or expired — clear and allow a fresh SDK call
-                cachedFailureResult = nil
-                cachedFailureTime = nil
+                  let time = cachedFailureTime else {
                 return nil
             }
-            return result
+            if (ProcessInfo.processInfo.systemUptime - time) < failureCacheTTL {
+                os_log("ApproovService: using cached failure: %@", type: .debug, Approov.string(from: result.status))
+                return result
+            }
+            // Cache expired — clear and allow a fresh SDK call
+            os_log("ApproovService: failure cache expired", type: .debug)
+            cachedFailureResult = nil
+            cachedFailureTime = nil
+            return nil
         }
     }
 
@@ -953,6 +957,7 @@ public class ApproovService {
             failureCacheQueue.sync {
                 cachedFailureResult = result
                 cachedFailureTime = ProcessInfo.processInfo.systemUptime
+                os_log("ApproovService: caching failure: %@", type: .debug, Approov.string(from: status))
             }
         default:
             // Success and other statuses are never cached
@@ -1032,10 +1037,6 @@ public class ApproovService {
         let approovResult: ApproovTokenFetchResult
         if let cachedResult = getCachedFailure() {
             approovResult = cachedResult
-            if loggingLevel >= .debug {
-                os_log("ApproovService: using cached failure: %@", type: .debug,
-                       Approov.string(from: cachedResult.status))
-            }
         } else {
             // fetch an Approov token: request.url can not be nil here
             approovResult = Approov.fetchTokenAndWait(url.absoluteString)
