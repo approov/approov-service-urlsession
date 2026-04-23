@@ -144,7 +144,7 @@ public class ApproovService {
     private static let failureCacheQueue = DispatchQueue(label: "ApproovService.failureCache", qos: .userInitiated)
     private static var cachedFailureResult: ApproovTokenFetchResult? = nil
     private static var cachedFailureTime: TimeInterval? = nil
-    private static let failureCacheTTL: TimeInterval = 0.5 // seconds
+    private static var failureCacheTTL: TimeInterval = 0.5 // seconds
 
 
     
@@ -933,6 +933,15 @@ public class ApproovService {
                 return nil
             }
             return result
+        }
+    }
+
+    /// Sets the cache time-to-live for failure results (e.g. MITM_DETECTED).
+    ///
+    /// - Parameter ttl: The time to live in seconds.
+    public static func setFailureCacheTTL(ttl: TimeInterval) {
+        failureCacheQueue.sync {
+            failureCacheTTL = ttl
         }
     }
 
