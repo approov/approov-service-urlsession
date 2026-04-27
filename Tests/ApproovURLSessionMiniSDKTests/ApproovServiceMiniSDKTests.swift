@@ -729,6 +729,60 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
         XCTAssertEqual(response2.sdkMessage, "no network")
     }
 
+    /// Verifies that concurrent requests share a cached failure once the first
+    /// in-flight SDK fetch observes the failure.
+    func testCachedFailureShortCircuitsConcurrentRequestsWithinTTL() throws {
+        try reinitializeServiceWithTargetHost()
+
+        setDirective(
+            """
+            {
+              "operation": "fetchApproovToken",
+              "response": {
+                "status": "NO_NETWORK"
+              }
+            }
+            """
+        )
+
+        let request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
+        let requestCount = 24
+        let startGate = DispatchSemaphore(value: 0)
+        let completionGroup = DispatchGroup()
+        let responsesLock = NSLock()
+        var responses: [ApproovUpdateResponse] = []
+
+        for _ in 0..<requestCount {
+            completionGroup.enter()
+            DispatchQueue.global(qos: .userInitiated).async {
+                startGate.wait()
+                let response = ApproovService.updateRequestWithApproov(request: request, sessionConfig: nil)
+                responsesLock.lock()
+                responses.append(response)
+                responsesLock.unlock()
+                completionGroup.leave()
+            }
+        }
+
+        for _ in 0..<requestCount {
+            startGate.signal()
+        }
+
+        switch completionGroup.wait(timeout: .now() + 5.0) {
+        case .success:
+            break
+        case .timedOut:
+            XCTFail("Timed out waiting for concurrent cached-failure requests")
+            return
+        }
+
+        XCTAssertEqual(responses.count, requestCount)
+        for response in responses {
+            XCTAssertEqual(response.decision, .ShouldRetry)
+            XCTAssertEqual(response.sdkMessage, "no network")
+        }
+    }
+
     /// Verifies that the cached failure expires after the TTL.
     func testCachedFailureExpiresAfterTTL() throws {
         try reinitializeServiceWithTargetHost()

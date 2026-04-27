@@ -145,6 +145,7 @@ public class ApproovService {
     private static var cachedFailureResult: ApproovTokenFetchResult? = nil
     private static var cachedFailureTime: TimeInterval? = nil
     private static var failureCacheTTL: TimeInterval = 0.5 // seconds
+    private static var failureCacheMissGroup: DispatchGroup? = nil
 
 
     
@@ -924,19 +925,83 @@ public class ApproovService {
     /// Returns nil if no cache exists or it has expired (caller should fetch from SDK).
     private static func getCachedFailure() -> ApproovTokenFetchResult? {
         return failureCacheQueue.sync {
-            guard let result = cachedFailureResult,
-                  let time = cachedFailureTime else {
-                return nil
-            }
-            if (ProcessInfo.processInfo.systemUptime - time) < failureCacheTTL {
-                os_log("ApproovService: using cached failure: %@", type: .debug, Approov.string(from: result.status))
+            return getCachedFailureLocked()
+        }
+    }
+
+    private static func getCachedFailureLocked() -> ApproovTokenFetchResult? {
+        guard let result = cachedFailureResult,
+              let time = cachedFailureTime else {
+            return nil
+        }
+        if (ProcessInfo.processInfo.systemUptime - time) < failureCacheTTL {
+            os_log("ApproovService: using cached failure: %@", type: .debug, Approov.string(from: result.status))
+            return result
+        }
+        // Cache expired - clear and allow a fresh SDK call
+        os_log("ApproovService: failure cache expired", type: .debug)
+        cachedFailureResult = nil
+        cachedFailureTime = nil
+        return nil
+    }
+
+    private static func fetchTokenWithFailureCache(url: String) -> ApproovTokenFetchResult {
+        var missGroupToWaitFor: DispatchGroup?
+        var ownedMissGroup: DispatchGroup?
+
+        if let cachedResult = failureCacheQueue.sync(execute: { () -> ApproovTokenFetchResult? in
+            if let result = getCachedFailureLocked() {
                 return result
             }
-            // Cache expired — clear and allow a fresh SDK call
-            os_log("ApproovService: failure cache expired", type: .debug)
-            cachedFailureResult = nil
-            cachedFailureTime = nil
+            if let missGroup = failureCacheMissGroup {
+                missGroupToWaitFor = missGroup
+            } else {
+                let missGroup = DispatchGroup()
+                missGroup.enter()
+                failureCacheMissGroup = missGroup
+                ownedMissGroup = missGroup
+            }
             return nil
+        }) {
+            return cachedResult
+        }
+
+        if let missGroupToWaitFor {
+            missGroupToWaitFor.wait()
+            if let cachedResult = getCachedFailure() {
+                return cachedResult
+            }
+            let result = Approov.fetchTokenAndWait(url)
+            cacheFailureIfNeeded(result)
+            return result
+        }
+
+        let result = Approov.fetchTokenAndWait(url)
+        failureCacheQueue.sync {
+            cacheFailureIfNeededLocked(result)
+            failureCacheMissGroup = nil
+            ownedMissGroup?.leave()
+        }
+        return result
+    }
+
+    private static func cacheFailureIfNeededLocked(_ result: ApproovTokenFetchResult) {
+        let status = result.status
+        switch status {
+        case .noNetwork, .poorNetwork, .mitmDetected, .noApproovService:
+            cachedFailureResult = result
+            cachedFailureTime = ProcessInfo.processInfo.systemUptime
+            os_log("ApproovService: caching failure: %@", type: .debug, Approov.string(from: status))
+        default:
+            // Success and other statuses are never cached
+            break
+        }
+    }
+
+    /// Caches a failure result. Only failure statuses are cached; success is never cached.
+    private static func cacheFailureIfNeeded(_ result: ApproovTokenFetchResult) {
+        failureCacheQueue.sync {
+            cacheFailureIfNeededLocked(result)
         }
     }
 
@@ -946,22 +1011,6 @@ public class ApproovService {
     public static func setFailureCacheTTL(ttl: TimeInterval) {
         failureCacheQueue.sync {
             failureCacheTTL = ttl
-        }
-    }
-
-    /// Caches a failure result. Only failure statuses are cached; success is never cached.
-    private static func cacheFailureIfNeeded(_ result: ApproovTokenFetchResult) {
-        let status = result.status
-        switch status {
-        case .noNetwork, .poorNetwork, .mitmDetected, .noApproovService:
-            failureCacheQueue.sync {
-                cachedFailureResult = result
-                cachedFailureTime = ProcessInfo.processInfo.systemUptime
-                os_log("ApproovService: caching failure: %@", type: .debug, Approov.string(from: status))
-            }
-        default:
-            // Success and other statuses are never cached
-            break
         }
     }
 
@@ -1032,17 +1081,9 @@ public class ApproovService {
             }
         }
 
-        // Check for a cached failure before calling the platform SDK. This avoids redundant
-        // SDK calls when the platform is in a sustained failure state.
-        let approovResult: ApproovTokenFetchResult
-        if let cachedResult = getCachedFailure() {
-            approovResult = cachedResult
-        } else {
-            // fetch an Approov token: request.url can not be nil here
-            approovResult = Approov.fetchTokenAndWait(url.absoluteString)
-            // Cache the result if it is a failure
-            cacheFailureIfNeeded(approovResult)
-        }
+        // Fetch an Approov token, coalescing concurrent cache misses so a sustained
+        // platform failure is cached before the same launch burst makes redundant SDK calls.
+        let approovResult = fetchTokenWithFailureCache(url: url.absoluteString)
         let hostname = hostnameFromURL(url: url)
         if loggingLevel >= .info {
             os_log("ApproovService: updateRequest %@: %@", type: .info, hostname, approovResult.loggableToken())
@@ -1220,6 +1261,7 @@ public class ApproovService {
         failureCacheQueue.sync {
             cachedFailureResult = nil
             cachedFailureTime = nil
+            failureCacheMissGroup = nil
         }
         initializerQueue.sync {
             serviceIsInitialized = false
