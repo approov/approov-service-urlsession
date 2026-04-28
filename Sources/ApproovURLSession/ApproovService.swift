@@ -92,7 +92,7 @@ public class ApproovService {
     private static var configString: String?
 
     // status of Approov SDK initialization
-    private static var isInitialized = false
+    private static var serviceIsInitialized = false
 
     // the dispatch queue to manage serial access to other ApproovService state
     private static let stateQueue = DispatchQueue(label: "ApproovService.state", qos: .userInitiated)
@@ -137,6 +137,15 @@ public class ApproovService {
 
     // map of URL regexs that should be excluded from any Approov protection, mapped to the compiled Pattern
     private static var exclusionURLRegexs: Dictionary<String, NSRegularExpression> = Dictionary()
+
+    // Cached failure result from the last Approov token fetch that returned a failure status.
+    // Protected by failureCacheQueue for thread-safe access. This avoids redundant ~1s SDK calls
+    // when the platform is in a sustained failure state (e.g. no network, MITM detected).
+    private static let failureCacheQueue = DispatchQueue(label: "ApproovService.failureCache", qos: .userInitiated)
+    private static var cachedFailureResult: ApproovTokenFetchResult? = nil
+    private static var cachedFailureTime: TimeInterval? = nil
+    private static var failureCacheTTL: TimeInterval = 0.5 // seconds
+    private static var failureCacheMissGroup: DispatchGroup? = nil
 
 
     
@@ -183,8 +192,13 @@ public class ApproovService {
      */
     public static func initialize(config: String, comment: String? = nil) throws {
         try initializerQueue.sync  {
+            let allowReinitialize = comment?.hasPrefix("reinit") == true
+            let allowEnableAfterEmptyInitialization =
+                serviceIsInitialized &&
+                (configString?.isEmpty == true) &&
+                !config.isEmpty
             // check if we attempt to use a different configString
-            if isInitialized && ((comment?.hasPrefix("reinit")) == nil) {
+            if serviceIsInitialized && !allowReinitialize && !allowEnableAfterEmptyInitialization {
                 // ignore multiple initialization calls that use the same configuration
                 if (config != configString) {
                     // throw exception indicating we are attempting to use different config
@@ -213,10 +227,38 @@ public class ApproovService {
                         throw ApproovError.initializationFailure(message: "Error initializing Approov SDK: \(nsError.localizedDescription)")
                     }
                 }
-                isInitialized = true
+                serviceIsInitialized = true
                 configString = config
                 Approov.setUserProperty("approov-service-urlsession")
             }
+        }
+    }
+
+    /**
+     * Indicates whether the service layer has been initialized.
+     *
+     * When initialized with an empty config string this still returns true, even
+     * though Approov SDK calls are bypassed and networking proceeds without
+     * Approov protection.
+     *
+     * @return true if the service layer has been initialized, false otherwise
+     */
+    public static func isInitialized() -> Bool {
+        initializerQueue.sync {
+            serviceIsInitialized
+        }
+    }
+
+    /**
+     * Indicates whether Approov protection is enabled for this service layer
+     * instance. If initialization used an empty config string then the layer is
+     * initialized but Approov protection is bypassed.
+     *
+     * @return true if Approov protection is enabled, false otherwise
+     */
+    public static func isApproovEnabled() -> Bool {
+        initializerQueue.sync {
+            serviceIsInitialized && !(configString?.isEmpty ?? true)
         }
     }
 
@@ -296,7 +338,7 @@ public class ApproovService {
      *
      * @return the name of the header used for the Approov token
      */
-    static func getApproovTokenHeader() -> String {
+    public static func getApproovTokenHeader() -> String {
         return stateQueue.sync {
             return approovTokenHeader
         }
@@ -586,27 +628,15 @@ public class ApproovService {
     }
 
     /**
-     * Allows an Approov fetch operation to be performed as early as possible. This
-     * permits a token or secure strings to be available while an application might
-     * be loading resources or is awaiting user input. Since the initial fetch is the
-     * most expensive the prefetch can hide the most latency.
+     * Allows an Approov fetch operation to be performed as early as possible.
+     * 
+     * Note: This method is obsolete and is now a no-op. The underlying Approov 
+     * SDK manages prefetching automatically.
      */
-    @available(*, deprecated, message: "This method is now automatically called when the service is initialized.")
+    @available(*, deprecated, message: "This method is obsolete and is now a no-op. The underlying Approov SDK manages prefetching automatically.")
     public static func prefetch() {
-        initializerQueue.sync {
-            if isInitialized {
-                Approov.fetchToken({(approovResult: ApproovTokenFetchResult) in
-                    if approovResult.status == ApproovTokenFetchStatus.unknownURL {
-                        if loggingLevel >= .debug {
-                            os_log("ApproovService: prefetch: success", type: .debug)
-                        }
-                    } else {
-                        if loggingLevel >= .debug {
-                            os_log("ApproovService: prefetch: %@", type: .debug, Approov.string(from: approovResult.status))
-                        }
-                    }
-                }, "approov.io")
-            }
+        if loggingLevel >= .warning {
+            os_log("ApproovService: prefetch is no longer used and does nothing.")
         }
     }
 
@@ -623,6 +653,12 @@ public class ApproovService {
      * @throws ApproovError if there was a problem
      */
     public static func precheck() throws {
+        if !isApproovEnabled() {
+            if loggingLevel >= .error {
+                os_log("ApproovService: precheck: SDK not initialized", type: .error)
+            }
+            throw ApproovError.permanentError(message: "precheck: SDK not initialized")
+        }
         // try to fetch a non-existent secure string in order to check for a rejection
         let approovResults = Approov.fetchSecureStringAndWait("precheck-dummy-key", nil)
         if approovResults.status == ApproovTokenFetchStatus.unknownKey {
@@ -647,6 +683,12 @@ public class ApproovService {
      * @return String of the device ID or nil in case of an error
      */
     public static func getDeviceID() -> String? {
+        if !isApproovEnabled() {
+            if loggingLevel >= .error {
+                os_log("ApproovService: getDeviceID: SDK not initialized", type: .error)
+            }
+            return nil
+        }
         let deviceID = Approov.getDeviceID()
         if (deviceID != nil) {
             if loggingLevel >= .debug {
@@ -666,6 +708,12 @@ public class ApproovService {
      * @param data is the data to be hashed and set in the token
      */
     public static func setDataHashInToken(data: String) {
+        if !isApproovEnabled() {
+            if loggingLevel >= .error {
+                os_log("ApproovService: setDataHashInToken: SDK not initialized", type: .error)
+            }
+            return
+        }
         if loggingLevel >= .debug {
             os_log("ApproovService: setDataHashInToken", type: .debug)
         }
@@ -686,6 +734,12 @@ public class ApproovService {
      * @throws ApproovError if there was a problem
      */
     public static func fetchToken(url: String) throws -> String {
+        if !isApproovEnabled() {
+            if loggingLevel >= .error {
+                os_log("ApproovService: fetchToken: SDK not initialized", type: .error)
+            }
+            throw ApproovError.permanentError(message: "fetchToken: SDK not initialized")
+        }
         // fetch the Approov token
         let result: ApproovTokenFetchResult = Approov.fetchTokenAndWait(url)
         if loggingLevel >= .debug {
@@ -719,6 +773,12 @@ public class ApproovService {
      * @return String of the base64 encoded message signature
      */
     public static func getAccountMessageSignature(message: String) -> String? {
+        if !isApproovEnabled() {
+            if loggingLevel >= .error {
+                os_log("ApproovService: getAccountMessageSignature: SDK not initialized", type: .error)
+            }
+            return nil
+        }
         if loggingLevel >= .debug {
             os_log("ApproovService: getAccountMessageSignature", type: .debug)
         }
@@ -733,6 +793,12 @@ public class ApproovService {
      * @return String of the base64 encoded message signature
      */
     public static func getInstallMessageSignature(message: String) -> String? {
+        if !isApproovEnabled() {
+            if loggingLevel >= .error {
+                os_log("ApproovService: getInstallMessageSignature: SDK not initialized", type: .error)
+            }
+            return nil
+        }
         if loggingLevel >= .debug {
             os_log("ApproovService: getInstallMessageSignature", type: .debug)
         }
@@ -758,6 +824,12 @@ public class ApproovService {
      * @throws ApproovError if there was a problem
      */
     public static func fetchSecureString(key: String, newDef: String?) throws -> String? {
+        if !isApproovEnabled() {
+            if loggingLevel >= .error {
+                os_log("ApproovService: fetchSecureString: SDK not initialized", type: .error)
+            }
+            throw ApproovError.permanentError(message: "fetchSecureString: SDK not initialized")
+        }
         // determine the type of operation as the values themselves cannot be logged
         var type = "lookup"
         if newDef != nil {
@@ -789,6 +861,12 @@ public class ApproovService {
      * @throws ApproovError if there was a problem
      */
     public static func fetchCustomJWT(payload: String) throws -> String? {
+        if !isApproovEnabled() {
+            if loggingLevel >= .error {
+                os_log("ApproovService: fetchCustomJWT: SDK not initialized", type: .error)
+            }
+            throw ApproovError.permanentError(message: "fetchCustomJWT: SDK not initialized")
+        }
         // fetch the custom JWT
         let approovResult = Approov.fetchCustomJWTAndWait(payload)
         if loggingLevel >= .info {
@@ -843,6 +921,99 @@ public class ApproovService {
         }
     }
 
+    /// Returns a cached failure result if one exists and hasn't expired.
+    /// Returns nil if no cache exists or it has expired (caller should fetch from SDK).
+    private static func getCachedFailure() -> ApproovTokenFetchResult? {
+        return failureCacheQueue.sync {
+            return getCachedFailureLocked()
+        }
+    }
+
+    private static func getCachedFailureLocked() -> ApproovTokenFetchResult? {
+        guard let result = cachedFailureResult,
+              let time = cachedFailureTime else {
+            return nil
+        }
+        if (ProcessInfo.processInfo.systemUptime - time) < failureCacheTTL {
+            os_log("ApproovService: using cached failure: %@", type: .debug, Approov.string(from: result.status))
+            return result
+        }
+        // Cache expired - clear and allow a fresh SDK call
+        os_log("ApproovService: failure cache expired", type: .debug)
+        cachedFailureResult = nil
+        cachedFailureTime = nil
+        return nil
+    }
+
+    private static func fetchTokenWithFailureCache(url: String) -> ApproovTokenFetchResult {
+        var missGroupToWaitFor: DispatchGroup?
+        var ownedMissGroup: DispatchGroup?
+
+        if let cachedResult = failureCacheQueue.sync(execute: { () -> ApproovTokenFetchResult? in
+            if let result = getCachedFailureLocked() {
+                return result
+            }
+            if let missGroup = failureCacheMissGroup {
+                missGroupToWaitFor = missGroup
+            } else {
+                let missGroup = DispatchGroup()
+                missGroup.enter()
+                failureCacheMissGroup = missGroup
+                ownedMissGroup = missGroup
+            }
+            return nil
+        }) {
+            return cachedResult
+        }
+
+        if let missGroupToWaitFor {
+            missGroupToWaitFor.wait()
+            if let cachedResult = getCachedFailure() {
+                return cachedResult
+            }
+            let result = Approov.fetchTokenAndWait(url)
+            cacheFailureIfNeeded(result)
+            return result
+        }
+
+        let result = Approov.fetchTokenAndWait(url)
+        failureCacheQueue.sync {
+            cacheFailureIfNeededLocked(result)
+            failureCacheMissGroup = nil
+            ownedMissGroup?.leave()
+        }
+        return result
+    }
+
+    private static func cacheFailureIfNeededLocked(_ result: ApproovTokenFetchResult) {
+        let status = result.status
+        switch status {
+        case .noNetwork, .poorNetwork, .mitmDetected, .noApproovService:
+            cachedFailureResult = result
+            cachedFailureTime = ProcessInfo.processInfo.systemUptime
+            os_log("ApproovService: caching failure: %@", type: .debug, Approov.string(from: status))
+        default:
+            // Success and other statuses are never cached
+            break
+        }
+    }
+
+    /// Caches a failure result. Only failure statuses are cached; success is never cached.
+    private static func cacheFailureIfNeeded(_ result: ApproovTokenFetchResult) {
+        failureCacheQueue.sync {
+            cacheFailureIfNeededLocked(result)
+        }
+    }
+
+    /// Sets the cache time-to-live for failure results (e.g. MITM_DETECTED).
+    ///
+    /// - Parameter ttl: The time to live in seconds.
+    public static func setFailureCacheTTL(ttl: TimeInterval) {
+        failureCacheQueue.sync {
+            failureCacheTTL = ttl
+        }
+    }
+
     /**
      * Convenience function fetching the Approov token and updating the request with it. This will also
      * perform header or query parameter substitutions to include protected secrets.
@@ -859,9 +1030,9 @@ public class ApproovService {
             }
             return ApproovUpdateResponse(request: request, decision: .ShouldIgnore, sdkMessage: "", error: nil)
         }
-        if !isInitialized {
+        if !isApproovEnabled() {
             if loggingLevel >= .info {
-                os_log("ApproovService: not initialized, forwarding: %@", type: .info, url.absoluteString)
+                os_log("ApproovService: Approov unavailable, forwarding: %@", type: .info, url.absoluteString)
             }
             return ApproovUpdateResponse(request: request, decision: .ShouldIgnore, sdkMessage: "", error: nil)
         }
@@ -910,8 +1081,9 @@ public class ApproovService {
             }
         }
 
-        // fetch an Approov token: request.url can not be nil here
-        let approovResult = Approov.fetchTokenAndWait(url.absoluteString)
+        // Fetch an Approov token, coalescing concurrent cache misses so a sustained
+        // platform failure is cached before the same launch burst makes redundant SDK calls.
+        let approovResult = fetchTokenWithFailureCache(url: url.absoluteString)
         let hostname = hostnameFromURL(url: url)
         if loggingLevel >= .info {
             os_log("ApproovService: updateRequest %@: %@", type: .info, hostname, approovResult.loggableToken())
@@ -1083,5 +1255,30 @@ public class ApproovService {
         }
 
         return response
+    }
+
+    static func resetForTesting() {
+        failureCacheQueue.sync {
+            cachedFailureResult = nil
+            cachedFailureTime = nil
+            failureCacheMissGroup = nil
+        }
+        initializerQueue.sync {
+            serviceIsInitialized = false
+            configString = nil
+        }
+        stateQueue.sync {
+            proceedOnNetworkFail = false
+            bindingHeader = ""
+            approovTokenHeader = "Approov-Token"
+            approovTokenPrefix = ""
+            approovTraceIDHeader = "Approov-TraceID"
+            serviceMutator = ApproovServiceMutatorDefault.shared
+            substitutionHeaders = Dictionary()
+            substitutionQueryParams = Set()
+            exclusionURLRegexs = Dictionary()
+            useApproovStatusIfNoToken = false
+        }
+        loggingLevel = .info
     }
 }

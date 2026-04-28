@@ -317,7 +317,7 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
      *  Tells the delegate that a task received an informational response
      *  https://developer.apple.com/documentation/foundation/urlsessiontaskdelegate/4165504-urlsession
      */
-    @available(iOS 17.0, watchOS 10.0, *)
+    @available(iOS 17.0, macOS 14.0, watchOS 10.0, *)
     func urlSession(_ session: URLSession, task: URLSessionTask, didReceiveInformationalResponse response: HTTPURLResponse) {
         if let delegate = optionalURLDelegate as? URLSessionTaskDelegate {
             delegate.urlSession?(session, task: task, didReceiveInformationalResponse: response)
@@ -328,7 +328,7 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
      *  Tells the delegate that a task received an informational response
      *  https://developer.apple.com/documentation/foundation/urlsessiontaskdelegate/4165504-urlsession
      */
-    @available(iOS 17.0, watchOS 10.0, *)
+    @available(iOS 17.0, macOS 14.0, watchOS 10.0, *)
     func urlSession(_ session: URLSession, task: URLSessionTask, needNewBodyStreamFrom offset: Int64, completionHandler: @escaping @Sendable (InputStream?) -> Void) {
         if let delegate = optionalURLDelegate as? URLSessionTaskDelegate {
             delegate.urlSession?(session, task: task, needNewBodyStreamFrom: offset, completionHandler: completionHandler)

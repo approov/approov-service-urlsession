@@ -2,6 +2,16 @@
 
 This document describes the features and functionality of the Approov Service for URLSession. It provides details on how to interact with the service layer and customize its behavior to suit your application's needs, specifically through the `ApproovServiceMutator`. For a basic integration example, please refer to the [Quickstart guide](https://github.com/approov/quickstart-ios-swift-urlsession).
 
+## Empty Config Initialization
+You can initialize the `ApproovService` with an empty configuration string if you want to use the service layer without active Approov protection. This is useful for apps that remotely activate Approov selectively or when you need the service to function as a standard `URLSession` wrapper without any Approov processing (e.g., during backend maintenance).
+
+> ```swift
+> // Initialize with an empty string to operate as a standard URLSession
+> try? ApproovService.initialize(config: "")
+> ```
+
+When initialized this way, the `URLSession` objects returned or updated by the service behave exactly like standard instances. They will not perform token injection, message signing, secure string substitution, or dynamic pinning. You can enable full Approov protection later in the application lifecycle by calling `ApproovService.initialize(config)` with a valid configuration string.
+
 # Approov Service Mutator
 
 The `ApproovServiceMutator` allows you to customize the behavior of the Approov URLSession layer at key points in the request lifecycle. You can override specific methods to tailor the handling of attestations and requests while retaining the default behavior for other cases.
@@ -21,7 +31,7 @@ By default, the `ApproovService` processes requests based on the attestation sta
 | Approov Fetch Status | Action | Result |
 | :--- | :--- | :--- |
 | **Success** | Proceed | The request acts as expected and is sent with the `Approov-Token`. |
-| **No Network / Poor Network** | Throw Exception | An `ApproovError.networkingError` is thrown. The request is marked as `.ShouldRetry`. |
+| **No Network / Poor Network / MITM Detected** | Throw Exception | An `ApproovError.networkingError` is thrown. The request is marked as `.ShouldRetry`. |
 | **Rejection** | Throw Exception | An `ApproovError.rejectionError` is thrown. The request is marked as `.ShouldFail`. |
 | **No Approov Service / Unknown URL** | Proceed | The request is sent **without** an `Approov-Token`. |
 
@@ -193,15 +203,40 @@ If the value of the binding header changes (e.g., the user logs in and gets a ne
 
 ## Use Approov Status as Token
 
-In some cases, you might want to send the Approov fetch status (e.g., `NO_NETWORK`, `MITM_DETECTED`) to your backend when an actual token cannot be obtained. This allows your backend to distinguish between different failure reasons even when the `Approov-Token` would otherwise be empty or missing.
+In some cases, you might want to send the Approov fetch status (e.g., `NO_NETWORK`, `MITM_DETECTED`, `NO_APPROOV_SERVICE`) to your backend when an actual token cannot be obtained. This allows your backend to distinguish between different failure reasons even when the `Approov-Token` would otherwise be empty or missing.
 
-To enable this feature:
+To enable this feature, configure the service to use the status as a fallback:
 
-```swift
-ApproovService.setUseApproovStatusIfNoToken(shouldUse: true)
-```
+> ```swift
+> // Enable status-as-token injection (matches React Native behavior)
+> ApproovService.setUseApproovStatusIfNoToken(shouldUse: true)
+> ```
 
-When enabled, if the Approov token fetch fails or returns an empty token, the `Approov-Token` header will be populated with the status string (with the configured prefix) instead of being left empty.
+When enabled, if the Approov token fetch fails or returns an empty token, the `Approov-Token` header will be populated with the status string (e.g., `Approov-Token: MITM_DETECTED` or `Approov-Token: NO_APPROOV_SERVICE`).
+
+To ensure the request actually proceeds to the backend on these failure paths, you must use a custom `ApproovServiceMutator` that returns `true` for these statuses:
+
+> ```swift
+> import ApproovURLSessionPackage
+> import Approov
+> 
+> final class StatusAsTokenMutator: ApproovServiceMutator {
+>     func handleInterceptorFetchTokenResult(_ approovResults: ApproovTokenFetchResult, url: String) throws -> Bool {
+>         let status = approovResults.status
+>         
+>         // Explicitly allow MITM and Service failures to proceed so the status header is sent
+>         if status == .mitmDetected || status == .noApproovService || status == .success {
+>             return true
+>         }
+>         
+>         // Fallback to default behavior for other statuses
+>         return try ApproovServiceMutatorDefault.shared.handleInterceptorFetchTokenResult(approovResults, url: url)
+>     }
+> }
+> 
+> // Register the mutator
+> ApproovService.setServiceMutator(StatusAsTokenMutator())
+> ```
 
 ## Logging
 

@@ -4,6 +4,26 @@ All notable changes to this package will be documented in this file.
 
 The format is based on Keep a Changelog and this project adheres to Semantic Versioning.
 
+## [3.5.8] - 2026-04-09
+
+### Added
+- Integrated a localized testing framework for comprehensive service layer verification.
+- Added extensive test coverage for core service flows, including initialization, token management, and request mutation.
+- Added `ApproovService.isInitialized()` to expose the service-layer initialization state.
+- Thread-safe failure mode caching for the interceptor path when the platform SDK returns a failure status (`NO_NETWORK`, `POOR_NETWORK`, `MITM_DETECTED`, `NO_APPROOV_SERVICE`).
+
+### Changes
+- Updated the build manifest to support flexible dependency resolution for verification suites.
+- Added internal service hooks to facilitate automated testing environments.
+
+### Fixed
+- Enabled macOS host-side compilation for the package in local testing framework mode by extending the relevant availability annotations in `PinningURLSessionDelegate`.
+- Excluded the vendored `util/sig/LICENSE` file from the main package target to avoid SwiftPM unhandled file warnings during tests.
+- Initializing with an empty config string now keeps the service layer initialized while forwarding requests without Approov processing.
+- Initializing first with an empty config string and later with a valid non-empty config string now enables Approov at runtime instead of being rejected as a different-configuration initialization.
+- Tightened the initialization guard so only actual `reinit...` comments bypass same-config enforcement.
+- Added explicit cross-service-layer initialization handling and tests so a benign same-config already-initialized native SDK outcome is tolerated, while real different-configuration failures still surface as initialization errors.
+
 ## [3.5.7] - 2026-03-06
 
 ### Breaking changes

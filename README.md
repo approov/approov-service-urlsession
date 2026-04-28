@@ -15,6 +15,7 @@ import Approov
 
 The primary session type remains `ApproovURLSession`.
 
+
 # Changelog
 
 Please see the [CHANGELOG.md](CHANGELOG.md) for more information on the changes in each version.
