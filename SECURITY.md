@@ -8,7 +8,7 @@ We encourage all users of these service layers to update to the latest version f
 | Version | Supported          |
 | ------- | ------------------ |
 | 3.5.x   | :white_check_mark: |
-| < 3.4   | :x:                |
+| < 3.5   | :x:                |
 
 ## Reporting a Vulnerability
 

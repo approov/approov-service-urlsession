@@ -224,14 +224,16 @@ public class ApproovService {
             // SDK succeeded (or bypass) — now reset and commit new service-layer state.
             serviceIsInitialized = false
             configString = config
-            proceedOnNetworkFail = false
-            bindingHeader = ""
-            approovTokenHeader = "Approov-Token"
-            approovTokenPrefix = ""
-            approovTraceIDHeader = "Approov-TraceID"
-            substitutionHeaders = Dictionary()
-            substitutionQueryParams = Set()
-            exclusionURLRegexs = Dictionary()
+            stateQueue.sync {
+                proceedOnNetworkFail = false
+                bindingHeader = ""
+                approovTokenHeader = "Approov-Token"
+                approovTokenPrefix = ""
+                approovTraceIDHeader = "Approov-TraceID"
+                substitutionHeaders = Dictionary()
+                substitutionQueryParams = Set()
+                exclusionURLRegexs = Dictionary()
+            }
             failureCacheQueue.sync {
                 cachedFailureResult = nil
                 cachedFailureTime = nil
@@ -317,6 +319,9 @@ public class ApproovService {
      */
     public static func setDevKey(devKey: String) {
         if !isApproovEnabled() {
+            if loggingLevel >= .error {
+                os_log("ApproovService: setDevKey: SDK not initialized", type: .error)
+            }
             return
         }
         stateQueue.sync {
