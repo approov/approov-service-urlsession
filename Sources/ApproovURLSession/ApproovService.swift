@@ -179,56 +179,65 @@ public class ApproovService {
     }
 
     /**
-     * Initializes the SDK with the config obtained using `approov sdk -getConfigString` or
-     * in the original onboarding email. Note the initializer function should only ever be called once.
-     * Subsequent calls will be ignored since the ApproovSDK can only be initialized once; if however,
-     * an attempt is made to initialize with a different configuration (config) we throw an
-     * ApproovException.configurationError. If the Approov SDK fails to be initialized for some other
-     * reason, an .initializationFailure is raised.
+     * Initializes the ApproovService with the config obtained using `approov sdk -getConfigString`
+     * or in the original onboarding email. The service layer always resets its own state on a
+     * successful call. If using a non-empty config, the platform SDK is contacted first; state is
+     * only modified after the SDK confirms success, preserving the current operating mode
+     * (protected or bypass) if the call fails.
      *
      * @param config is the configuration to be used, or an empty string to bypass the actual initialization
      * @param comment is an optional comment to be passed to the SDK
      * @throws ApproovError if there was a problem
      */
     public static func initialize(config: String, comment: String? = nil) throws {
-        try initializerQueue.sync  {
-            let allowReinitialize = comment?.hasPrefix("reinit") == true
-            let allowEnableAfterEmptyInitialization =
-                serviceIsInitialized &&
-                (configString?.isEmpty == true) &&
-                !config.isEmpty
-            // check if we attempt to use a different configString
-            if serviceIsInitialized && !allowReinitialize && !allowEnableAfterEmptyInitialization {
-                // ignore multiple initialization calls that use the same configuration
-                if (config != configString) {
-                    // throw exception indicating we are attempting to use different config
-                    if loggingLevel >= .error {
-                        os_log("ApproovService: Attempting to initialize with different configuration", type: .error)
-                    }
-                    throw ApproovError.configurationError(message: "Attempting to initialize with a different configuration")
-                }
-                if loggingLevel >= .warning {
-                    os_log("ApproovService: Ignoring multiple ApproovService layer initializations with the same config");
-                }
-            } else {
+        try initializerQueue.sync {
+            // Initialize the platform SDK if not in bypass mode (empty config).
+            // State is only modified after the SDK confirms success, preserving the
+            // current operating mode (protected or bypass) if the call fails.
+            if !config.isEmpty {
                 do {
-                    if !config.isEmpty {
-                        // only initialize with a non-empty string as empty string used to bypass this
-                        try Approov.initialize(config, updateConfig: "auto", comment: comment)
+                    // Approov.initialize is an ObjC BOOL-returning method bridged to Swift as throwing.
+                    // BOOL=YES (first init)  → no throw  → SDK was just initialized.
+                    // BOOL=NO, no NSError   → Foundation._GenericObjCError code 0
+                    //                       → SDK already initialized — equivalent to boolean
+                    //                         false return on Android; log and continue.
+                    // Any other error       → genuine failure → re-throw.
+                    try Approov.initialize(config, updateConfig: "auto", comment: comment)
+                    if loggingLevel >= .info {
+                        os_log("ApproovService: Approov SDK initialized", type: .info)
                     }
                 } catch let error {
-                    // If the error is due to the SDK being initiliazed already, we ignore it otherwise we throw
+                    // If the error is due to the SDK being initialized already, we ignore it otherwise we throw.
+                    // This is an ObjC/Swift interop artifact: ObjC BOOL return of NO without an NSError
+                    // is bridged as Foundation._GenericObjCError with code 0.
                     let nsError = error as NSError
                     if nsError.code == 0, nsError.domain == "Foundation._GenericObjCError" {
                         if loggingLevel >= .info {
-                            os_log("ApproovService: Ignoring initialization error in Approov SDK: %@", type: .info, nsError.localizedDescription)
+                            os_log("ApproovService: Approov SDK already initialized", type: .info)
                         }
                     } else {
+                        // service-layer state NOT modified — prior operating mode preserved
                         throw ApproovError.initializationFailure(message: "Error initializing Approov SDK: \(nsError.localizedDescription)")
                     }
                 }
-                serviceIsInitialized = true
-                configString = config
+            }
+            // SDK succeeded (or bypass) — now reset and commit new service-layer state.
+            serviceIsInitialized = false
+            configString = config
+            proceedOnNetworkFail = false
+            bindingHeader = ""
+            approovTokenHeader = "Approov-Token"
+            approovTokenPrefix = ""
+            approovTraceIDHeader = "Approov-TraceID"
+            substitutionHeaders = Dictionary()
+            substitutionQueryParams = Set()
+            exclusionURLRegexs = Dictionary()
+            failureCacheQueue.sync {
+                cachedFailureResult = nil
+                cachedFailureTime = nil
+            }
+            serviceIsInitialized = true
+            if !config.isEmpty {
                 Approov.setUserProperty("approov-service-urlsession")
             }
         }

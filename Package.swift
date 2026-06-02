@@ -2,7 +2,7 @@
 import Foundation
 import PackageDescription
 // The release tag for this version of ApproovURLSession
-let releaseTAG = "3.5.8"
+let releaseTAG = "3.5.9"
 // SDK package version (used for both iOS and watchOS)
 let sdkVersion: Version = "3.5.3"
 let useMiniSDK = ProcessInfo.processInfo.environment["APPROOV_USE_MINI_SDK"] == "1"
