@@ -45,10 +45,11 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
 
         let differentConfig = "#cb-other#mAxOF0ekJUOC36J5XWmVmVipOcUoEdMjhPSp2FVtyTo="
         XCTAssertThrowsError(try ApproovService.initialize(config: differentConfig, comment: nil)) { error in
-            guard case let ApproovError.configurationError(message) = error else {
-                return XCTFail("Expected configurationError, got \(error)")
+            guard case let ApproovError.initializationFailure(message) = error else {
+                return XCTFail("Expected initializationFailure, got \(error)")
             }
-            XCTAssertEqual(message, "Attempting to initialize with a different configuration")
+            XCTAssertTrue(message.contains("Approov SDK already initialized with a different configuration"),
+                          "Unexpected message: \(message)")
         }
     }
 
