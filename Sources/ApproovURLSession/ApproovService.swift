@@ -316,6 +316,9 @@ public class ApproovService {
      * @param devKey is the development key to be used
      */
     public static func setDevKey(devKey: String) {
+        if !isApproovEnabled() {
+            return
+        }
         stateQueue.sync {
             Approov.setDevKey(devKey)
             if loggingLevel >= .debug {
