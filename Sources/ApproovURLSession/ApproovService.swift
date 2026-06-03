@@ -192,10 +192,11 @@ public class ApproovService {
      */
     public static func initialize(config: String, comment: String? = nil) throws {
         try initializerQueue.sync {
-            // If the service is already initialized, ignore any subsequent empty config initialization
-            if serviceIsInitialized && config.isEmpty {
+            // If we are already initialized with a valid config, ignore any subsequent
+            // empty config initialization
+            if serviceIsInitialized && !(configString?.isEmpty ?? true) && config.isEmpty {
                 if loggingLevel >= .info {
-                    os_log("ApproovService already initialized; ignoring empty configuration", type: .info)
+                    os_log("ApproovService already initialized with a valid config; ignoring empty configuration", type: .info)
                 }
                 return
             }
