@@ -34,8 +34,8 @@ The `ApproovService` functions may throw specific errors to provide additional i
 * `rejectionError` an attestation has been rejected, the `ARC` and `rejectionReasons` may contain specific device information that would help troubleshooting
 * `networkingError` generally can be retried since it can be temporary network issue
 * `pinningError` is a certificate error
-* `configurationError` a configuration feature is disabled or wrongly configured (i.e. attempting to initialize with different config from a previous instantiation) 
-* `initializationFailure` the ApproovService failed to be initialized (subsequent network requests will not be performed)
+* `configurationError` a configuration feature is disabled or wrongly configured
+* `initializationFailure` the ApproovService failed to be initialized, such as when attempting to initialize with a different configuration from a previous instantiation (subsequent network requests will not be performed)
 
 Example error handling:
 
