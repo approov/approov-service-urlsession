@@ -194,7 +194,7 @@ public class ApproovService {
         try initializerQueue.sync {
             // If we are already initialized with a valid config, ignore any subsequent
             // empty config initialization
-            if serviceIsInitialized && !(configString?.isEmpty ?? true) && config.isEmpty {
+            if isApproovEnabledInternal && config.isEmpty {
                 if loggingLevel >= .info {
                     os_log("ApproovService already initialized with a valid config; ignoring empty configuration", type: .info)
                 }
@@ -270,6 +270,10 @@ public class ApproovService {
         }
     }
 
+    private static var isApproovEnabledInternal: Bool {
+        serviceIsInitialized && !(configString?.isEmpty ?? true)
+    }
+
     /**
      * Indicates whether Approov protection is enabled for this service layer
      * instance. If initialization used an empty config string then the layer is
@@ -279,7 +283,7 @@ public class ApproovService {
      */
     public static func isApproovEnabled() -> Bool {
         initializerQueue.sync {
-            serviceIsInitialized && !(configString?.isEmpty ?? true)
+            isApproovEnabledInternal
         }
     }
 
