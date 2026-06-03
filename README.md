@@ -5,11 +5,9 @@ A wrapper for the [Approov SDK](https://github.com/approov/approov-ios-sdk) to e
 Please see the [Quickstart](https://github.com/approov/quickstart-ios-swift-urlsession) for example integration.
 
 ## ADDING APPROOV SERVICE DEPENDENCY
-The Approov integration is available via the [`Swift Package Manager`](https://developer.apple.com/documentation/swift_packages/adding_package_dependencies_to_your_app). This allows inclusion into the project by simply specifying a dependency in the `File -> Add Packages...` Xcode option if the project is selected:
+The Approov integration is available via the [`Swift Package Manager`](https://developer.apple.com/documentation/swift_packages/adding_package_dependencies_to_your_app). This allows inclusion into the project by specifying a dependency in the `File -> Add Packages...` Xcode option.
 
-![Add Package Dependency](https://raw.githubusercontent.com/approov/quickstart-ios-swift-urlsession/master/readme-images/AddPackage.png)
-
-Enter the repository `https://github.com/approov/approov-service-urlsession.git` into the search box. You will then have to select the relevant version you wish to use. To do so, select the `Exact Version` option and enter a specific option you require or use the latest available `tag`, which should be selected for you.
+Enter the repository `https://github.com/approov/approov-service-urlsession.git` into the search box and latest available version will be automatically selected for you.
 
 Once you click `Add Package` the last step will confirm the package product and target selection. The `approov-service-urlsession` is actually an open source wrapper layer that allows you to easily use Approov with `URLSession`. This has a further dependency to the closed source [Approov SDK](https://github.com/approov/approov-ios-sdk).
 
