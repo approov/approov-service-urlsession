@@ -19,7 +19,7 @@ The `ApproovURLSession` class mimics the interface of the `URLSession` class pro
 ```swift
 import ApproovURLSessionPackage
 
-try! ApproovService.initialize("<enter-your-config-string-here>")
+try! ApproovService.initialize(config: "<enter-your-config-string-here>")
 let session = ApproovURLSession(URLSessionConfiguration.default)
 ```
 

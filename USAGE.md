@@ -10,7 +10,7 @@ You can initialize the `ApproovService` with an empty configuration string if yo
 > try? ApproovService.initialize(config: "")
 > ```
 
-When initialized this way, the `URLSession` objects returned or updated by the service behave exactly like standard instances. They will not perform token injection, message signing, secure string substitution, or dynamic pinning. You can enable full Approov protection later in the application lifecycle by calling `ApproovService.initialize(config)` with a valid configuration string.
+When initialized this way, the `URLSession` objects returned or updated by the service behave exactly like standard instances. They will not perform token injection, message signing, secure string substitution, or dynamic pinning. You can enable full Approov protection later in the application lifecycle by calling `ApproovService.initialize(config: config)` with a valid configuration string.
 
 # Approov Service Mutator
 
