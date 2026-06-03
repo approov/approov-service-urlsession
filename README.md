@@ -37,6 +37,34 @@ The `ApproovService` functions may throw specific errors to provide additional i
 * `configurationError` a configuration feature is disabled or wrongly configured (i.e. attempting to initialize with different config from a previous instantiation) 
 * `initializationFailure` the ApproovService failed to be initialized (subsequent network requests will not be performed)
 
+Example error handling:
+
+```swift
+if let approovError = error as? ApproovError {
+    switch approovError {
+    case .networkingError(let message):
+        // Temporary network issue: can retry
+        print("Retryable networking error: \(message)")
+        
+    case .rejectionError(let message, let ARC, let rejectionReasons):
+        // Attestation rejected: device is untrusted (e.g. secure strings unavailable for this device)
+        print("Rejected. ARC: \(ARC), Reasons: \(rejectionReasons)")
+        
+    case .pinningError(let message):
+        // TLS Pinning/Certificate verification failed
+        print("Pinning error: \(message)")
+        
+    case .permanentError(let message):
+        // Permanent failure (e.g. service not initialized)
+        print("Permanent error: \(message)")
+        
+    default:
+        break
+    }
+}
+```
+
+
 ## CHECKING IT WORKS
 Initially you won't have set which API domains to protect, so the interceptor will not add anything. It will have called Approov though and made contact with the Approov cloud service. You will see logging from Approov saying `unknown URL`.
 
@@ -45,9 +73,9 @@ Your Approov onboarding email should contain a link allowing you to access [Live
 ## NEXT STEPS
 To actually protect your APIs and/or secrets there are some further steps. Approov provides two different options for protection:
 
-* [API PROTECTION](https://github.com/approov/quickstart-ios-swift-urlsession/blob/master/API-PROTECTION.md): You should use this if you control the backend API(s) being protected and are able to modify them to ensure that a valid Approov token is being passed by the app. An [Approov Token](https://approov.io/docs/latest/approov-usage-documentation/#approov-tokens) is short lived cryptographically signed JWT proving the authenticity of the call.
+* **API PROTECTION** You should use this if you control the backend API(s) being protected and are able to modify them to ensure that a valid Approov token is being passed by the app. An [Approov Token](https://approov.io/docs/latest/approov-usage-documentation/#approov-tokens) is short lived cryptographically signed JWT proving the authenticity of the call.
 
-* [SECRETS PROTECTION](https://github.com/approov/quickstart-ios-swift-urlsession/blob/master/SECRETS-PROTECTION.md): This allows app secrets, including API keys for 3rd party services, to be protected so that they no longer need to be included in the released app code. These secrets are only made available to valid apps at runtime.
+* **SECRETS PROTECTION** This allows app secrets, including API keys for 3rd party services, to be protected so that they no longer need to be included in the released app code. These secrets are only made available to valid apps at runtime.
 
 Note that it is possible to use both approaches side-by-side in the same app.
 
