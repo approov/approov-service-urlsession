@@ -58,7 +58,12 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
     /// Initializing with an empty config should keep the service layer initialized
     /// while forwarding requests without Approov mutations.
     func testInitializeWithEmptyConfigForwardsPlainRequests() throws {
-        try reinitializeServiceWithTargetHost()
+        MiniSDKAttesterProxyController.reset()
+        let targetHost = try XCTUnwrap(URL(string: targetURLString)?.host)
+        let domainsJSON = "\"protectedDomains\": [\"\(targetHost)\"]"
+        MiniSDKAttesterProxyController.loadScenarioJSON(scenarioJSON(caseName: uniqueCaseName(prefix: "target-host"), body: domainsJSON))
+        ApproovService.resetForTesting()
+        ApproovService.setLoggingLevel(.off)
         try ApproovService.initialize(config: "", comment: "reinit-empty-config")
 
         XCTAssertTrue(ApproovService.isInitialized())
@@ -76,7 +81,12 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
     /// Initializing first with an empty config should allow a later valid config
     /// to enable Approov protection at runtime.
     func testInitializeWithEmptyConfigCanLaterEnableApproov() throws {
-        try reinitializeServiceWithTargetHost()
+        MiniSDKAttesterProxyController.reset()
+        let targetHost = try XCTUnwrap(URL(string: targetURLString)?.host)
+        let domainsJSON = "\"protectedDomains\": [\"\(targetHost)\"]"
+        MiniSDKAttesterProxyController.loadScenarioJSON(scenarioJSON(caseName: uniqueCaseName(prefix: "target-host"), body: domainsJSON))
+        ApproovService.resetForTesting()
+        ApproovService.setLoggingLevel(.off)
         try ApproovService.initialize(config: "", comment: "reinit-empty-config")
 
         XCTAssertTrue(ApproovService.isInitialized())

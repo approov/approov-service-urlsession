@@ -192,6 +192,14 @@ public class ApproovService {
      */
     public static func initialize(config: String, comment: String? = nil) throws {
         try initializerQueue.sync {
+            // If the service is already initialized, ignore any subsequent empty config initialization
+            if serviceIsInitialized && config.isEmpty {
+                if loggingLevel >= .info {
+                    os_log("ApproovService already initialized; ignoring empty configuration", type: .info)
+                }
+                return
+            }
+
             // Initialize the platform SDK if not in bypass mode (empty config).
             // State is only modified after the SDK confirms success, preserving the
             // current operating mode (protected or bypass) if the call fails.
