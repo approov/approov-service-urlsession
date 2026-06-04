@@ -16,9 +16,8 @@ Most methods either throw an `ApproovError` or return an `ApproovUpdateResponse`
 Initializes the SDK with the config obtained using `approov sdk -getConfigString` or
 in the original onboarding email. Note the initializer function should only ever be called once.
 Subsequent calls will be ignored since the ApproovSDK can only be initialized once; if however,
-an attempt is made to initialize with a different configuration (config) we throw an
-ApproovException.configurationError. If the Approov SDK fails to be initialized for some other
-reason, an `ApproovError.initializationFailure` is raised.
+an attempt is made to initialize with a different configuration (config), or the initialization
+fails for any other reason, an `ApproovError.initializationFailure` is raised.
 
 ```swift
 try ApproovService.initialize(config: "<config-string>")

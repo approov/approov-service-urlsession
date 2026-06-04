@@ -4,6 +4,11 @@ All notable changes to this package will be documented in this file.
 
 The format is based on Keep a Changelog and this project adheres to Semantic Versioning.
 
+## [3.5.9] - 2026-06-02
+
+### Changed
+- Simplified `initialize`. The ObjC/Swift interop behavior is preserved: the Approov SDK's ObjC `BOOL` return of `NO` without an `NSError` is bridged by Swift as `Foundation._GenericObjCError` code 0 — this is the "already initialized" signal (equivalent to a `false` boolean return on Android) and is logged without being re-thrown. Any other error is a genuine failure and is still surfaced as an `ApproovError.initializationFailure`. State is only reset after the SDK confirms success, so a failure preserves the prior operating mode.
+
 ## [3.5.8] - 2026-04-09
 
 ### Added

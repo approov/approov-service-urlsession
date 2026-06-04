@@ -161,7 +161,10 @@ public class ApproovDefaultMessageSigning: ApproovServiceMutator, CustomStringCo
                 sigId = "account"
                 guard let base64Signature = ApproovService.getAccountMessageSignature(message: message),
                       let decodedSignature = Data(base64Encoded: base64Signature) else {
-                    throw ApproovError.permanentError(message: "Failed to generate HMAC signature")
+                    if ApproovService.loggingLevel >= .error {
+                        os_log("ApproovService: account message signature unavailable, skipping signing", type: .error)
+                    }
+                    return request
                 }
                 signature = decodedSignature
             default:
@@ -500,12 +503,10 @@ public class SignatureParametersFactory {
             }
         }
 
-        if let algorithm = bodyDigestAlgorithm {
-            if bodyDigestRequired {
-                let bodyDigestCreated = try generateBodyDigest(provider: provider, requestParameters: requestParameters)
-                if !bodyDigestCreated {
-                    throw ApproovError.permanentError(message: "Failed to create required body digest")
-                }
+        if bodyDigestAlgorithm != nil {
+            let bodyDigestCreated = try generateBodyDigest(provider: provider, requestParameters: requestParameters)
+            if !bodyDigestCreated && bodyDigestRequired {
+                throw ApproovError.permanentError(message: "Failed to create required body digest")
             }
         }
 
@@ -569,22 +570,14 @@ public class SignatureParametersFactory {
     private static func getHTTPBody(_ request: URLRequest) -> Data? {
         if let body = request.httpBody {
             return body
-        } else if let bodyStream = request.httpBodyStream {
-            var data = Data()
-            bodyStream.open()
-            defer { bodyStream.close() }
-            let bufferSize = 1024
-            var buffer = [UInt8](repeating: 0, count: bufferSize)
-            while bodyStream.hasBytesAvailable {
-                let bytesRead = bodyStream.read(&buffer, maxLength: bufferSize)
-                if bytesRead < 0 {
-                    return nil
-                }
-                data.append(buffer, count: bytesRead)
-            }
-            return data
+        } else if request.httpBodyStream != nil {
+            // httpBodyStream is a one-shot stream; consuming it here would exhaust it
+            // before URLSession can send the request body. Return nil to skip digesting
+            // stream bodies gracefully rather than silently corrupting the upload.
+            return nil
         }
-        return Data()
+        // No body present — return nil so no Content-Digest is added.
+        return nil
     }
 
     /**

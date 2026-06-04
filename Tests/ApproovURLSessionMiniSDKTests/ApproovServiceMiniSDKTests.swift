@@ -45,10 +45,11 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
 
         let differentConfig = "#cb-other#mAxOF0ekJUOC36J5XWmVmVipOcUoEdMjhPSp2FVtyTo="
         XCTAssertThrowsError(try ApproovService.initialize(config: differentConfig, comment: nil)) { error in
-            guard case let ApproovError.configurationError(message) = error else {
-                return XCTFail("Expected configurationError, got \(error)")
+            guard case let ApproovError.initializationFailure(message) = error else {
+                return XCTFail("Expected initializationFailure, got \(error)")
             }
-            XCTAssertEqual(message, "Attempting to initialize with a different configuration")
+            XCTAssertTrue(message.contains("Approov SDK already initialized with a different configuration"),
+                          "Unexpected message: \(message)")
         }
     }
 
@@ -57,7 +58,12 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
     /// Initializing with an empty config should keep the service layer initialized
     /// while forwarding requests without Approov mutations.
     func testInitializeWithEmptyConfigForwardsPlainRequests() throws {
-        try reinitializeServiceWithTargetHost()
+        MiniSDKAttesterProxyController.reset()
+        let targetHost = try XCTUnwrap(URL(string: targetURLString)?.host)
+        let domainsJSON = "\"protectedDomains\": [\"\(targetHost)\"]"
+        MiniSDKAttesterProxyController.loadScenarioJSON(scenarioJSON(caseName: uniqueCaseName(prefix: "target-host"), body: domainsJSON))
+        ApproovService.resetForTesting()
+        ApproovService.setLoggingLevel(.off)
         try ApproovService.initialize(config: "", comment: "reinit-empty-config")
 
         XCTAssertTrue(ApproovService.isInitialized())
@@ -75,7 +81,12 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
     /// Initializing first with an empty config should allow a later valid config
     /// to enable Approov protection at runtime.
     func testInitializeWithEmptyConfigCanLaterEnableApproov() throws {
-        try reinitializeServiceWithTargetHost()
+        MiniSDKAttesterProxyController.reset()
+        let targetHost = try XCTUnwrap(URL(string: targetURLString)?.host)
+        let domainsJSON = "\"protectedDomains\": [\"\(targetHost)\"]"
+        MiniSDKAttesterProxyController.loadScenarioJSON(scenarioJSON(caseName: uniqueCaseName(prefix: "target-host"), body: domainsJSON))
+        ApproovService.resetForTesting()
+        ApproovService.setLoggingLevel(.off)
         try ApproovService.initialize(config: "", comment: "reinit-empty-config")
 
         XCTAssertTrue(ApproovService.isInitialized())
