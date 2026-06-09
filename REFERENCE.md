@@ -357,8 +357,39 @@ let arc = ApproovService.getLastARC()
 ```
 
 ## updateRequestWithApproov
-Updates a `URLRequest` with Approov protection (token, substitutions, etc.). Returns an `ApproovUpdateResponse` describing the decision and any error.
+Updates a `URLRequest` with Approov protection (token, substitutions, etc.). Returns an `ApproovUpdateResponse` describing the decision and any error. All members of `ApproovUpdateResponse` (`request`, `decision`, `sdkMessage`, `error`) are public.
 
 ```swift
 let response = ApproovService.updateRequestWithApproov(request: request, sessionConfig: session.configuration)
+switch response.decision {
+case .ShouldProceed:
+    // use response.request
+case .ShouldIgnore:
+    // use original request unchanged
+case .ShouldRetry:
+    // retry after a delay
+case .ShouldFail:
+    // handle response.error
+}
+```
+
+## signRequest
+Convenience method that applies Approov protection to a `URLRequest` and returns the protected request directly. This is intended for use with HTTP transports that own their own `URLSession` (e.g. Apollo iOS, gRPC-Swift) where substituting `ApproovURLSession` is not possible. The returned request includes the Approov token and any header/query substitutions. Message signing headers are also applied if a signing mutator is configured (see `USAGE.md`).
+
+The method calls `updateRequestWithApproov` internally and interprets the decision:
+- `.ShouldProceed`: returns the updated (protected) request.
+- `.ShouldIgnore`: returns the original request unchanged.
+- `.ShouldRetry`: throws `ApproovError.networkingError` so the caller can retry.
+- `.ShouldFail`: throws the underlying error (or `ApproovError.permanentError`).
+
+Note: This method performs a synchronous Approov token fetch and may block briefly while the SDK contacts the Approov cloud. Call it from a background thread or async context to avoid blocking the main thread.
+
+```swift
+let protectedRequest = try ApproovService.signRequest(originalRequest)
+```
+
+An optional `URLSessionConfiguration` can be provided to include additional session-level headers:
+
+```swift
+let protectedRequest = try ApproovService.signRequest(originalRequest, sessionConfig: session.configuration)
 ```

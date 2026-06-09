@@ -62,10 +62,10 @@ public enum ApproovFetchDecision {
 
 // result from adding Approov protection to a request
 public struct ApproovUpdateResponse {
-    var request: URLRequest
-    var decision: ApproovFetchDecision
-    var sdkMessage: String
-    var error: Error?
+    public var request: URLRequest
+    public var decision: ApproovFetchDecision
+    public var sdkMessage: String
+    public var error: Error?
 }
 
 // Log level for controlling the verbosity of os_log output from the ApproovService
@@ -1286,6 +1286,49 @@ public class ApproovService {
         }
 
         return response
+    }
+
+    /**
+     * Convenience method that applies Approov protection to a URLRequest and returns the
+     * protected request directly. This is intended for use with HTTP transports that own their
+     * own URLSession (e.g. Apollo iOS, gRPC-Swift) where substituting ApproovURLSession is
+     * not possible.
+     *
+     * The method calls `updateRequestWithApproov` internally and interprets the decision:
+     * - `.ShouldProceed`: returns the updated (protected) request.
+     * - `.ShouldIgnore`: returns the original request unchanged.
+     * - `.ShouldRetry`: throws `ApproovError.networkingError` so the caller can retry.
+     * - `.ShouldFail`: throws the underlying error (or `ApproovError.permanentError`).
+     *
+     * Note: This method performs a synchronous Approov token fetch and may block briefly
+     * while the SDK contacts the Approov cloud. Call it from a background thread or async
+     * context to avoid blocking the main thread.
+     *
+     * Example usage with Apollo iOS:
+     * ```swift
+     * let protected = try ApproovService.signRequest(original)
+     * // hand `protected` to your Apollo NetworkTransport
+     * ```
+     *
+     * @param request the original URLRequest to be protected
+     * @param sessionConfig optional URLSessionConfiguration to include additional headers
+     * @return the URLRequest with Approov token and substitutions applied (message signing included when configured)
+     * @throws ApproovError if the request should not proceed
+     */
+    public static func signRequest(_ request: URLRequest, sessionConfig: URLSessionConfiguration? = nil) throws -> URLRequest {
+        let response = updateRequestWithApproov(request: request, sessionConfig: sessionConfig)
+        switch response.decision {
+        case .ShouldProceed:
+            return response.request
+        case .ShouldIgnore:
+            return request
+        case .ShouldRetry:
+            throw response.error ?? ApproovError.networkingError(
+                message: "Approov token fetch failed with a retryable error: \(response.sdkMessage)")
+        case .ShouldFail:
+            throw response.error ?? ApproovError.permanentError(
+                message: "Approov token fetch failed: \(response.sdkMessage)")
+        }
     }
 
     static func resetForTesting() {
