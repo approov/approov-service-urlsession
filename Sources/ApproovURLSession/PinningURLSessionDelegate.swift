@@ -531,6 +531,14 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
      *  @return SecTrust?: valid SecTrust if authentication should proceed, nil otherwise
      */
     private func shouldAcceptAuthenticationChallenge(challenge: URLAuthenticationChallenge) throws -> SecTrust? {
+        // If the service layer is not enabled (empty-config bypass), skip dynamic pinning
+        // entirely. Without this guard a multi-service-layer app where another SDK initialized
+        // the native Approov SDK would enforce pins on requests that should behave like a
+        // standard URLSession.
+        if !ApproovService.isApproovEnabled() {
+            return challenge.protectionSpace.serverTrust
+        }
+
         // check we have a server trust, ignore any other challenges
         guard let serverTrust = challenge.protectionSpace.serverTrust else {
             return nil

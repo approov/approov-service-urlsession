@@ -155,6 +155,12 @@ public class ApproovService {
      * @return String of the last ARC or empty string if there was none
      */
     public static func getLastARC() -> String {
+        if !isApproovEnabled() {
+            if loggingLevel >= .error {
+                os_log("ApproovService: getLastARC: SDK not initialized", type: .error)
+            }
+            return ""
+        }
         // We have to get the current config and obtain one protected API endpoint at least
         // get the dynamic pins from Approov
         guard let approovPins = Approov.getPins("public-key-sha256") else {
