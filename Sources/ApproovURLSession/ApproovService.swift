@@ -187,8 +187,8 @@ public class ApproovService {
     /**
      * Initializes the ApproovService with the config obtained using `approov sdk -getConfigString`
      * or in the original onboarding email. The service layer resets its own configuration state
-     * (except for any custom service mutator or the status-if-no-token setting) on a successful
-     * call. If using a non-empty config, the platform SDK is contacted first; state is
+     * on a successful call, including any custom service mutator and the status-if-no-token
+     * setting. If using a non-empty config, the platform SDK is contacted first; state is
      * only modified after the SDK confirms success, preserving the current operating mode
      * (protected or bypass) if the call fails.
      *

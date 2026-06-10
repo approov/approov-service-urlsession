@@ -395,4 +395,3 @@ let protectedRequest = try ApproovService.signRequest(originalRequest, sessionCo
 ```
 
 > **Important — Dynamic Pinning:** `signRequest` does **not** apply dynamic TLS pinning. When you use `ApproovURLSession`, its delegate automatically validates the server's TLS certificate against Approov's dynamic pin set (`Approov.getPins("public-key-sha256")`). A plain `URLSession` bypasses this entirely. If your transport owns its own `URLSession` and delegate, you are responsible for implementing certificate pinning separately — for example by calling `Approov.getPins("public-key-sha256")` in your `URLSessionDelegate`'s `urlSession(_:didReceive:completionHandler:)` method and verifying the server certificate's SPKI hash against the returned set.
-
