@@ -388,7 +388,7 @@ Note: This method performs a synchronous Approov token fetch and may block brief
 let protectedRequest = try ApproovService.signRequest(originalRequest)
 ```
 
-An optional `URLSessionConfiguration` can be provided to include additional session-level headers:
+An optional `URLSessionConfiguration` can be provided so `signRequest` can consider any session-level `httpAdditionalHeaders` for token binding and header substitution lookups (these headers are not added to the returned request):
 
 ```swift
 let protectedRequest = try ApproovService.signRequest(originalRequest, sessionConfig: session.configuration)
