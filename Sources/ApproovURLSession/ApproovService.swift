@@ -62,10 +62,10 @@ public enum ApproovFetchDecision {
 
 // result from adding Approov protection to a request
 public struct ApproovUpdateResponse {
-    public var request: URLRequest
-    public var decision: ApproovFetchDecision
-    public var sdkMessage: String
-    public var error: Error?
+    public internal(set) var request: URLRequest
+    public internal(set) var decision: ApproovFetchDecision
+    public internal(set) var sdkMessage: String
+    public internal(set) var error: Error?
 }
 
 // Log level for controlling the verbosity of os_log output from the ApproovService
