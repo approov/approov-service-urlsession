@@ -764,7 +764,7 @@ public class ApproovService {
      * is not possible to use the networking interception to add the token. This will
      * likely require network access so may take some time to complete. If the attestation fails
      * for any reason then an ApproovError is thrown. This will be ApproovNetworkException for
-     * networking issues wher a user initiated retry of the operation should be allowed. Note that
+     * networking issues where a user initiated retry of the operation should be allowed. Note that
      * the returned token should NEVER be cached by your app, you should call this function when
      * it is needed.
      *
@@ -1321,9 +1321,9 @@ public class ApproovService {
      * @param request the original URLRequest to be protected
      * @param sessionConfig optional URLSessionConfiguration whose httpAdditionalHeaders are consulted for token binding and header substitution lookups (these headers are not merged into the returned request)
      * @return the URLRequest with Approov token and substitutions applied (message signing included when configured)
-     * @throws Error if the request should not proceed. The default mutator always produces an
-     *         ApproovError, but a custom mutator may store any Error in ApproovUpdateResponse.error,
-     *         so callers should catch Error rather than ApproovError specifically.
+     * @throws ApproovError if the request should not proceed. Non-`ApproovError` throws from custom
+     *         mutators are wrapped as `ApproovError.permanentError` by the service layer, so callers
+     *         can always catch `ApproovError` specifically.
      *
      * Note: In bypass mode (service layer initialized with an empty config string,
      * isApproovEnabled() == false), this method returns the original request unchanged without

@@ -10,7 +10,11 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 - New `signRequest(_:sessionConfig:)` convenience method on `ApproovService` that applies Approov protection (token, substitutions, and message signing when configured) to a `URLRequest` and returns the protected request directly. Designed for HTTP transports that own their own `URLSession` (e.g. Apollo iOS, gRPC-Swift) where substituting `ApproovURLSession` is not possible.
 
 ### Changed
-- Made all members of `ApproovUpdateResponse` (`request`, `decision`, `sdkMessage`, `error`) `public`. Previously they had `internal` access, preventing external modules from reading the response fields returned by `updateRequestWithApproov`.
+- Made all members of `ApproovUpdateResponse` (`request`, `decision`, `sdkMessage`, `error`) publicly readable (`public internal(set)`). Previously they had `internal` access, preventing external modules from reading the response fields returned by `updateRequestWithApproov`.
+- `initialize(config:comment:)` now resets `serviceMutator` and `useApproovStatusIfNoToken` to defaults on each successful call, alongside the existing resets of substitution headers, exclusion regexes, and binding header.
+
+### Fixed
+- `PinningURLSessionDelegate`: In empty-config bypass mode, the challenge handler now calls `.performDefaultHandling` rather than accepting the server trust via `.useCredential`. This ensures OS-level certificate validation always runs even when Approov dynamic pinning is skipped.
 
 ## [3.5.9] - 2026-06-02
 

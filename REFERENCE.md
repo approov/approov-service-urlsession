@@ -290,7 +290,7 @@ Performs an Approov token fetch for the given URL. This should be used in situat
 is not possible to use the networking interception to add the token. This will
 likely require network access so may take some time to complete. If the attestation fails
 for any reason then an `ApproovError` is thrown. This will be `ApproovNetworkException` for
-networking issues wher a user initiated retry of the operation should be allowed. Note that
+networking issues where a user initiated retry of the operation should be allowed. Note that
 the returned token should *NEVER* be cached by your app, you should call this function when
 it is needed.
 
@@ -384,7 +384,7 @@ The method calls `updateRequestWithApproov` internally and interprets the decisi
 - `.ShouldRetry`: throws `ApproovError.networkingError` so the caller can retry.
 - `.ShouldFail`: throws the underlying error (or `ApproovError.permanentError`).
 
-> **Error handling:** The default mutator always throws `ApproovError`. However, a custom mutator may store any `Error` in `ApproovUpdateResponse.error`, so callers should catch `Error` rather than `ApproovError` specifically to avoid silently swallowing errors from custom mutators.
+> **Error handling:** This method always throws `ApproovError`. Non-`ApproovError` throws from custom mutators are wrapped as `ApproovError.permanentError` by the service layer, so callers can catch `ApproovError` specifically.
 
 > **Bypass mode:** If the service layer was initialized with an empty config string (`isApproovEnabled()` returns `false`), `signRequest` returns the **original request unchanged** without Approov protection and without throwing. Callers that need to enforce that protection is active should check `ApproovService.isApproovEnabled()` before calling `signRequest` and fail explicitly if Approov is not enabled.
 
