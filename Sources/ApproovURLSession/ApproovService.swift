@@ -1058,7 +1058,7 @@ public class ApproovService {
      * perform header or query parameter substitutions to include protected secrets.
      *
      * @param request is the original request to be made
-     * @param sessionConfig is any URLSessionConfiguration from which additional headers can be obtained
+     * @param sessionConfig is any URLSessionConfiguration whose httpAdditionalHeaders are consulted for token binding and header substitution lookups (these headers are not merged into the returned request)
      * @return ApproovUpdateResponse providing an updated requets, plus an errors and status
      */
     public static func updateRequestWithApproov(request: URLRequest, sessionConfig: URLSessionConfiguration?) -> ApproovUpdateResponse {
@@ -1319,7 +1319,7 @@ public class ApproovService {
      * ```
      *
      * @param request the original URLRequest to be protected
-     * @param sessionConfig optional URLSessionConfiguration to include additional headers
+     * @param sessionConfig optional URLSessionConfiguration whose httpAdditionalHeaders are consulted for token binding and header substitution lookups (these headers are not merged into the returned request)
      * @return the URLRequest with Approov token and substitutions applied (message signing included when configured)
      * @throws ApproovError if the request should not proceed
      */
