@@ -240,9 +240,11 @@ public class ApproovService {
                 approovTokenHeader = "Approov-Token"
                 approovTokenPrefix = ""
                 approovTraceIDHeader = "Approov-TraceID"
+                serviceMutator = ApproovServiceMutatorDefault.shared
                 substitutionHeaders = Dictionary()
                 substitutionQueryParams = Set()
                 exclusionURLRegexs = Dictionary()
+                useApproovStatusIfNoToken = false
             }
             failureCacheQueue.sync {
                 cachedFailureResult = nil
