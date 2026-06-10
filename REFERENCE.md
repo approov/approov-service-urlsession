@@ -14,26 +14,26 @@ Most methods either throw an `ApproovError` or return an `ApproovUpdateResponse`
 
 ## initialize
 Initializes the SDK with the config obtained using `approov sdk -getConfigString` or
-in the original onboarding email. Note the initializer function should only ever be called once.
-Subsequent calls will be ignored since the ApproovSDK can only be initialized once; if however,
-an attempt is made to initialize with a different configuration (config), or the initialization
-fails for any other reason, an `ApproovError.initializationFailure` is raised.
+in the original onboarding email. In the vast majority of integrations, `initialize` should be called **once** during app startup — typically in `application(_:didFinishLaunchingWithOptions:)` or the root view controller. Each successful call resets all service-layer configuration (substitution headers, exclusion URL regexes, binding header, service mutator, `useApproovStatusIfNoToken`) to defaults, so any configuration applied after initialization would be lost on a repeated call.
+
+The most common scenario where `initialize` is called more than once is when **multiple service layers** coexist in the same app (e.g. `approov-service-urlsession` alongside `approov-service-alamofire`, or a React Native bridge layer). Since only one instance of the native Approov SDK can be active at any time, the second service layer's `initialize` call with the same config is handled gracefully — the native SDK reports it is already initialized, and the service layer proceeds normally. Each service layer maintains its own independent configuration state (substitution headers, exclusion regexes, etc.).
+
+The native SDK (3.5+) accepts a same-config re-initialization by returning `false`/`NO` without error, which this service layer handles gracefully. However, calling `initialize` again with the same config still resets the service-layer state, so there is no benefit to doing so in normal app flows with a single service layer.
 
 ```swift
 try ApproovService.initialize(config: "<config-string>")
 ```
 
-Optional comment can be provided to configure the platform SDK:
+An optional `comment` parameter is forwarded directly to the native SDK. The `comment` should be `nil` unless you are using [SDK initialization options](https://approov.io/docs/latest/approov-direct-sdk-integration/#sdk-initialization-with-options) or performing an explicit [SDK reinitialization](https://approov.io/docs/latest/approov-direct-sdk-integration/#reinitializing-the-sdk). These are advanced use cases — for example, passing `"options:no-install-key"` to disable install keys, or `"reinit"` to reset internal SDK state. Some of these flows require calling `initialize` a second time with the same config, which is fully supported by the service layer. Note that each call still resets the service-layer configuration to defaults, so any substitution headers, exclusion regexes, etc. must be re-applied after the second call.
 
 ```swift
-try ApproovService.initialize(config: "<config-string>", comment: "my-comment")
+try ApproovService.initialize(config: "<config-string>", comment: "options:no-install-key")
 ```
 
-Passing an empty config string bypasses Approov SDK initialization. In that mode the service layer still reports itself as initialized, but requests are forwarded as plain `URLSession` traffic without Approov token injection, message signing, secure strings, or pinning.
+If an attempt is made to initialize with a **different** non-empty config, an `ApproovError.initializationFailure` is raised — the existing operating mode is preserved. To switch to a different config at runtime you must use the `reinit` comment flow as described in the [Approov SDK documentation](https://approov.io/docs/latest/approov-direct-sdk-integration/#reinitializing-the-sdk).
 
-This empty-config mode is intended as a bootstrap or bypass state for advanced integrations. A later call to `initialize()` with a valid non-empty config string is allowed and will then enable the native Approov SDK at runtime. By contrast, reinitializing from one non-empty config string to a different non-empty config string is still rejected unless you are intentionally using a supported same-config `reinit...` flow.
+Passing an empty config string bypasses Approov SDK initialization. In that mode the service layer still reports itself as initialized, but requests are forwarded as plain `URLSession` traffic without Approov token injection, message signing, secure strings, or pinning. A later call to `initialize()` with a valid non-empty config string will then enable the native Approov SDK at runtime. By contrast, once initialized with a valid config, a subsequent empty-config call is silently ignored — the service layer cannot be downgraded from protected to bypass mode.
 
-Initialization comments starting with `options:` should be treated as initial-call options, not as a repeated runtime update path. Repeated same-config `options:...` calls may fail at the native SDK level. If another service layer has already initialized the native SDK with the same config, URLSession tolerates the benign already-initialized outcome, while still surfacing real different-configuration failures.
 
 ## isInitialized
 Returns whether the service layer has been initialized.
@@ -290,7 +290,7 @@ Performs an Approov token fetch for the given URL. This should be used in situat
 is not possible to use the networking interception to add the token. This will
 likely require network access so may take some time to complete. If the attestation fails
 for any reason then an `ApproovError` is thrown. This will be `ApproovNetworkException` for
-networking issues wher a user initiated retry of the operation should be allowed. Note that
+networking issues where a user initiated retry of the operation should be allowed. Note that
 the returned token should *NEVER* be cached by your app, you should call this function when
 it is needed.
 
@@ -357,8 +357,47 @@ let arc = ApproovService.getLastARC()
 ```
 
 ## updateRequestWithApproov
-Updates a `URLRequest` with Approov protection (token, substitutions, etc.). Returns an `ApproovUpdateResponse` describing the decision and any error.
+Updates a `URLRequest` with Approov protection (token, substitutions, etc.). Returns an `ApproovUpdateResponse` describing the decision and any error. All members of `ApproovUpdateResponse` (`request`, `decision`, `sdkMessage`, `error`) are publicly readable but can only be written within the package.
+
+An optional `URLSessionConfiguration` can be provided. Its `httpAdditionalHeaders` are consulted for token binding and secure string substitution lookups only — they are **not** merged into the returned `URLRequest`.
 
 ```swift
 let response = ApproovService.updateRequestWithApproov(request: request, sessionConfig: session.configuration)
+switch response.decision {
+case .ShouldProceed:
+    // use response.request
+case .ShouldIgnore:
+    // use original request unchanged
+case .ShouldRetry:
+    // retry after a delay
+case .ShouldFail:
+    // handle response.error
+}
 ```
+
+## signRequest
+Convenience method that applies Approov protection to a `URLRequest` and returns the protected request directly. This is intended for use with HTTP transports that own their own `URLSession` (e.g. Apollo iOS, gRPC-Swift) where substituting `ApproovURLSession` is not possible. The returned request includes the Approov token and any header/query substitutions. Message signing headers are also applied if a signing mutator is configured (see `USAGE.md`).
+
+The method calls `updateRequestWithApproov` internally and interprets the decision:
+- `.ShouldProceed`: returns the updated (protected) request.
+- `.ShouldIgnore`: returns the original request unchanged.
+- `.ShouldRetry`: throws `ApproovError.networkingError` so the caller can retry.
+- `.ShouldFail`: throws the underlying error (or `ApproovError.permanentError`).
+
+> **Error handling:** This method always throws `ApproovError`. Non-`ApproovError` throws from custom mutators are wrapped as `ApproovError.permanentError` by the service layer, so callers can catch `ApproovError` specifically.
+
+> **Bypass mode:** If the service layer was initialized with an empty config string (`isApproovEnabled()` returns `false`), `signRequest` returns the **original request unchanged** without Approov protection and without throwing. Callers that need to enforce that protection is active should check `ApproovService.isApproovEnabled()` before calling `signRequest` and fail explicitly if Approov is not enabled.
+
+Note: This method performs a synchronous Approov token fetch and may block briefly while the SDK contacts the Approov cloud. Call it from a background thread or async context to avoid blocking the main thread.
+
+```swift
+let protectedRequest = try ApproovService.signRequest(originalRequest)
+```
+
+An optional `URLSessionConfiguration` can be provided so `signRequest` can consider any session-level `httpAdditionalHeaders` for token binding and header substitution lookups (these headers are not added to the returned request):
+
+```swift
+let protectedRequest = try ApproovService.signRequest(originalRequest, sessionConfig: session.configuration)
+```
+
+> **Important — Dynamic Pinning:** `signRequest` does **not** apply dynamic TLS pinning. When you use `ApproovURLSession`, its delegate automatically validates the server's TLS certificate against Approov's dynamic pin set (`Approov.getPins("public-key-sha256")`). A plain `URLSession` bypasses this entirely. If your transport owns its own `URLSession` and delegate, you are responsible for implementing certificate pinning separately — for example by calling `Approov.getPins("public-key-sha256")` in your `URLSessionDelegate`'s `urlSession(_:didReceive:completionHandler:)` method and verifying the server certificate's SPKI hash against the returned set.

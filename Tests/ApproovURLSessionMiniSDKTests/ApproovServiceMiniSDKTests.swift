@@ -322,6 +322,135 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
         XCTAssertNotNil(getHeader(from: reply, key: "Approov-TraceID"))
     }
 
+    /// §2 Public Request Signing
+    ///
+    /// signRequest() should return a protected request that can be handed to an
+    /// HTTP transport that owns its own URLSession. This mirrors
+    /// updateRequestWithApproov's token, substitution, binding, and message
+    /// signing behavior without using ApproovURLSession for the final request.
+    func testSignRequestAddsTokenSubstitutionsBindingHashAndSignatureHeaders() throws {
+        let targetHost = try XCTUnwrap(URL(string: targetURLString)?.host)
+        try reinitializeService(
+            scenarioJSON: scenarioJSON(
+                caseName: uniqueCaseName(prefix: "sign-request"),
+                body: """
+                "protectedDomains": ["\(targetHost)"],
+                "initialSecureStrings": {
+                  "header-key": "header-secret",
+                  "query-key": "query-secret"
+                }
+                """
+            ),
+            comment: "reinit-sign-request"
+        )
+
+        ApproovService.setBindingHeader(header: "Authorization")
+        ApproovService.addSubstitutionHeader(header: "Api-Key", prefix: nil)
+        ApproovService.addSubstitutionQueryParam(key: "api_key")
+        let factory = ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory()
+            .setUseAccountMessageSigning()
+        let signer = ApproovDefaultMessageSigning().setDefaultFactory(factory)
+        ApproovService.setServiceMutator(signer)
+
+        var request = URLRequest(url: try XCTUnwrap(URL(string: "\(targetURLString)?api_key=query-key")))
+        request.httpMethod = "GET"
+        request.setValue("Bearer oauth-token", forHTTPHeaderField: "Authorization")
+        request.setValue("header-key", forHTTPHeaderField: "Api-Key")
+
+        let signedRequest = try ApproovService.signRequest(request)
+
+        XCTAssertTrue(try XCTUnwrap(signedRequest.url?.absoluteString).contains("api_key=query-secret"))
+        XCTAssertEqual(signedRequest.value(forHTTPHeaderField: "Authorization"), "Bearer oauth-token")
+        XCTAssertEqual(signedRequest.value(forHTTPHeaderField: "Api-Key"), "header-secret")
+        let token = try XCTUnwrap(signedRequest.value(forHTTPHeaderField: "Approov-Token"))
+        XCTAssertFalse(token.isEmpty)
+        XCTAssertNotNil(signedRequest.value(forHTTPHeaderField: "Approov-TraceID"))
+        XCTAssertTrue(try XCTUnwrap(signedRequest.value(forHTTPHeaderField: "Signature-Input")).hasPrefix("account="))
+        XCTAssertTrue(try XCTUnwrap(signedRequest.value(forHTTPHeaderField: "Signature")).hasPrefix("account="))
+
+        let payload = try XCTUnwrap(decodeJWTBody(token))
+        XCTAssertEqual(payload["pay"] as? String, sha256Base64("Bearer oauth-token"))
+
+        let reply = fetchPlainNetworkReply(for: signedRequest)
+        XCTAssertEqual(getHeader(from: reply, key: "Api-Key"), "header-secret")
+        XCTAssertNotNil(getHeader(from: reply, key: "Approov-Token"))
+        XCTAssertNotNil(getHeader(from: reply, key: "Signature"))
+        let urlFromReply = try XCTUnwrap(reply?["url"] as? String)
+        XCTAssertTrue(urlFromReply.contains("api_key=query-secret"))
+    }
+
+    /// §2 Public Request Signing
+    ///
+    /// signRequest() should return the original request unchanged when the
+    /// service-layer decision is ShouldIgnore.
+    func testSignRequestReturnsOriginalRequestForIgnoredURL() throws {
+        try reinitializeServiceWithTargetHost()
+
+        var request = URLRequest(url: try XCTUnwrap(URL(string: unprotectedURLString)))
+        request.setValue("original", forHTTPHeaderField: "X-Test")
+
+        let signedRequest = try ApproovService.signRequest(request)
+
+        XCTAssertEqual(signedRequest.url, request.url)
+        XCTAssertEqual(signedRequest.allHTTPHeaderFields, request.allHTTPHeaderFields)
+        XCTAssertNil(signedRequest.value(forHTTPHeaderField: "Approov-Token"))
+        XCTAssertNil(signedRequest.value(forHTTPHeaderField: "Approov-TraceID"))
+    }
+
+    /// §2 Public Request Signing
+    ///
+    /// signRequest() should surface retryable token fetch failures as
+    /// networking errors.
+    func testSignRequestThrowsNetworkingErrorForRetryDecision() throws {
+        try reinitializeServiceWithTargetHost()
+        setDirective(
+            """
+            {
+              "operation": "fetchApproovToken",
+              "response": {
+                "status": "NO_NETWORK"
+              }
+            }
+            """
+        )
+
+        let request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
+
+        XCTAssertThrowsError(try ApproovService.signRequest(request)) { error in
+            guard case let ApproovError.networkingError(message) = error else {
+                return XCTFail("Expected networkingError, got \(error)")
+            }
+            XCTAssertTrue(message.contains("no network"), "Unexpected message: \(message)")
+        }
+    }
+
+    /// §2 Public Request Signing
+    ///
+    /// signRequest() should surface fail-closed token fetch failures as
+    /// permanent errors.
+    func testSignRequestThrowsPermanentErrorForFailDecision() throws {
+        try reinitializeServiceWithTargetHost()
+        setDirective(
+            """
+            {
+              "operation": "fetchApproovToken",
+              "response": {
+                "status": "REJECTED"
+              }
+            }
+            """
+        )
+
+        let request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
+
+        XCTAssertThrowsError(try ApproovService.signRequest(request)) { error in
+            guard case let ApproovError.permanentError(message) = error else {
+                return XCTFail("Expected permanentError, got \(error)")
+            }
+            XCTAssertTrue(message.contains("rejected"), "Unexpected message: \(message)")
+        }
+    }
+
     // MARK: - §3 Service Mutators & Decision Overrides
     // TESTING_REQUIREMENTS.md §3
 
@@ -858,6 +987,26 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
 
         let configuration = URLSessionConfiguration.ephemeral
         let session = ApproovURLSession(configuration: configuration)
+        let task = session.dataTask(with: request) { data, _, _ in
+            receivedData = data
+            expectation.fulfill()
+        }
+        task.resume()
+
+        waitForExpectations(timeout: 5.0)
+
+        guard let data = receivedData,
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        return obj
+    }
+
+    private func fetchPlainNetworkReply(for request: URLRequest) -> [String: Any]? {
+        let expectation = self.expectation(description: "plain network request")
+        var receivedData: Data?
+
+        let session = URLSession(configuration: URLSessionConfiguration.ephemeral)
         let task = session.dataTask(with: request) { data, _, _ in
             receivedData = data
             expectation.fulfill()

@@ -62,10 +62,10 @@ public enum ApproovFetchDecision {
 
 // result from adding Approov protection to a request
 public struct ApproovUpdateResponse {
-    var request: URLRequest
-    var decision: ApproovFetchDecision
-    var sdkMessage: String
-    var error: Error?
+    public internal(set) var request: URLRequest
+    public internal(set) var decision: ApproovFetchDecision
+    public internal(set) var sdkMessage: String
+    public internal(set) var error: Error?
 }
 
 // Log level for controlling the verbosity of os_log output from the ApproovService
@@ -155,6 +155,12 @@ public class ApproovService {
      * @return String of the last ARC or empty string if there was none
      */
     public static func getLastARC() -> String {
+        if !isApproovEnabled() {
+            if loggingLevel >= .error {
+                os_log("ApproovService: getLastARC: SDK not initialized", type: .error)
+            }
+            return ""
+        }
         // We have to get the current config and obtain one protected API endpoint at least
         // get the dynamic pins from Approov
         guard let approovPins = Approov.getPins("public-key-sha256") else {
@@ -181,8 +187,8 @@ public class ApproovService {
     /**
      * Initializes the ApproovService with the config obtained using `approov sdk -getConfigString`
      * or in the original onboarding email. The service layer resets its own configuration state
-     * (except for any custom service mutator or the status-if-no-token setting) on a successful
-     * call. If using a non-empty config, the platform SDK is contacted first; state is
+     * on a successful call, including any custom service mutator and the status-if-no-token
+     * setting. If using a non-empty config, the platform SDK is contacted first; state is
      * only modified after the SDK confirms success, preserving the current operating mode
      * (protected or bypass) if the call fails.
      *
@@ -240,9 +246,11 @@ public class ApproovService {
                 approovTokenHeader = "Approov-Token"
                 approovTokenPrefix = ""
                 approovTraceIDHeader = "Approov-TraceID"
+                serviceMutator = ApproovServiceMutatorDefault.shared
                 substitutionHeaders = Dictionary()
                 substitutionQueryParams = Set()
                 exclusionURLRegexs = Dictionary()
+                useApproovStatusIfNoToken = false
             }
             failureCacheQueue.sync {
                 cachedFailureResult = nil
@@ -756,7 +764,7 @@ public class ApproovService {
      * is not possible to use the networking interception to add the token. This will
      * likely require network access so may take some time to complete. If the attestation fails
      * for any reason then an ApproovError is thrown. This will be ApproovNetworkException for
-     * networking issues wher a user initiated retry of the operation should be allowed. Note that
+     * networking issues where a user initiated retry of the operation should be allowed. Note that
      * the returned token should NEVER be cached by your app, you should call this function when
      * it is needed.
      *
@@ -1050,8 +1058,8 @@ public class ApproovService {
      * perform header or query parameter substitutions to include protected secrets.
      *
      * @param request is the original request to be made
-     * @param sessionConfig is any URLSessionConfiguration from which additional headers can be obtained
-     * @return ApproovUpdateResponse providing an updated requets, plus an errors and status
+     * @param sessionConfig is any URLSessionConfiguration whose httpAdditionalHeaders are consulted for token binding and header substitution lookups (these headers are not merged into the returned request)
+     * @return ApproovUpdateResponse providing an updated request, plus any error and status
      */
     public static func updateRequestWithApproov(request: URLRequest, sessionConfig: URLSessionConfiguration?) -> ApproovUpdateResponse {
         var changes = ApproovRequestMutations()
@@ -1286,6 +1294,56 @@ public class ApproovService {
         }
 
         return response
+    }
+
+    /**
+     * Convenience method that applies Approov protection to a URLRequest and returns the
+     * protected request directly. This is intended for use with HTTP transports that own their
+     * own URLSession (e.g. Apollo iOS, gRPC-Swift) where substituting ApproovURLSession is
+     * not possible.
+     *
+     * The method calls `updateRequestWithApproov` internally and interprets the decision:
+     * - `.ShouldProceed`: returns the updated (protected) request.
+     * - `.ShouldIgnore`: returns the original request unchanged.
+     * - `.ShouldRetry`: throws `ApproovError.networkingError` so the caller can retry.
+     * - `.ShouldFail`: throws the underlying error (or `ApproovError.permanentError`).
+     *
+     * Note: This method performs a synchronous Approov token fetch and may block briefly
+     * while the SDK contacts the Approov cloud. Call it from a background thread or async
+     * context to avoid blocking the main thread.
+     *
+     * Example usage with Apollo iOS:
+     * ```swift
+     * let protected = try ApproovService.signRequest(original)
+     * // hand `protected` to your Apollo NetworkTransport
+     * ```
+     *
+     * @param request the original URLRequest to be protected
+     * @param sessionConfig optional URLSessionConfiguration whose httpAdditionalHeaders are consulted for token binding and header substitution lookups (these headers are not merged into the returned request)
+     * @return the URLRequest with Approov token and substitutions applied (message signing included when configured)
+     * @throws ApproovError if the request should not proceed. Non-`ApproovError` throws from custom
+     *         mutators are wrapped as `ApproovError.permanentError` by the service layer, so callers
+     *         can always catch `ApproovError` specifically.
+     *
+     * Note: In bypass mode (service layer initialized with an empty config string,
+     * isApproovEnabled() == false), this method returns the original request unchanged without
+     * Approov protection and without throwing. Callers that must enforce protection should
+     * check ApproovService.isApproovEnabled() before calling signRequest.
+     */
+    public static func signRequest(_ request: URLRequest, sessionConfig: URLSessionConfiguration? = nil) throws -> URLRequest {
+        let response = updateRequestWithApproov(request: request, sessionConfig: sessionConfig)
+        switch response.decision {
+        case .ShouldProceed:
+            return response.request
+        case .ShouldIgnore:
+            return request
+        case .ShouldRetry:
+            throw response.error ?? ApproovError.networkingError(
+                message: "Approov token fetch failed with a retryable error: \(response.sdkMessage)")
+        case .ShouldFail:
+            throw response.error ?? ApproovError.permanentError(
+                message: "Approov token fetch failed: \(response.sdkMessage)")
+        }
     }
 
     static func resetForTesting() {
