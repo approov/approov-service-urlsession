@@ -357,7 +357,9 @@ let arc = ApproovService.getLastARC()
 ```
 
 ## updateRequestWithApproov
-Updates a `URLRequest` with Approov protection (token, substitutions, etc.). Returns an `ApproovUpdateResponse` describing the decision and any error. All members of `ApproovUpdateResponse` (`request`, `decision`, `sdkMessage`, `error`) are public.
+Updates a `URLRequest` with Approov protection (token, substitutions, etc.). Returns an `ApproovUpdateResponse` describing the decision and any error. All members of `ApproovUpdateResponse` (`request`, `decision`, `sdkMessage`, `error`) are publicly readable but can only be written within the package.
+
+An optional `URLSessionConfiguration` can be provided. Its `httpAdditionalHeaders` are consulted for token binding and secure string substitution lookups only — they are **not** merged into the returned `URLRequest`.
 
 ```swift
 let response = ApproovService.updateRequestWithApproov(request: request, sessionConfig: session.configuration)
@@ -381,6 +383,10 @@ The method calls `updateRequestWithApproov` internally and interprets the decisi
 - `.ShouldIgnore`: returns the original request unchanged.
 - `.ShouldRetry`: throws `ApproovError.networkingError` so the caller can retry.
 - `.ShouldFail`: throws the underlying error (or `ApproovError.permanentError`).
+
+> **Error handling:** The default mutator always throws `ApproovError`. However, a custom mutator may store any `Error` in `ApproovUpdateResponse.error`, so callers should catch `Error` rather than `ApproovError` specifically to avoid silently swallowing errors from custom mutators.
+
+> **Bypass mode:** If the service layer was initialized with an empty config string (`isApproovEnabled()` returns `false`), `signRequest` returns the **original request unchanged** without Approov protection and without throwing. Callers that need to enforce that protection is active should check `ApproovService.isApproovEnabled()` before calling `signRequest` and fail explicitly if Approov is not enabled.
 
 Note: This method performs a synchronous Approov token fetch and may block briefly while the SDK contacts the Approov cloud. Call it from a background thread or async context to avoid blocking the main thread.
 

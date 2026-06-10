@@ -131,13 +131,30 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
                 // delegate any challenge that is not to do with pinning
                 userDelegate.urlSession?(session, didReceive: challenge, completionHandler: completionHandler)
             } else {
-                // the user is not providing a delegate so we need to invoke the completion handler since we only deal with certificate pinning
-                completionHandler(.useCredential, nil)
+                // We only handle server trust challenges. For all other challenge types (e.g. HTTP
+                // Basic Auth, client certificates) we have no credential to offer, so we ask the OS
+                // to apply its default handling rather than supplying a nil credential with
+                // .useCredential (which is undefined behaviour per Apple's documentation).
+                completionHandler(.performDefaultHandling, nil)
             }
             return // return after handling non-pinning challenge
         }
         
         // we have a server trust challenge
+        // In bypass mode (empty-config initialization) skip dynamic pinning, but still require the OS
+        // to perform standard certificate chain validation. Returning the raw SecTrust with
+        // .useCredential without evaluating it can silently accept untrusted certificates on some
+        // iOS versions. .performDefaultHandling delegates full trust evaluation to the OS.
+        if !ApproovService.isApproovEnabled() {
+            if let userDelegate = optionalURLDelegate,
+               userDelegate.responds(to: #selector(URLSessionDelegate.urlSession(_:didReceive:completionHandler:))) {
+                userDelegate.urlSession?(session, didReceive: challenge, completionHandler: completionHandler)
+            } else {
+                completionHandler(.performDefaultHandling, nil)
+            }
+            return
+        }
+        
         // Build a canonical URL including port so mutator decisions align with host+port semantics.
         var components = URLComponents()
         components.scheme = challenge.protectionSpace.`protocol` ?? "https"
@@ -193,13 +210,31 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
                 // fall back to session-level delegate handling if provided
                 userDelegate.urlSession?(session, didReceive: challenge, completionHandler: completionHandler)
             } else {
-                // the user is not providing a delegate so we need to invoke the completion handler since we only deal with certificate pinning
-                completionHandler(.useCredential, nil)
+                // We only handle server trust challenges. For all other challenge types (e.g. HTTP
+                // Basic Auth, client certificates) we have no credential to offer, so we ask the OS
+                // to apply its default handling rather than supplying a nil credential with
+                // .useCredential (which is undefined behaviour per Apple's documentation).
+                completionHandler(.performDefaultHandling, nil)
             }
             return
         }
         
         // we have a server trust challenge
+        // In bypass mode (empty-config initialization) skip dynamic pinning but preserve OS-level
+        // certificate trust validation. See session-level handler for full rationale.
+        if !ApproovService.isApproovEnabled() {
+            if let taskDelegate = optionalURLDelegate as? URLSessionTaskDelegate,
+               taskDelegate.responds(to: #selector(URLSessionTaskDelegate.urlSession(_:task:didReceive:completionHandler:))) {
+                taskDelegate.urlSession?(session, task: task, didReceive: challenge, completionHandler: completionHandler)
+            } else if let userDelegate = optionalURLDelegate,
+                      userDelegate.responds(to: #selector(URLSessionDelegate.urlSession(_:didReceive:completionHandler:))) {
+                userDelegate.urlSession?(session, didReceive: challenge, completionHandler: completionHandler)
+            } else {
+                completionHandler(.performDefaultHandling, nil)
+            }
+            return
+        }
+        
         if !shouldApplyPinning(for: task.currentRequest ?? task.originalRequest) {
             if let taskDelegate = optionalURLDelegate as? URLSessionTaskDelegate,
                taskDelegate.responds(to: #selector(URLSessionTaskDelegate.urlSession(_:task:didReceive:completionHandler:))) {
@@ -531,13 +566,8 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
      *  @return SecTrust?: valid SecTrust if authentication should proceed, nil otherwise
      */
     private func shouldAcceptAuthenticationChallenge(challenge: URLAuthenticationChallenge) throws -> SecTrust? {
-        // If the service layer is not enabled (empty-config bypass), skip dynamic pinning
-        // entirely. Without this guard a multi-service-layer app where another SDK initialized
-        // the native Approov SDK would enforce pins on requests that should behave like a
-        // standard URLSession.
-        if !ApproovService.isApproovEnabled() {
-            return challenge.protectionSpace.serverTrust
-        }
+        // Bypass-mode early return is now handled by the calling challenge handlers before
+        // this method is invoked, so this point is only reached when Approov is enabled.
 
         // check we have a server trust, ignore any other challenges
         guard let serverTrust = challenge.protectionSpace.serverTrust else {

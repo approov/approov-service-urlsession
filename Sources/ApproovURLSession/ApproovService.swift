@@ -1059,7 +1059,7 @@ public class ApproovService {
      *
      * @param request is the original request to be made
      * @param sessionConfig is any URLSessionConfiguration whose httpAdditionalHeaders are consulted for token binding and header substitution lookups (these headers are not merged into the returned request)
-     * @return ApproovUpdateResponse providing an updated requets, plus an errors and status
+     * @return ApproovUpdateResponse providing an updated request, plus any error and status
      */
     public static func updateRequestWithApproov(request: URLRequest, sessionConfig: URLSessionConfiguration?) -> ApproovUpdateResponse {
         var changes = ApproovRequestMutations()
@@ -1321,7 +1321,14 @@ public class ApproovService {
      * @param request the original URLRequest to be protected
      * @param sessionConfig optional URLSessionConfiguration whose httpAdditionalHeaders are consulted for token binding and header substitution lookups (these headers are not merged into the returned request)
      * @return the URLRequest with Approov token and substitutions applied (message signing included when configured)
-     * @throws ApproovError if the request should not proceed
+     * @throws Error if the request should not proceed. The default mutator always produces an
+     *         ApproovError, but a custom mutator may store any Error in ApproovUpdateResponse.error,
+     *         so callers should catch Error rather than ApproovError specifically.
+     *
+     * Note: In bypass mode (service layer initialized with an empty config string,
+     * isApproovEnabled() == false), this method returns the original request unchanged without
+     * Approov protection and without throwing. Callers that must enforce protection should
+     * check ApproovService.isApproovEnabled() before calling signRequest.
      */
     public static func signRequest(_ request: URLRequest, sessionConfig: URLSessionConfiguration? = nil) throws -> URLRequest {
         let response = updateRequestWithApproov(request: request, sessionConfig: sessionConfig)
