@@ -137,73 +137,86 @@ public class ApproovDefaultMessageSigning: ApproovServiceMutator, CustomStringCo
                 return request
             }
 
-            // Build the signature base
-            let baseBuilder = SignatureBaseBuilder(sigParams: params, ctx: provider)
-            let message = try baseBuilder.createSignatureBase()
-            // WARNING never log the message as it contains an Approov token which provides access to your API.
+            // Unsupported signing algorithm is a developer misconfiguration: fail closed
+            // (propagate) so it surfaces immediately, and is checked before the fail-open block
+            // below so it cannot be swallowed.
+            let alg = params.getAlg()
+            guard alg == ApproovDefaultMessageSigning.ALG_ES256 || alg == ApproovDefaultMessageSigning.ALG_HS256 else {
+                throw ApproovError.permanentError(message: "Unsupported algorithm identifier: \(alg ?? "unknown")")
+            }
 
-            // Generate the signature
-            let sigId: String
-            let signature: Data
-            switch params.getAlg() {
-            case ApproovDefaultMessageSigning.ALG_ES256:
-                sigId = "install"
-                guard let base64Signature = ApproovService.getInstallMessageSignature(message: message),
-                      let decodedSignature = Data(base64Encoded: base64Signature) else {
-                    if ApproovService.loggingLevel >= .error {
-                        os_log("ApproovService: install message signature unavailable, skipping signing", type: .error)
+            // Message signing is fail-open from here (core-project-approov#564): any failure to
+            // build the signature base, obtain/decode the SDK signature, decode the ES256
+            // ASN.1/DER signature, or serialize the headers logs at error level and proceeds
+            // UNSIGNED. The only fail-closed cases are a required body digest that cannot be
+            // generated (handled in buildSignatureParameters above) and an unsupported algorithm
+            // (checked above). The backend remains the enforcement point for message signatures.
+            do {
+                // Build the signature base
+                let baseBuilder = SignatureBaseBuilder(sigParams: params, ctx: provider)
+                let message = try baseBuilder.createSignatureBase()
+                // WARNING never log the message as it contains an Approov token which provides access to your API.
+
+                // Generate the signature
+                let sigId: String
+                let signature: Data
+                if alg == ApproovDefaultMessageSigning.ALG_ES256 {
+                    sigId = "install"
+                    guard let base64Signature = ApproovService.getInstallMessageSignature(message: message),
+                          let decodedSignature = Data(base64Encoded: base64Signature) else {
+                        if ApproovService.loggingLevel >= .error {
+                            os_log("ApproovService: install message signature unavailable, skipping signing", type: .error)
+                        }
+                        return request
                     }
-                    return request
-                }
-                // decode the signature from ASN.1 DER format
-                signature = try ApproovDefaultMessageSigning.decodeASN_1_DER_ES256_Signature(decodedSignature)
-            case ApproovDefaultMessageSigning.ALG_HS256:
-                sigId = "account"
-                guard let base64Signature = ApproovService.getAccountMessageSignature(message: message),
-                      let decodedSignature = Data(base64Encoded: base64Signature) else {
-                    if ApproovService.loggingLevel >= .error {
-                        os_log("ApproovService: account message signature unavailable, skipping signing", type: .error)
-                    }
-                    return request
-                }
-                signature = decodedSignature
-            default:
-                throw ApproovError.permanentError(message: "Unsupported algorithm identifier: \(params.getAlg() ?? "unknown")")
-            }
-
-            // Create signature headers
-            guard let sigHeader = try SFV.serializeDictionary(key: sigId, data: signature) else {
-                throw ApproovError.permanentError(message: "Failed to serialize signature header")
-            }
-            guard let sigInputHeader = try SFV.serializeDictionary(key: sigId, innerList: params.toComponentValue()) else {
-                throw ApproovError.permanentError(message: "Failed to serialize signature input header")
-            }
-
-            // Debugging - log the message and signature-related headers
-            // WARNING never log the message in production code as it contains the Approov token which allows API access
-            // os_log("Message Value - Signature Message: %@", type: .debug, message)
-            // os_log("Message Header - Signature: %@", type: .debug, sigHeader)
-            // os_log("Message Header Signature-Input: %@", type: .debug, sigInputHeader)
-
-            // Add headers to the request
-            var signedRequest = provider.getRequest()
-            signedRequest.addValue(sigHeader, forHTTPHeaderField: "Signature")
-            signedRequest.addValue(sigInputHeader, forHTTPHeaderField: "Signature-Input")
-
-            if params.isDebugMode() {
-                let digest = ApproovDefaultMessageSigning.sha256(data: Data(message.utf8))
-                if let sigBaseDigestHeader = try SFV.serializeDictionary(key: "sha-256", data: digest) {
-                    signedRequest.addValue(sigBaseDigestHeader, forHTTPHeaderField: "Signature-Base-Digest")
+                    // decode the signature from ASN.1 DER format (a malformed signature fails open via the catch)
+                    signature = try ApproovDefaultMessageSigning.decodeASN_1_DER_ES256_Signature(decodedSignature)
                 } else {
-                    if ApproovService.loggingLevel >= .debug {
+                    sigId = "account"
+                    guard let base64Signature = ApproovService.getAccountMessageSignature(message: message),
+                          let decodedSignature = Data(base64Encoded: base64Signature) else {
+                        if ApproovService.loggingLevel >= .error {
+                            os_log("ApproovService: account message signature unavailable, skipping signing", type: .error)
+                        }
+                        return request
+                    }
+                    signature = decodedSignature
+                }
+
+                // Create signature headers. A serialization failure (thrown or nil) fails open.
+                guard let sigHeader = try SFV.serializeDictionary(key: sigId, data: signature),
+                      let sigInputHeader = try SFV.serializeDictionary(key: sigId, innerList: params.toComponentValue()) else {
+                    if ApproovService.loggingLevel >= .error {
+                        os_log("ApproovService: failed to serialize signature headers, skipping signing", type: .error)
+                    }
+                    return request
+                }
+
+                // Add headers to the request
+                var signedRequest = provider.getRequest()
+                signedRequest.addValue(sigHeader, forHTTPHeaderField: "Signature")
+                signedRequest.addValue(sigInputHeader, forHTTPHeaderField: "Signature-Input")
+
+                if params.isDebugMode() {
+                    let digest = ApproovDefaultMessageSigning.sha256(data: Data(message.utf8))
+                    // The optional debug digest header must not drop a valid signature on failure.
+                    if let sigBaseDigestHeader = (try? SFV.serializeDictionary(key: "sha-256", data: digest)) ?? nil {
+                        signedRequest.addValue(sigBaseDigestHeader, forHTTPHeaderField: "Signature-Base-Digest")
+                    } else if ApproovService.loggingLevel >= .debug {
                         os_log("ApproovService: Failed to get digest algorithm - no debug entry", type: .debug)
                     }
                 }
-            }
 
-            // WARNING never log the full request as it contains an Approov token which provides access to your API
-            // os_log("Request String: %@", type: .debug, "\(signedRequest)")
-            return signedRequest
+                // WARNING never log the full request as it contains an Approov token which provides access to your API
+                return signedRequest
+            } catch {
+                // Fail open: building the signature base, decoding the ES256 ASN.1/DER signature,
+                // or serializing the headers failed. Log at error and proceed unsigned.
+                if ApproovService.loggingLevel >= .error {
+                    os_log("ApproovService: message signing failed, proceeding unsigned: %@", type: .error, error.localizedDescription)
+                }
+                return request
+            }
         }
 
         return request
@@ -225,48 +238,56 @@ public class ApproovDefaultMessageSigning: ApproovServiceMutator, CustomStringCo
 
     // Decode ASN.1 DER encoded ES256 signature into "raw" signature format
     private static func decodeASN_1_DER_ES256_Signature(_ signature: Data) throws -> Data {
+        // Work over a 0-based byte array so indexing is safe regardless of any Data slice bounds,
+        // and read through a bounds-checked helper so malformed/truncated input THROWS (and is
+        // handled fail-open by the caller) rather than triggering an out-of-bounds trap/crash.
+        let bytes = [UInt8](signature)
         var offset = 0
 
+        func nextByte() throws -> Int {
+            guard offset < bytes.count else {
+                throw ApproovError.permanentError(message: "Truncated ASN.1 DER signature")
+            }
+            let value = Int(bytes[offset])
+            offset += 1
+            return value
+        }
+
         // Ensure the signature starts with a valid ASN.1 sequence
-        guard signature[offset] == 0x30 else {
+        guard try nextByte() == 0x30 else {
             throw ApproovError.permanentError(message: "Invalid ASN.1 DER sequence")
         }
-        offset += 1
 
         // Read the total length of the sequence
-        let sequenceLength = Int(signature[offset])
-        offset += 1
-
-        guard sequenceLength == signature.count - 2 else {
+        let sequenceLength = try nextByte()
+        guard sequenceLength == bytes.count - 2 else {
             throw ApproovError.permanentError(message: "Invalid ASN.1 DER sequence length")
         }
 
         // Decode the first integer (r)
-        guard signature[offset] == 0x02 else {
+        guard try nextByte() == 0x02 else {
             throw ApproovError.permanentError(message: "Invalid ASN.1 DER integer for r")
         }
-        offset += 1
-
-        let rLength = Int(signature[offset])
-        offset += 1
-
-        let rBytes = signature[offset..<(offset + rLength)]
+        let rLength = try nextByte()
+        guard rLength > 0, offset + rLength <= bytes.count else {
+            throw ApproovError.permanentError(message: "Invalid ASN.1 DER length for r")
+        }
+        let rBytes = Data(bytes[offset..<(offset + rLength)])
         offset += rLength
 
         // Decode the second integer (s)
-        guard signature[offset] == 0x02 else {
+        guard try nextByte() == 0x02 else {
             throw ApproovError.permanentError(message: "Invalid ASN.1 DER integer for s")
         }
-        offset += 1
-
-        let sLength = Int(signature[offset])
-        offset += 1
-
-        let sBytes = signature[offset..<(offset + sLength)]
+        let sLength = try nextByte()
+        guard sLength > 0, offset + sLength <= bytes.count else {
+            throw ApproovError.permanentError(message: "Invalid ASN.1 DER length for s")
+        }
+        let sBytes = Data(bytes[offset..<(offset + sLength)])
         offset += sLength
 
         // Ensure the entire signature has been processed
-        guard offset == signature.count else {
+        guard offset == bytes.count else {
             throw ApproovError.permanentError(message: "Extra data in ASN.1 DER signature")
         }
 

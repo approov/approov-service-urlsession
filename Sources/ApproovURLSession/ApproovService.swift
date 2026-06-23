@@ -258,7 +258,8 @@ public class ApproovService {
             }
             serviceIsInitialized = true
             if !config.isEmpty {
-                Approov.setUserProperty("approov-service-urlsession")
+                // "dev" is a placeholder replaced with the release version by the tag-release CI job.
+                Approov.setUserProperty("approov-service-urlsession/dev")
             }
         }
     }

@@ -7,6 +7,8 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 ## [3.5.10] - 2026-06-08
 
 ### Added
+- Automatic release tagging on merge to `main` (`tag-release` job in `build_and_test.yml`): once the build/tests pass, the top CHANGELOG entry drives a matching git tag and the version is stamped in lock-step into `Package.swift` (`releaseTAG`), the CocoaPods `ApproovURLSession.podspec` (`s.version`), and the runtime user-property string, before the release commit is tagged. `main` keeps the `dev` placeholders; each tag carries the stamped version. Skipped if the tag already exists.
+- The runtime Approov user-property now reports the service-layer version (`approov-service-urlsession/<version>`); previously a bare, version-less string was reported.
 - New `signRequest(_:sessionConfig:)` convenience method on `ApproovService` that applies Approov protection (token, substitutions, and message signing when configured) to a `URLRequest` and returns the protected request directly. Designed for HTTP transports that own their own `URLSession` (e.g. Apollo iOS, gRPC-Swift) where substituting `ApproovURLSession` is not possible.
 
 ### Changed
@@ -14,6 +16,7 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 - `initialize(config:comment:)` now resets `serviceMutator` and `useApproovStatusIfNoToken` to defaults on each successful call, alongside the existing resets of substitution headers, exclusion regexes, and binding header.
 
 ### Fixed
+- Message signing now conforms to the cross-layer fail-open policy (core-project-approov#564). An ES256 ASN.1/DER decode failure and a `Signature`/`Signature-Input` serialization failure now log at error level and proceed **unsigned** instead of aborting the request, matching the existing install/account/base64 fail-open paths. The ES256 ASN.1/DER decoder is now bounds-checked so a malformed or truncated signature throws (and fails open) rather than risking an out-of-bounds trap. Only a required body digest that cannot be generated and an unsupported signing algorithm still fail closed.
 - `PinningURLSessionDelegate`: In empty-config bypass mode, the challenge handler now calls `.performDefaultHandling` rather than accepting the server trust via `.useCredential`. This ensures OS-level certificate validation always runs even when Approov dynamic pinning is skipped.
 
 ## [3.5.9] - 2026-06-02
