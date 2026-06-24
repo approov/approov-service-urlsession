@@ -56,6 +56,9 @@ public class ApproovDefaultMessageSigning: ApproovServiceMutator, CustomStringCo
      */
     private var hostFactories: [String: SignatureParametersFactory]
 
+    private var installMessageSignatureProviderForTesting: ((String) -> String?)?
+    private var accountMessageSignatureProviderForTesting: ((String) -> String?)?
+
     /**
      * Initializer
      */
@@ -89,6 +92,28 @@ public class ApproovDefaultMessageSigning: ApproovServiceMutator, CustomStringCo
     public func putHostFactory(hostName: String, factory: SignatureParametersFactory) -> ApproovDefaultMessageSigning {
         hostFactories[hostName] = factory
         return self
+    }
+
+    func setInstallMessageSignatureProviderForTesting(_ provider: ((String) -> String?)?) -> ApproovDefaultMessageSigning {
+        installMessageSignatureProviderForTesting = provider
+        return self
+    }
+
+    func setAccountMessageSignatureProviderForTesting(_ provider: ((String) -> String?)?) -> ApproovDefaultMessageSigning {
+        accountMessageSignatureProviderForTesting = provider
+        return self
+    }
+
+    func getInstallMessageSignature(message: String) -> String? {
+        return installMessageSignatureProviderForTesting?(message) ?? ApproovService.getInstallMessageSignature(message: message)
+    }
+
+    func getAccountMessageSignature(message: String) -> String? {
+        return accountMessageSignatureProviderForTesting?(message) ?? ApproovService.getAccountMessageSignature(message: message)
+    }
+
+    func decodeBase64Signature(_ base64Signature: String) -> Data? {
+        return Data(base64Encoded: base64Signature)
     }
 
     /**
@@ -162,8 +187,8 @@ public class ApproovDefaultMessageSigning: ApproovServiceMutator, CustomStringCo
                 let signature: Data
                 if alg == ApproovDefaultMessageSigning.ALG_ES256 {
                     sigId = "install"
-                    guard let base64Signature = ApproovService.getInstallMessageSignature(message: message),
-                          let decodedSignature = Data(base64Encoded: base64Signature) else {
+                    guard let base64Signature = getInstallMessageSignature(message: message),
+                          let decodedSignature = decodeBase64Signature(base64Signature) else {
                         if ApproovService.loggingLevel >= .error {
                             os_log("ApproovService: install message signature unavailable, skipping signing", type: .error)
                         }
@@ -173,8 +198,8 @@ public class ApproovDefaultMessageSigning: ApproovServiceMutator, CustomStringCo
                     signature = try ApproovDefaultMessageSigning.decodeASN_1_DER_ES256_Signature(decodedSignature)
                 } else {
                     sigId = "account"
-                    guard let base64Signature = ApproovService.getAccountMessageSignature(message: message),
-                          let decodedSignature = Data(base64Encoded: base64Signature) else {
+                    guard let base64Signature = getAccountMessageSignature(message: message),
+                          let decodedSignature = decodeBase64Signature(base64Signature) else {
                         if ApproovService.loggingLevel >= .error {
                             os_log("ApproovService: account message signature unavailable, skipping signing", type: .error)
                         }

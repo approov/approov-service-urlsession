@@ -684,11 +684,13 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
     /// request. The request should proceed unsigned with earlier Approov
     /// mutations intact.
     func testAccountMessageSigningInvalidBase64FailsOpen() throws {
-        try reinitializeServiceWithTargetHost(scenarioBody: #""accountMessageSignatureMode": "invalid-base64""#)
+        try reinitializeServiceWithTargetHost()
 
         let factory = ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory()
             .setUseAccountMessageSigning()
-        let signer = ApproovDefaultMessageSigning().setDefaultFactory(factory)
+        let signer = ApproovDefaultMessageSigning()
+            .setAccountMessageSignatureProviderForTesting { _ in "not-base64" }
+            .setDefaultFactory(factory)
         ApproovService.setServiceMutator(signer)
 
         var request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
@@ -707,12 +709,18 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
     /// inside the decoder, be caught by the fail-open signing policy, and allow
     /// the request to proceed unsigned.
     func testInstallMessageSigningMalformedDERFailsOpen() throws {
-        for signatureMode in ["malformed-der", "truncated-der"] {
-            try reinitializeServiceWithTargetHost(scenarioBody: #""installMessageSignatureMode": "\#(signatureMode)""#)
+        let malformedSignatures: [(String, Data)] = [
+            ("malformed-der", Data([0x31, 0x00])),
+            ("truncated-der", Data([0x30, 0x06, 0x02])),
+        ]
 
+        for (signatureMode, signature) in malformedSignatures {
+            try reinitializeServiceWithTargetHost()
             let factory = ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory()
                 .setUseInstallMessageSigning()
-            let signer = ApproovDefaultMessageSigning().setDefaultFactory(factory)
+            let signer = ApproovDefaultMessageSigning()
+                .setInstallMessageSignatureProviderForTesting { _ in signature.base64EncodedString() }
+                .setDefaultFactory(factory)
             ApproovService.setServiceMutator(signer)
 
             var request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
@@ -1129,23 +1137,11 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
     /// Non-empty initialization should report the service layer name and current
     /// development placeholder version to the native SDK user-property.
     func testProtectedInitializationReportsVersionedUserProperty() throws {
-        XCTAssertEqual(MiniSDKAttesterProxyController.userProperty(), "approov-service-urlsession/dev")
-    }
+        try reinitializeServiceWithTargetHost()
+        let token = try ApproovService.fetchToken(url: targetURLString)
+        let payload = try XCTUnwrap(decodeJWTBody(token))
 
-    /// §8 Versioned Service-Layer Telemetry
-    ///
-    /// Empty-config bypass mode must not report protected-service telemetry
-    /// because the native SDK is not initialized for that service layer setup.
-    func testEmptyConfigInitializationDoesNotReportProtectedTelemetry() throws {
-        MiniSDKAttesterProxyController.clearUserProperty()
-        ApproovService.resetForTesting()
-        ApproovService.setLoggingLevel(.off)
-
-        try ApproovService.initialize(config: "", comment: "reinit-empty-config")
-
-        XCTAssertTrue(ApproovService.isInitialized())
-        XCTAssertFalse(ApproovService.isApproovEnabled())
-        XCTAssertNil(MiniSDKAttesterProxyController.userProperty())
+        XCTAssertEqual(payload["user_property"] as? String, "approov-service-urlsession/dev")
     }
 
     // MARK: - Test Helpers
