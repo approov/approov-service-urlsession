@@ -372,6 +372,7 @@ public class SignatureParametersFactory {
     private var addApproovTokenHeader: Bool = false
     private var addApproovTraceIDHeader: Bool = false
     private var optionalHeaders: [String] = []
+    private var algorithmOverrideForTesting: String?
 
     /**
      * Sets the base parameters for the factory.
@@ -424,6 +425,11 @@ public class SignatureParametersFactory {
      */
     public func setUseAccountMessageSigning() -> SignatureParametersFactory {
         self.useAccountMessageSigning = true
+        return self
+    }
+
+    func setAlgorithmOverrideForTesting(_ algorithm: String?) -> SignatureParametersFactory {
+        self.algorithmOverrideForTesting = algorithm
         return self
     }
 
@@ -498,7 +504,7 @@ public class SignatureParametersFactory {
         } else {
             requestParameters = SignatureParameters(base: baseParameters!) // Safe to unwrap, cannot be nil
         }
-        requestParameters.setAlg(useAccountMessageSigning ? ApproovDefaultMessageSigning.ALG_HS256 : ApproovDefaultMessageSigning.ALG_ES256)
+        requestParameters.setAlg(algorithmOverrideForTesting ?? (useAccountMessageSigning ? ApproovDefaultMessageSigning.ALG_HS256 : ApproovDefaultMessageSigning.ALG_ES256))
 
         if addCreated || expiresLifetime > 0 {
             let currentTime = Int64(Date().timeIntervalSince1970)
