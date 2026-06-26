@@ -1,8 +1,10 @@
 // swift-tools-version:5.8
 import Foundation
 import PackageDescription
-// The release tag for this version of ApproovURLSession
-let releaseTAG = "3.5.10"
+// The release tag for this version of ApproovURLSession — "dev" for local/CI builds; replaced
+// with the CHANGELOG version by the tag-release CI job at release time (in lock-step with the
+// podspec s.version and the runtime user-property string).
+let releaseTAG = "dev"
 // SDK package version (used for both iOS and watchOS)
 let sdkVersion: Version = "3.5.3"
 let useMiniSDK = ProcessInfo.processInfo.environment["APPROOV_USE_MINI_SDK"] == "1"

@@ -678,6 +678,170 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
         XCTAssertNil(getHeader(from: protectedReply, key: "Signature-Input"))
     }
 
+    /// §5 Message Signature Fail-Open Coverage
+    ///
+    /// An invalid base64 account message signing result should not abort the
+    /// request. The request should proceed unsigned with earlier Approov
+    /// mutations intact.
+    func testAccountMessageSigningInvalidBase64FailsOpen() throws {
+        try reinitializeServiceWithTargetHost()
+
+        let factory = ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory()
+            .setUseAccountMessageSigning()
+        let signer = ApproovDefaultMessageSigning()
+            .setAccountMessageSignatureProviderForTesting { _ in "not-base64" }
+            .setDefaultFactory(factory)
+        ApproovService.setServiceMutator(signer)
+
+        var request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
+        request.httpMethod = "GET"
+        let protectedReply = fetchNetworkReply(for: request)
+
+        XCTAssertNotNil(getHeader(from: protectedReply, key: "Approov-Token"))
+        XCTAssertNotNil(getHeader(from: protectedReply, key: "Approov-TraceID"))
+        XCTAssertNil(getHeader(from: protectedReply, key: "Signature"))
+        XCTAssertNil(getHeader(from: protectedReply, key: "Signature-Input"))
+    }
+
+    /// §5 ES256 DER Decode Robustness
+    ///
+    /// Malformed and truncated ES256 ASN.1/DER install signatures should throw
+    /// inside the decoder, be caught by the fail-open signing policy, and allow
+    /// the request to proceed unsigned.
+    func testInstallMessageSigningMalformedDERFailsOpen() throws {
+        let malformedSignatures: [(String, Data)] = [
+            ("malformed-der", Data([0x31, 0x00])),
+            ("truncated-der", Data([0x30, 0x06, 0x02])),
+        ]
+
+        for (signatureMode, signature) in malformedSignatures {
+            try reinitializeServiceWithTargetHost()
+            let factory = ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory()
+                .setUseInstallMessageSigning()
+            let signer = ApproovDefaultMessageSigning()
+                .setInstallMessageSignatureProviderForTesting { _ in signature.base64EncodedString() }
+                .setDefaultFactory(factory)
+            ApproovService.setServiceMutator(signer)
+
+            var request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
+            request.httpMethod = "GET"
+            let protectedReply = fetchNetworkReply(for: request)
+
+            XCTAssertNotNil(getHeader(from: protectedReply, key: "Approov-Token"), "Failed for \(signatureMode)")
+            XCTAssertNotNil(getHeader(from: protectedReply, key: "Approov-TraceID"), "Failed for \(signatureMode)")
+            XCTAssertNil(getHeader(from: protectedReply, key: "Signature"), "Failed for \(signatureMode)")
+            XCTAssertNil(getHeader(from: protectedReply, key: "Signature-Input"), "Failed for \(signatureMode)")
+        }
+    }
+
+    /// §5 Message Signature Fail-Open Coverage
+    ///
+    /// A signature-base construction failure should not abort the request. The
+    /// request should proceed with token and trace headers, but without partial
+    /// signature headers.
+    func testUpdateRequestMessageSigningFailsOpenWhenSignatureBaseCannotBeBuilt() throws {
+        try reinitializeServiceWithTargetHost()
+
+        let baseParameters = SignatureParameters()
+        _ = baseParameters.addComponentIdentifier("X-Required-Missing")
+        let factory = ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory(baseParametersOverride: baseParameters)
+            .setUseAccountMessageSigning()
+        let signer = ApproovDefaultMessageSigning().setDefaultFactory(factory)
+        ApproovService.setServiceMutator(signer)
+
+        var request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
+        request.httpMethod = "GET"
+        let protectedReply = fetchNetworkReply(for: request)
+
+        XCTAssertNotNil(getHeader(from: protectedReply, key: "Approov-Token"))
+        XCTAssertNotNil(getHeader(from: protectedReply, key: "Approov-TraceID"))
+        XCTAssertNil(getHeader(from: protectedReply, key: "Signature"))
+        XCTAssertNil(getHeader(from: protectedReply, key: "Signature-Input"))
+    }
+
+    /// §5 Public Signing API Parity / Message Signature Fail-Open Coverage
+    ///
+    /// signRequest() should apply the same fail-open signing behavior as
+    /// automatic URLSession interception.
+    func testSignRequestMessageSigningFailsOpenWhenSignatureBaseCannotBeBuilt() throws {
+        try reinitializeServiceWithTargetHost()
+
+        let baseParameters = SignatureParameters()
+        _ = baseParameters.addComponentIdentifier("X-Required-Missing")
+        let factory = ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory(baseParametersOverride: baseParameters)
+            .setUseAccountMessageSigning()
+        let signer = ApproovDefaultMessageSigning().setDefaultFactory(factory)
+        ApproovService.setServiceMutator(signer)
+
+        var request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
+        request.httpMethod = "GET"
+
+        let signedRequest = try ApproovService.signRequest(request)
+
+        XCTAssertNotNil(signedRequest.value(forHTTPHeaderField: "Approov-Token"))
+        XCTAssertNotNil(signedRequest.value(forHTTPHeaderField: "Approov-TraceID"))
+        XCTAssertNil(signedRequest.value(forHTTPHeaderField: "Signature"))
+        XCTAssertNil(signedRequest.value(forHTTPHeaderField: "Signature-Input"))
+
+        let reply = fetchPlainNetworkReply(for: signedRequest)
+        XCTAssertNotNil(reply)
+        XCTAssertNotNil(getHeader(from: reply, key: "Approov-Token"))
+        XCTAssertNil(getHeader(from: reply, key: "Signature"))
+        XCTAssertNil(getHeader(from: reply, key: "Signature-Input"))
+    }
+
+    /// §5 Message Signature Fail-Closed Boundaries
+    ///
+    /// Required body digest generation is a policy error and must fail closed
+    /// when no repeatable body is available.
+    func testRequiredBodyDigestFailureFailsClosed() throws {
+        try reinitializeServiceWithTargetHost()
+
+        let factory = try ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory()
+            .setUseInstallMessageSigning()
+            .setBodyDigestConfig(ApproovDefaultMessageSigning.DIGEST_SHA256, required: true)
+        let signer = ApproovDefaultMessageSigning().setDefaultFactory(factory)
+        ApproovService.setServiceMutator(signer)
+
+        var request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
+        request.httpMethod = "POST"
+
+        let response = ApproovService.updateRequestWithApproov(request: request, sessionConfig: nil)
+
+        XCTAssertEqual(response.decision, .ShouldFail)
+        guard case let ApproovError.permanentError(message)? = response.error else {
+            return XCTFail("Expected permanentError, got \(String(describing: response.error))")
+        }
+        XCTAssertTrue(message.contains("Failed to create required body digest"), "Unexpected message: \(message)")
+        XCTAssertThrowsError(try ApproovService.signRequest(request))
+    }
+
+    /// §5 Message Signature Fail-Closed Boundaries
+    ///
+    /// Unsupported signing algorithms are developer configuration errors and
+    /// must fail closed instead of being swallowed by the fail-open signing
+    /// fallback.
+    func testUnsupportedSigningAlgorithmFailsClosed() throws {
+        try reinitializeServiceWithTargetHost()
+
+        let factory = ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory()
+            .setAlgorithmOverrideForTesting("unsupported")
+        let signer = ApproovDefaultMessageSigning().setDefaultFactory(factory)
+        ApproovService.setServiceMutator(signer)
+
+        var request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
+        request.httpMethod = "GET"
+
+        let response = ApproovService.updateRequestWithApproov(request: request, sessionConfig: nil)
+
+        XCTAssertEqual(response.decision, .ShouldFail)
+        guard case let ApproovError.permanentError(message)? = response.error else {
+            return XCTFail("Expected permanentError, got \(String(describing: response.error))")
+        }
+        XCTAssertTrue(message.contains("Unsupported algorithm identifier"), "Unexpected message: \(message)")
+        XCTAssertThrowsError(try ApproovService.signRequest(request))
+    }
+
     /// §5 Digest Body Application
     ///
     /// The digest body (Content-Digest) for an install message signature is present
@@ -963,6 +1127,21 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
         let response2 = ApproovService.updateRequestWithApproov(request: request, sessionConfig: nil)
         XCTAssertEqual(response2.decision, .ShouldProceed)
         XCTAssertEqual(response2.sdkMessage, "success")
+    }
+
+    // MARK: - §8 Version Telemetry & Release Versioning
+    // TESTING_REQUIREMENTS.md §8
+
+    /// §8 Versioned Service-Layer Telemetry / Development Placeholder
+    ///
+    /// Non-empty initialization should report the service layer name and current
+    /// development placeholder version to the native SDK user-property.
+    func testProtectedInitializationReportsVersionedUserProperty() throws {
+        try reinitializeServiceWithTargetHost()
+        let token = try ApproovService.fetchToken(url: targetURLString)
+        let payload = try XCTUnwrap(decodeJWTBody(token))
+
+        XCTAssertEqual(payload["user_property"] as? String, "approov-service-urlsession/dev")
     }
 
     // MARK: - Test Helpers
