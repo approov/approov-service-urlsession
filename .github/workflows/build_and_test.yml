@@ -198,16 +198,18 @@ jobs:
           EOF
 
   # ---------------------------------------------------------------------------
-  # Release placeholder check (verification ONLY — never tags).
+  # Release readiness check (verification ONLY — never tags).
   #
-  # On every push / PR this asserts that:
+  # On every push / PR this asserts that main is always in a releasable shape:
   #   - CHANGELOG.md has a top version header (## [x.y.z]);
-  #   - that top version has not already been tagged; and
-  #   - the "dev" release placeholders are present, so branches cut from main
-  #     inherit them: Package.swift releaseTAG = "dev", every root .podspec
-  #     s.version = "dev", and the setUserProperty telemetry string approov-service-urlsession/dev.
-  # Tagging is a SEPARATE, manual step (the release job below), so any issue
-  # found after merge but before tagging can still be fixed on main first.
+  #   - that top version is NOT already tagged (forces a new CHANGELOG entry
+  #     after each release before more release changes land); and
+  #   - Package.swift releaseTAG, every root .podspec s.version, and the
+  #     approov-service-urlsession/<version> telemetry string each carry a valid
+  #     x.y.z version and agree with each other.
+  # Tagging is a SEPARATE, manual step: the "Release Current Main Branch"
+  # workflow (release.yml) reads the top CHANGELOG version, stamps it into those
+  # three locations, commits to main and tags that commit.
   # ---------------------------------------------------------------------------
   verify-release:
     runs-on: ubuntu-latest
@@ -215,10 +217,12 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Verify CHANGELOG entry, tag availability and dev placeholders
+      - name: Verify CHANGELOG entry, tag availability and version consistency
         run: |
           set -uo pipefail
-          VERSION=$(grep -m1 -oE '^## \[[0-9]+\.[0-9]+\.[0-9]+\]' CHANGELOG.md | grep -oE '[0-9]+\.[0-9]+\.[0-9]+') || true
+          SEMVER='[0-9]+\.[0-9]+\.[0-9]+'
+
+          VERSION=$(grep -m1 -oE "^## \[$SEMVER\]" CHANGELOG.md | grep -oE "$SEMVER") || true
           if [ -z "$VERSION" ]; then
             echo "::error::No version header (## [x.y.z]) found in CHANGELOG.md"
             exit 1
@@ -228,112 +232,47 @@ jobs:
 
           git fetch --tags --quiet
           if git rev-parse -q --verify "refs/tags/$VERSION" >/dev/null; then
-            echo "::error::CHANGELOG top version $VERSION is already tagged. Add a new top CHANGELOG version before merging more release changes."
+            echo "::error::CHANGELOG top version $VERSION is already tagged. Add a new top CHANGELOG entry before merging more release changes."
             fail=1
           fi
 
-          if ! grep -qF 'releaseTAG = "dev"' Package.swift; then
-            echo "::error::Package.swift is missing the releaseTAG = \"dev\" placeholder (must stay in main)"
+          # Version carried by each source location (must be a real x.y.z, not a placeholder).
+          PKG=$(grep -m1 -oE "releaseTAG[[:space:]]*=[[:space:]]*\"$SEMVER\"" Package.swift | grep -oE "$SEMVER") || true
+          if [ -z "$PKG" ]; then
+            echo "::error::Package.swift releaseTAG must be an x.y.z version"
             grep -nE 'releaseTAG[[:space:]]*=' Package.swift || true
             fail=1
           fi
 
           SRC="Sources/ApproovURLSession/ApproovService.swift"
-          if ! grep -qF "approov-service-urlsession/dev" "$SRC"; then
-            echo "::error::$SRC is missing the approov-service-urlsession/dev telemetry placeholder (must stay in main)"
+          TEL=$(grep -m1 -oE "approov-service-urlsession/$SEMVER" "$SRC" | grep -oE "$SEMVER") || true
+          if [ -z "$TEL" ]; then
+            echo "::error::$SRC must report approov-service-urlsession/<x.y.z>"
             grep -nE 'setUserProperty' "$SRC" || true
             fail=1
           fi
 
+          # Every version-bearing location must agree with the others.
           for p in *.podspec; do
             [ -e "$p" ] || continue
-            if ! grep -qE '\.version[[:space:]]*=[[:space:]]*"dev"' "$p"; then
-              echo "::error::$p is missing the s.version = \"dev\" placeholder (must stay in main)"
+            POD=$(grep -m1 -oE "\.version[[:space:]]*=[[:space:]]*\"$SEMVER\"" "$p" | grep -oE "$SEMVER") || true
+            if [ -z "$POD" ]; then
+              echo "::error::$p s.version must be an x.y.z version"
               grep -nE '\.version[[:space:]]*=' "$p" || true
+              fail=1
+            elif [ -n "$PKG" ] && [ "$POD" != "$PKG" ]; then
+              echo "::error::$p s.version ($POD) does not match Package.swift releaseTAG ($PKG)"
               fail=1
             fi
           done
 
+          if [ -n "$PKG" ] && [ -n "$TEL" ] && [ "$TEL" != "$PKG" ]; then
+            echo "::error::telemetry version ($TEL) does not match Package.swift releaseTAG ($PKG)"
+            fail=1
+          fi
+
           if [ "$fail" -ne 0 ]; then
-            echo "::error::Release verification failed. main must keep dev placeholders and the top CHANGELOG version must be untagged until the manual release job stamps it."
+            echo "::error::Release verification failed."
             exit 1
           fi
-          echo "OK: CHANGELOG version $VERSION is untagged and dev placeholders are intact. Tagging is manual (Actions -> Release)."
-
-  # ---------------------------------------------------------------------------
-  # Manual release (workflow_dispatch ONLY — the single place that tags).
-  #
-  # Trigger from the Actions tab against main once main is known good. Gated on
-  # build-and-test so a release never tags failing code. It stamps the CHANGELOG
-  # version in lock-step into the dev placeholders (Package.swift releaseTAG,
-  # every root .podspec s.version, and the approov-service-urlsession/dev telemetry string),
-  # commits "Release version <x.y.z>", and tags THAT commit. main keeps the dev
-  # placeholders (the release commit is not pushed to main, only the tag ref);
-  # the tag carries the stamped version. Skipped if the tag already exists.
-  # ---------------------------------------------------------------------------
-  release:
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
-    needs: build-and-test
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Extract Version from CHANGELOG
-        id: get-version
-        run: |
-          VERSION=$(grep -m1 -oE '^## \[[0-9]+\.[0-9]+\.[0-9]+\]' CHANGELOG.md | grep -oE '[0-9]+\.[0-9]+\.[0-9]+') || true
-          if [ -z "$VERSION" ]; then
-            echo "::error::Could not find a version header (## [x.y.z]) in CHANGELOG.md"
-            exit 1
-          fi
-          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Version extracted from CHANGELOG.md is: $VERSION"
-
-      - name: Stamp version, commit and tag
-        run: |
-          set -uo pipefail
-          VERSION="${{ steps.get-version.outputs.VERSION }}"
-
-          if git fetch origin "refs/tags/$VERSION" --quiet 2>/dev/null; then
-            echo "Tag $VERSION already exists. Skipping tagging."
-            exit 0
-          fi
-
-          SRC="Sources/ApproovURLSession/ApproovService.swift"
-          if ! grep -qF "approov-service-urlsession/dev" "$SRC"; then
-            echo "::error::Could not find 'approov-service-urlsession/dev' placeholder in $SRC"
-            exit 1
-          fi
-
-          echo "Stamping version $VERSION into manifests and telemetry..."
-          perl -pi -e "s|approov-service-urlsession/dev|approov-service-urlsession/$VERSION|g" "$SRC"
-          perl -pi -e "s|releaseTAG = \"dev\"|releaseTAG = \"$VERSION\"|g" Package.swift
-          for PODSPEC in *.podspec; do
-            [ -e "$PODSPEC" ] || continue
-            echo "Stamping version $VERSION into $PODSPEC..."
-            perl -pi -e "s|(\bs(?:pec)?\.version\s*=\s*['\"])dev(['\"])|\${1}$VERSION\${2}|g" "$PODSPEC"
-          done
-
-          # Defensive: refuse to tag if any dev placeholder survived.
-          leftover=0
-          grep -q 'releaseTAG = "dev"' Package.swift && leftover=1
-          grep -qF "approov-service-urlsession/dev" "$SRC" && leftover=1
-          for PODSPEC in *.podspec; do
-            [ -e "$PODSPEC" ] || continue
-            grep -Eq 's\.version[[:space:]]*=[[:space:]]*"dev"' "$PODSPEC" && leftover=1
-          done
-          if [ "$leftover" -ne 0 ]; then
-            echo "::error::A dev placeholder was not replaced; aborting tag."
-            exit 1
-          fi
-
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git commit -am "Release version $VERSION"
-          git tag "$VERSION"
-          git push origin "$VERSION"
+          echo "OK: CHANGELOG version $VERSION is untagged; source version $PKG is valid and consistent. Tagging is manual (Actions -> Release Current Main Branch)."

@@ -1,0 +1,100 @@
+name: Release Current Main Branch
+
+# Manual release (workflow_dispatch ONLY — the single place that tags).
+#
+# Run this from the Actions tab against main once main is known good (code is
+# already built and tested on every push). It:
+#   1. reads the top CHANGELOG version (## [x.y.z]);
+#   2. refuses to proceed if that version is already tagged (i.e. someone forgot
+#      to add a new CHANGELOG entry for this release);
+#   3. overwrites the x.y.z version carried in lock-step by Package.swift
+#      (releaseTAG), every root .podspec (s.version) and the
+#      approov-service-urlsession/<version> telemetry string with the CHANGELOG
+#      version;
+#   4. commits the change to main (only if anything actually changed); and
+#   5. tags that commit and pushes the tag.
+#
+# Because the tag points at main's HEAD, the released commit always belongs to a
+# branch (no orphan-commit banner). main is left carrying the just-released
+# version as its "last released" marker for the next cycle.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Read and validate version from CHANGELOG
+        id: get-version
+        run: |
+          set -uo pipefail
+          SEMVER='[0-9]+\.[0-9]+\.[0-9]+'
+
+          VERSION=$(grep -m1 -oE "^## \[$SEMVER\]" CHANGELOG.md | grep -oE "$SEMVER") || true
+          if [ -z "$VERSION" ]; then
+            echo "::error::Could not find a version header (## [x.y.z]) in CHANGELOG.md"
+            exit 1
+          fi
+
+          git fetch --tags --quiet
+          if git rev-parse -q --verify "refs/tags/$VERSION" >/dev/null; then
+            echo "::error::CHANGELOG top version $VERSION is already tagged. Did you forget to add a new CHANGELOG entry for this release?"
+            exit 1
+          fi
+
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Releasing version $VERSION"
+
+      - name: Stamp version, commit and tag main
+        run: |
+          set -uo pipefail
+          VERSION="${{ steps.get-version.outputs.VERSION }}"
+          SEMVER='[0-9]+\.[0-9]+\.[0-9]+'
+          SRC="Sources/ApproovURLSession/ApproovService.swift"
+
+          # Overwrite the existing x.y.z version in each location with the CHANGELOG version.
+          # Each substitution is anchored so it never touches unrelated versions
+          # (e.g. Package.swift's sdkVersion).
+          perl -pi -e "s|approov-service-urlsession/$SEMVER|approov-service-urlsession/$VERSION|g" "$SRC"
+          perl -pi -e "s|(releaseTAG\s*=\s*\")$SEMVER(\")|\${1}$VERSION\${2}|g" Package.swift
+          for PODSPEC in *.podspec; do
+            [ -e "$PODSPEC" ] || continue
+            perl -pi -e "s|(\bs(?:pec)?\.version\s*=\s*['\"])$SEMVER(['\"])|\${1}$VERSION\${2}|g" "$PODSPEC"
+          done
+
+          # Defensive: every location must now carry exactly $VERSION.
+          fail=0
+          grep -qE "releaseTAG[[:space:]]*=[[:space:]]*\"$VERSION\"" Package.swift \
+            || { echo "::error::Package.swift releaseTAG was not stamped to $VERSION"; fail=1; }
+          grep -qF "approov-service-urlsession/$VERSION" "$SRC" \
+            || { echo "::error::$SRC telemetry was not stamped to $VERSION"; fail=1; }
+          for PODSPEC in *.podspec; do
+            [ -e "$PODSPEC" ] || continue
+            grep -qE "\.version[[:space:]]*=[[:space:]]*\"$VERSION\"" "$PODSPEC" \
+              || { echo "::error::$PODSPEC s.version was not stamped to $VERSION"; fail=1; }
+          done
+          [ "$fail" -eq 0 ] || exit 1
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          if git diff --quiet; then
+            echo "Source already at $VERSION; tagging current main HEAD."
+          else
+            git commit -am "Release version $VERSION"
+            git push origin main
+          fi
+
+          git tag "$VERSION"
+          git push origin "$VERSION"

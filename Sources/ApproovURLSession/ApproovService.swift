@@ -258,8 +258,9 @@ public class ApproovService {
             }
             serviceIsInitialized = true
             if !config.isEmpty {
-                // "dev" is a placeholder replaced with the release version by the tag-release CI job.
-                Approov.setUserProperty("approov-service-urlsession/dev")
+                // The version here is the last released version on main; the "Release Current Main
+                // Branch" CI job overwrites it with the top CHANGELOG version at release time.
+                Approov.setUserProperty("approov-service-urlsession/3.5.10")
             }
         }
     }
