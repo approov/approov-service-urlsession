@@ -1132,16 +1132,22 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
     // MARK: - §8 Version Telemetry & Release Versioning
     // TESTING_REQUIREMENTS.md §8
 
-    /// §8 Versioned Service-Layer Telemetry / Development Placeholder
+    /// §8 Versioned Service-Layer Telemetry
     ///
-    /// Non-empty initialization should report the service layer name and current
-    /// development placeholder version to the native SDK user-property.
+    /// Non-empty initialization should report the service layer name together with
+    /// a concrete x.y.z version to the native SDK user-property (not a bare,
+    /// version-less string). The exact version is stamped per release, so this
+    /// asserts the format rather than a fixed value.
     func testProtectedInitializationReportsVersionedUserProperty() throws {
         try reinitializeServiceWithTargetHost()
         let token = try ApproovService.fetchToken(url: targetURLString)
         let payload = try XCTUnwrap(decodeJWTBody(token))
 
-        XCTAssertEqual(payload["user_property"] as? String, "approov-service-urlsession/dev")
+        let userProperty = try XCTUnwrap(payload["user_property"] as? String)
+        XCTAssertNotNil(
+            userProperty.range(of: #"^approov-service-urlsession/\d+\.\d+\.\d+$"#, options: .regularExpression),
+            "Expected a versioned user-property 'approov-service-urlsession/<x.y.z>', got '\(userProperty)'"
+        )
     }
 
     // MARK: - Test Helpers
