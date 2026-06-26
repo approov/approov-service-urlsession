@@ -7,7 +7,7 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 ## [3.5.11] - 2026-06-24
 
 ### Added
-- Manual release stamping via `workflow_dispatch` (`release` job in `build_and_test.yml`): once the build/tests pass, the top CHANGELOG entry drives a matching git tag and the version is stamped in lock-step into `Package.swift` (`releaseTAG`), the CocoaPods `ApproovURLSession.podspec` (`s.version`), and the runtime user-property string before the release commit is tagged. `main` keeps the `dev` placeholders; each tag carries the stamped version.
+- Manual release via the dedicated **Release Current Main Branch** workflow (`release.yml`, `workflow_dispatch`): it reads the top CHANGELOG version, refuses to proceed if that version is already tagged (a forgotten CHANGELOG bump), then overwrites the `x.y.z` version held in lock-step by `Package.swift` (`releaseTAG`), the CocoaPods `ApproovURLSession.podspec` (`s.version`) and the runtime user-property string, commits to `main` and tags that commit. The tag points at `main`'s HEAD, so the released commit always belongs to a branch. `main` now carries the last released version (a real `x.y.z`) rather than a `dev` placeholder.
 - The runtime Approov user-property now reports the service-layer version (`approov-service-urlsession/<version>`); previously a bare, version-less string was reported.
 
 ### Fixed
