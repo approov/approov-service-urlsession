@@ -7,7 +7,7 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 ## [3.5.11] - 2026-06-24
 
 ### Added
-- Manual release via the dedicated **Release Current Main Branch** workflow (`release.yml`, `workflow_dispatch`): it reads the top CHANGELOG version, refuses to proceed if that version is already tagged (a forgotten CHANGELOG bump), then overwrites the `x.y.z` version held in lock-step by `Package.swift` (`releaseTAG`), the CocoaPods `ApproovURLSession.podspec` (`s.version`) and the runtime user-property string, commits to `main` and tags that commit. The tag points at `main`'s HEAD, so the released commit always belongs to a branch. `main` now carries the last released version (a real `x.y.z`) rather than a `dev` placeholder.
+- Manual release via the dedicated **Release Current Main Branch** workflow (`release.yml`, `workflow_dispatch`): it reads the top CHANGELOG version, refuses to proceed if that version is already tagged (a forgotten CHANGELOG bump), verifies `main` already carries that version in lock-step in `Package.swift` (`releaseTAG`), the CocoaPods `ApproovURLSession.podspec` (`s.version`) and the runtime user-property string, then tags `main`'s HEAD and pushes the tag. It never pushes a commit to `main` (no token/ruleset bypass needed) and the tag points at a `main` commit, so the released commit always belongs to a branch. The version is bumped beforehand via a normal PR; `verify-release` enforces that these three locations match the top CHANGELOG entry. `main` now carries a real `x.y.z` rather than a `dev` placeholder.
 - The runtime Approov user-property now reports the service-layer version (`approov-service-urlsession/<version>`); previously a bare, version-less string was reported.
 
 ### Fixed

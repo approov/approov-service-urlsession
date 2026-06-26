@@ -1,9 +1,9 @@
 Pod::Spec.new do |s|
   s.name         = "ApproovURLSession"
-  # The released version on main this commit descends from — overwritten with the top CHANGELOG
-  # version by the "Release Current Main Branch" CI job at release time (in lock-step with
-  # Package.swift releaseTAG and the runtime user-property string).
-  s.version      = "3.5.10"
+  # The version main is at — must match the top CHANGELOG entry, in lock-step with Package.swift
+  # releaseTAG and the runtime user-property string. Bump all three in a PR; the "Release Current
+  # Main Branch" CI job then tags main at this version.
+  s.version      = "3.5.11"
   s.summary      = "Approov mobile attestation SDK"
   s.description  = <<-DESC
     Approov SDK integrates security attestation and secure string fetching for both iOS and watchOS apps.
