@@ -34,6 +34,14 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
+          # main is a protected branch (PRs required). The default GITHUB_TOKEN /
+          # github-actions[bot] is NOT a bypass actor, so its push is rejected.
+          # RELEASE_TOKEN must be a token whose actor IS a bypass actor on the
+          # branch ruleset (a fine-grained PAT with contents:write, or a GitHub
+          # App installation token). persist-credentials wires it into git so the
+          # commit + tag pushes below authenticate as that bypassing actor.
+          token: ${{ secrets.RELEASE_TOKEN }}
+          persist-credentials: true
 
       - name: Read and validate version from CHANGELOG
         id: get-version
