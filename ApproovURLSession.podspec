@@ -2,7 +2,7 @@ Pod::Spec.new do |s|
   s.name         = "ApproovURLSession"
   # "dev" placeholder — replaced with the CHANGELOG version by the tag-release CI job at release
   # time (in lock-step with Package.swift releaseTAG and the runtime user-property string).
-  s.version      = "dev"
+  s.version      = "3.5.11"
   s.summary      = "Approov mobile attestation SDK"
   s.description  = <<-DESC
     Approov SDK integrates security attestation and secure string fetching for both iOS and watchOS apps.
