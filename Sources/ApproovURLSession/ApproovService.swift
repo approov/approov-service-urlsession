@@ -258,9 +258,9 @@ public class ApproovService {
             }
             serviceIsInitialized = true
             if !config.isEmpty {
-                // The version here is the last released version on main; the "Release Current Main
-                // Branch" CI job overwrites it with the top CHANGELOG version at release time.
-                Approov.setUserProperty("approov-service-urlsession/3.5.10")
+                // Must match the top CHANGELOG entry (in lock-step with Package.swift releaseTAG
+                // and the podspec s.version); bump all three in a PR before tagging a release.
+                Approov.setUserProperty("approov-service-urlsession/3.5.11")
             }
         }
     }

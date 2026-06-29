@@ -205,11 +205,11 @@ jobs:
   #   - that top version is NOT already tagged (forces a new CHANGELOG entry
   #     after each release before more release changes land); and
   #   - Package.swift releaseTAG, every root .podspec s.version, and the
-  #     approov-service-urlsession/<version> telemetry string each carry a valid
-  #     x.y.z version and agree with each other.
+  #     approov-service-urlsession/<version> telemetry string each carry that
+  #     same top CHANGELOG version (so main is always ready to tag).
   # Tagging is a SEPARATE, manual step: the "Release Current Main Branch"
-  # workflow (release.yml) reads the top CHANGELOG version, stamps it into those
-  # three locations, commits to main and tags that commit.
+  # workflow (release.yml) only verifies and tags main's HEAD — it never pushes
+  # a commit to main, so the version is bumped here via PR, not by CI.
   # ---------------------------------------------------------------------------
   verify-release:
     runs-on: ubuntu-latest
@@ -236,11 +236,15 @@ jobs:
             fail=1
           fi
 
-          # Version carried by each source location (must be a real x.y.z, not a placeholder).
+          # Every source location must carry exactly the top CHANGELOG version, so main is
+          # always ready for the release job to tag.
           PKG=$(grep -m1 -oE "releaseTAG[[:space:]]*=[[:space:]]*\"$SEMVER\"" Package.swift | grep -oE "$SEMVER") || true
           if [ -z "$PKG" ]; then
             echo "::error::Package.swift releaseTAG must be an x.y.z version"
             grep -nE 'releaseTAG[[:space:]]*=' Package.swift || true
+            fail=1
+          elif [ "$PKG" != "$VERSION" ]; then
+            echo "::error::Package.swift releaseTAG ($PKG) must match the top CHANGELOG version ($VERSION)"
             fail=1
           fi
 
@@ -250,9 +254,11 @@ jobs:
             echo "::error::$SRC must report approov-service-urlsession/<x.y.z>"
             grep -nE 'setUserProperty' "$SRC" || true
             fail=1
+          elif [ "$TEL" != "$VERSION" ]; then
+            echo "::error::telemetry version ($TEL) must match the top CHANGELOG version ($VERSION)"
+            fail=1
           fi
 
-          # Every version-bearing location must agree with the others.
           for p in *.podspec; do
             [ -e "$p" ] || continue
             POD=$(grep -m1 -oE "\.version[[:space:]]*=[[:space:]]*\"$SEMVER\"" "$p" | grep -oE "$SEMVER") || true
@@ -260,16 +266,11 @@ jobs:
               echo "::error::$p s.version must be an x.y.z version"
               grep -nE '\.version[[:space:]]*=' "$p" || true
               fail=1
-            elif [ -n "$PKG" ] && [ "$POD" != "$PKG" ]; then
-              echo "::error::$p s.version ($POD) does not match Package.swift releaseTAG ($PKG)"
+            elif [ "$POD" != "$VERSION" ]; then
+              echo "::error::$p s.version ($POD) must match the top CHANGELOG version ($VERSION)"
               fail=1
             fi
           done
-
-          if [ -n "$PKG" ] && [ -n "$TEL" ] && [ "$TEL" != "$PKG" ]; then
-            echo "::error::telemetry version ($TEL) does not match Package.swift releaseTAG ($PKG)"
-            fail=1
-          fi
 
           if [ "$fail" -ne 0 ]; then
             echo "::error::Release verification failed."

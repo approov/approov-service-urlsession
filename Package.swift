@@ -1,10 +1,10 @@
 // swift-tools-version:5.8
 import Foundation
 import PackageDescription
-// The released version on main this commit descends from. The "Release Current Main Branch"
-// CI job (release.yml) overwrites this with the top CHANGELOG version at release time and tags
-// that commit, in lock-step with the podspec s.version and the runtime user-property string.
-let releaseTAG = "3.5.10"
+// The version main is at — must match the top CHANGELOG entry, in lock-step with the podspec
+// s.version and the runtime user-property string. Bump all three (and add the CHANGELOG entry)
+// in a PR; the "Release Current Main Branch" CI job (release.yml) then tags main at this version.
+let releaseTAG = "3.5.11"
 // SDK package version (used for both iOS and watchOS)
 let sdkVersion: Version = "3.5.3"
 let useMiniSDK = ProcessInfo.processInfo.environment["APPROOV_USE_MINI_SDK"] == "1"
