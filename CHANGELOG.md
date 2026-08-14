@@ -4,6 +4,12 @@ All notable changes to this package will be documented in this file.
 
 The format is based on Keep a Changelog and this project adheres to Semantic Versioning.
 
+## [3.5.12] - 2026-08-14
+
+### Fixed
+- Isolated URLSession observer state by task object identity. Requests from different sessions can now use equal session-local task identifiers without overwriting their configuration or completion handlers.
+- Added one-shot completion handling for rejected requests. The observer now cancels the underlying URLSessionTask without calling the application completion handler twice.
+
 ## [3.5.11] - 2026-06-24
 
 ### Added
