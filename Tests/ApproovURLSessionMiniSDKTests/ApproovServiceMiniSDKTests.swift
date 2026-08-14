@@ -1087,6 +1087,69 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
         }
     }
 
+    /// Verifies that tasks from separate sessions remain isolated even when
+    /// URLSession assigns them the same session-local task identifier.
+    func testMultipleSessionsWithCollidingTaskIdentifiersCompleteIndependently() throws {
+        let protectedURL = try XCTUnwrap(URL(string: "https://multiple-sessions.example/request"))
+        let protectedHost = try XCTUnwrap(protectedURL.host)
+        try reinitializeService(
+            scenarioJSON: scenarioJSON(
+                caseName: uniqueCaseName(prefix: "multiple-sessions"),
+                body: "\"protectedDomains\": [\"\(protectedHost)\"]"
+            ),
+            comment: "reinit-multiple-sessions"
+        )
+        setDirective(
+            """
+            {
+              "operation": "fetchApproovToken",
+              "response": {
+                "status": "NO_NETWORK"
+              }
+            }
+            """
+        )
+
+        let firstSession = ApproovURLSession(configuration: .ephemeral)
+        let secondSession = ApproovURLSession(configuration: .default)
+        let callbacksCompleted = expectation(description: "both session callbacks completed")
+        callbacksCompleted.expectedFulfillmentCount = 2
+        callbacksCompleted.assertForOverFulfill = true
+        let callbacksLock = NSLock()
+        var firstCallbackCount = 0
+        var secondCallbackCount = 0
+
+        let firstTask = firstSession.dataTask(with: protectedURL) { _, _, _ in
+            callbacksLock.lock()
+            firstCallbackCount += 1
+            callbacksLock.unlock()
+            callbacksCompleted.fulfill()
+        }
+        let secondTask = secondSession.dataTask(with: protectedURL) { _, _, _ in
+            callbacksLock.lock()
+            secondCallbackCount += 1
+            callbacksLock.unlock()
+            callbacksCompleted.fulfill()
+        }
+
+        XCTAssertEqual(
+            firstTask.taskIdentifier,
+            secondTask.taskIdentifier,
+            "The regression requires two sessions whose session-local task identifiers collide"
+        )
+
+        firstTask.resume()
+        secondTask.resume()
+        wait(for: [callbacksCompleted], timeout: 5.0)
+
+        callbacksLock.lock()
+        let observedFirstCallbackCount = firstCallbackCount
+        let observedSecondCallbackCount = secondCallbackCount
+        callbacksLock.unlock()
+        XCTAssertEqual(observedFirstCallbackCount, 1)
+        XCTAssertEqual(observedSecondCallbackCount, 1)
+    }
+
     /// Verifies that the cached failure expires after the TTL.
     func testCachedFailureExpiresAfterTTL() throws {
         try reinitializeServiceWithTargetHost()
