@@ -9,6 +9,7 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 ### Fixed
 - Isolated URLSession observer state by task object identity. Requests from different sessions can now use equal session-local task identifiers without overwriting their configuration or completion handlers.
 - Added one-shot completion handling for rejected requests. The observer now cancels the underlying URLSessionTask without calling the application completion handler twice.
+- Removed the manually allocated KVO context that carried the pinning `URLSession` to the observer. The buffer was created with `UnsafeMutablePointer<URLSession>.allocate` and released with `deallocate()` alone, which frees the memory without releasing the strong session reference it held, leaking one retain of the pinned session per task and keeping the session alive for the lifetime of the process (present since 3.1.2). The session now reaches the observer through the per-task registration, so no manual memory management remains.
 
 ## [3.5.11] - 2026-06-24
 
