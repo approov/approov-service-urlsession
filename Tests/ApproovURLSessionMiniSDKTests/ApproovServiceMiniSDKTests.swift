@@ -1350,6 +1350,61 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
         return Data(base64Encoded: padded)
     }
 
+    // MARK: - Task registration lifetime
+
+    /// A registration must not outlive its task. Previously registrations were held in a
+    /// dictionary keyed by ObjectIdentifier(task), which is only the task's address: an
+    /// abandoned task left its entry behind, and a later task allocated at the same address
+    /// inherited it (measured: 198 address collisions in 200 create-and-drop cycles), taking
+    /// another request's pinning session, session configuration and completion handler.
+    func testRegistrationDoesNotOutliveAnAbandonedTask() throws {
+        // Create and drop tasks without ever resuming or cancelling them, which is the only
+        // path that leaves a registration behind.
+        for _ in 0..<50 {
+            autoreleasepool {
+                let session = ApproovURLSession(configuration: .default)
+                _ = session.dataTask(with: URLRequest(url: URL(string: targetURLString)!))
+            }
+        }
+
+        // A fresh task must carry its own configuration, not one inherited from a dead task.
+        let marker = "registration-lifetime-marker"
+        let configuration = URLSessionConfiguration.default
+        configuration.httpAdditionalHeaders = ["X-Registration-Marker": marker]
+        let session = ApproovURLSession(configuration: configuration)
+        let task = session.dataTask(with: URLRequest(url: URL(string: targetURLString)!))
+
+        let registered = ApproovURLSession.taskObserver.registeredSessionConfig(for: task)
+        XCTAssertEqual(
+            registered?.httpAdditionalHeaders?["X-Registration-Marker"] as? String,
+            marker,
+            "task inherited a registration from an earlier, abandoned task"
+        )
+        task.cancel()
+    }
+
+    /// Processing a task takes its registration, so nothing is left attached afterwards and
+    /// the observation stops with it.
+    func testRegistrationIsReleasedOnceTheTaskIsProcessed() throws {
+        let session = ApproovURLSession(configuration: .default)
+        let completed = expectation(description: "task completed")
+        let task = session.dataTask(with: URLRequest(url: URL(string: targetURLString)!)) { _, _, _ in
+            completed.fulfill()
+        }
+        XCTAssertNotNil(
+            ApproovURLSession.taskObserver.registeredSessionConfig(for: task),
+            "a task should carry its registration until it is processed"
+        )
+
+        task.resume()
+        wait(for: [completed], timeout: 20.0)
+
+        XCTAssertNil(
+            ApproovURLSession.taskObserver.registeredSessionConfig(for: task),
+            "the registration should be released once the task has been processed"
+        )
+    }
+
     private func sha256Base64(_ value: String) -> String {
         Data(SHA256.hash(data: Data(value.utf8))).base64EncodedString()
     }

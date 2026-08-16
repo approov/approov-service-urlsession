@@ -56,11 +56,28 @@ final class ApproovTaskCompletionGate<Value>: ApproovTaskCompletionHandling, @un
 // mechanism avoids any networking operations being executed in the context of the original calling thread, since this might
 // legitimately be from the main UI thread.
 public class ApproovSessionTaskObserver: NSObject {
-    private struct TaskRegistration {
+    /// Everything needed to process one task. Held by the task itself as an associated
+    /// object, so its lifetime is exactly the task's: it cannot outlive the task, and a
+    /// later task allocated at the same address cannot inherit it.
+    private final class TaskRegistration {
         let pinningSession: URLSession
         let sessionConfig: URLSessionConfiguration
         let completionHandler: ApproovTaskCompletionHandling?
+        /// Owning the observation token means observation stops when this registration is
+        /// released, with no manual addObserver/removeObserver pairing to get wrong.
+        var observation: NSKeyValueObservation?
+
+        init(pinningSession: URLSession,
+             sessionConfig: URLSessionConfiguration,
+             completionHandler: ApproovTaskCompletionHandling?) {
+            self.pinningSession = pinningSession
+            self.sessionConfig = sessionConfig
+            self.completionHandler = completionHandler
+        }
     }
+
+    /// Key for the associated object holding the registration on a task.
+    private static var registrationKey: UInt8 = 0
 
     private static let loggingQueue = DispatchQueue(label: "io.approov.ApproovService.loggingQueue", qos: .userInitiated)
     private static var _enableLogging: Bool = false
@@ -74,11 +91,10 @@ public class ApproovSessionTaskObserver: NSObject {
     }
 
     private let TAG = "ApproovSession: "
-    static let stateString = "state"
 
-    // A taskIdentifier is unique only within its URLSession. ObjectIdentifier
-    // isolates registrations belonging to different sessions that both use task 1.
-    private var registrations: [ObjectIdentifier: TaskRegistration] = [:]
+    // Registrations live on the task objects themselves (see TaskRegistration). This queue
+    // only serialises the read-and-clear, which must be atomic so that a task is processed
+    // exactly once.
     private let registrationsQueue = DispatchQueue(label: "ApproovSessionTaskObserver.registrations")
 
     /// Atomically registers everything needed to process a task before observing
@@ -89,19 +105,27 @@ public class ApproovSessionTaskObserver: NSObject {
         sessionConfig: URLSessionConfiguration,
         completionHandler: ApproovTaskCompletionHandling? = nil
     ) {
+        let registration = TaskRegistration(
+            pinningSession: pinningSession,
+            sessionConfig: sessionConfig,
+            completionHandler: completionHandler
+        )
+        // Observe with the block-based API: the token is owned by the registration, and the
+        // typed change value removes the need to map a raw state number.
+        // Read the state from the task rather than from the change: URLSessionTask.state is an
+        // NS_ENUM that does not bridge into NSKeyValueObservedChange, so change.newValue is
+        // always nil here (verified on this toolchain).
+        registration.observation = task.observe(\.state, options: [.new]) { [weak self] observedTask, _ in
+            self?.handleStateChange(of: observedTask, newState: observedTask.state)
+        }
         registrationsQueue.sync {
-            registrations[ObjectIdentifier(task)] = TaskRegistration(
-                pinningSession: pinningSession,
-                sessionConfig: sessionConfig,
-                completionHandler: completionHandler
+            objc_setAssociatedObject(
+                task,
+                &ApproovSessionTaskObserver.registrationKey,
+                registration,
+                .OBJC_ASSOCIATION_RETAIN
             )
         }
-        task.addObserver(
-            self,
-            forKeyPath: ApproovSessionTaskObserver.stateString,
-            options: .new,
-            context: nil
-        )
         if ApproovSessionTaskObserver.enableLogging {
             logMessage(
                 line: String(#line),
@@ -112,38 +136,34 @@ public class ApproovSessionTaskObserver: NSObject {
         }
     }
 
-    private func removeRegistration(for task: URLSessionTask) -> TaskRegistration? {
+    /// Testing hook: reports whether a task still carries a registration, and which session
+    /// configuration it carries. Used to assert that registrations live and die with their task.
+    func registeredSessionConfig(for task: URLSessionTask) -> URLSessionConfiguration? {
         registrationsQueue.sync {
-            registrations.removeValue(forKey: ObjectIdentifier(task))
+            (objc_getAssociatedObject(
+                task, &ApproovSessionTaskObserver.registrationKey) as? TaskRegistration)?.sessionConfig
         }
     }
 
-    func getURLSessionState(state: UInt32) -> URLSessionTask.State {
-        switch state {
-        case 0:
-            return .running
-        case 1:
-            return .suspended
-        case 2:
-            return .canceling
-        default:
-            return .completed
+    /// Atomically takes the registration off the task. Returns nil if another thread got
+    /// there first, which is what makes processing one-shot.
+    private func takeRegistrationAndStopObserving(for task: URLSessionTask) -> TaskRegistration? {
+        registrationsQueue.sync {
+            let registration = objc_getAssociatedObject(
+                task, &ApproovSessionTaskObserver.registrationKey) as? TaskRegistration
+            if registration != nil {
+                objc_setAssociatedObject(
+                    task, &ApproovSessionTaskObserver.registrationKey, nil, .OBJC_ASSOCIATION_RETAIN)
+            }
+            registration?.observation?.invalidate()
+            registration?.observation = nil
+            return registration
         }
     }
 
-    public override func observeValue(
-        forKeyPath keyPath: String?,
-        of object: Any?,
-        change: [NSKeyValueChangeKey: Any]?,
-        context: UnsafeMutableRawPointer?
-    ) {
-        guard keyPath == ApproovSessionTaskObserver.stateString,
-              let task = object as? URLSessionTask else {
-            super.observeValue(forKeyPath: keyPath, of: object, change: change, context: context)
-            return
-        }
-
-        task.removeObserver(self, forKeyPath: ApproovSessionTaskObserver.stateString)
+    /// Handles a state change reported by the per-task observation installed in observe(task:).
+    /// The registration is taken off the task first, so this runs at most once per task.
+    private func handleStateChange(of task: URLSessionTask, newState: URLSessionTask.State) {
         if ApproovSessionTaskObserver.enableLogging {
             logMessage(
                 line: String(#line),
@@ -153,7 +173,7 @@ public class ApproovSessionTaskObserver: NSObject {
             )
         }
 
-        guard let registration = removeRegistration(for: task) else {
+        guard let registration = takeRegistrationAndStopObserving(for: task) else {
             // Never allow a task that has lost its Approov state to continue as an
             // unprotected request.
             if task.state == .running {
@@ -165,10 +185,11 @@ public class ApproovSessionTaskObserver: NSObject {
             return
         }
 
-        guard let newStateNumber = change?[.newKey] as? NSNumber,
-              getURLSessionState(state: newStateNumber.uint32Value) == .running else {
+        guard newState == .running else {
             // Cancellation before the first resume needs no Approov processing;
-            // URLSession delivers its normal cancellation callback.
+            // URLSession delivers its normal cancellation callback. The registration has
+            // already been taken, so its observation token is released with it and
+            // observation stops here.
             return
         }
 
