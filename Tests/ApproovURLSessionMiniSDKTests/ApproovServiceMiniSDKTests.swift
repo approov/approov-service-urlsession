@@ -1087,6 +1087,69 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
         }
     }
 
+    /// Verifies that tasks from separate sessions remain isolated even when
+    /// URLSession assigns them the same session-local task identifier.
+    func testMultipleSessionsWithCollidingTaskIdentifiersCompleteIndependently() throws {
+        let protectedURL = try XCTUnwrap(URL(string: "https://multiple-sessions.example/request"))
+        let protectedHost = try XCTUnwrap(protectedURL.host)
+        try reinitializeService(
+            scenarioJSON: scenarioJSON(
+                caseName: uniqueCaseName(prefix: "multiple-sessions"),
+                body: "\"protectedDomains\": [\"\(protectedHost)\"]"
+            ),
+            comment: "reinit-multiple-sessions"
+        )
+        setDirective(
+            """
+            {
+              "operation": "fetchApproovToken",
+              "response": {
+                "status": "NO_NETWORK"
+              }
+            }
+            """
+        )
+
+        let firstSession = ApproovURLSession(configuration: .ephemeral)
+        let secondSession = ApproovURLSession(configuration: .default)
+        let callbacksCompleted = expectation(description: "both session callbacks completed")
+        callbacksCompleted.expectedFulfillmentCount = 2
+        callbacksCompleted.assertForOverFulfill = true
+        let callbacksLock = NSLock()
+        var firstCallbackCount = 0
+        var secondCallbackCount = 0
+
+        let firstTask = firstSession.dataTask(with: protectedURL) { _, _, _ in
+            callbacksLock.lock()
+            firstCallbackCount += 1
+            callbacksLock.unlock()
+            callbacksCompleted.fulfill()
+        }
+        let secondTask = secondSession.dataTask(with: protectedURL) { _, _, _ in
+            callbacksLock.lock()
+            secondCallbackCount += 1
+            callbacksLock.unlock()
+            callbacksCompleted.fulfill()
+        }
+
+        XCTAssertEqual(
+            firstTask.taskIdentifier,
+            secondTask.taskIdentifier,
+            "The regression requires two sessions whose session-local task identifiers collide"
+        )
+
+        firstTask.resume()
+        secondTask.resume()
+        wait(for: [callbacksCompleted], timeout: 5.0)
+
+        callbacksLock.lock()
+        let observedFirstCallbackCount = firstCallbackCount
+        let observedSecondCallbackCount = secondCallbackCount
+        callbacksLock.unlock()
+        XCTAssertEqual(observedFirstCallbackCount, 1)
+        XCTAssertEqual(observedSecondCallbackCount, 1)
+    }
+
     /// Verifies that the cached failure expires after the TTL.
     func testCachedFailureExpiresAfterTTL() throws {
         try reinitializeServiceWithTargetHost()
@@ -1285,6 +1348,61 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
         var padded = value.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
         padded.append(String(repeating: "=", count: (4 - padded.count % 4) % 4))
         return Data(base64Encoded: padded)
+    }
+
+    // MARK: - Task registration lifetime
+
+    /// A registration must not outlive its task. Previously registrations were held in a
+    /// dictionary keyed by ObjectIdentifier(task), which is only the task's address: an
+    /// abandoned task left its entry behind, and a later task allocated at the same address
+    /// inherited it (measured: 198 address collisions in 200 create-and-drop cycles), taking
+    /// another request's pinning session, session configuration and completion handler.
+    func testRegistrationDoesNotOutliveAnAbandonedTask() throws {
+        // Create and drop tasks without ever resuming or cancelling them, which is the only
+        // path that leaves a registration behind.
+        for _ in 0..<50 {
+            autoreleasepool {
+                let session = ApproovURLSession(configuration: .default)
+                _ = session.dataTask(with: URLRequest(url: URL(string: targetURLString)!))
+            }
+        }
+
+        // A fresh task must carry its own configuration, not one inherited from a dead task.
+        let marker = "registration-lifetime-marker"
+        let configuration = URLSessionConfiguration.default
+        configuration.httpAdditionalHeaders = ["X-Registration-Marker": marker]
+        let session = ApproovURLSession(configuration: configuration)
+        let task = session.dataTask(with: URLRequest(url: URL(string: targetURLString)!))
+
+        let registered = ApproovURLSession.taskObserver.registeredSessionConfig(for: task)
+        XCTAssertEqual(
+            registered?.httpAdditionalHeaders?["X-Registration-Marker"] as? String,
+            marker,
+            "task inherited a registration from an earlier, abandoned task"
+        )
+        task.cancel()
+    }
+
+    /// Processing a task takes its registration, so nothing is left attached afterwards and
+    /// the observation stops with it.
+    func testRegistrationIsReleasedOnceTheTaskIsProcessed() throws {
+        let session = ApproovURLSession(configuration: .default)
+        let completed = expectation(description: "task completed")
+        let task = session.dataTask(with: URLRequest(url: URL(string: targetURLString)!)) { _, _, _ in
+            completed.fulfill()
+        }
+        XCTAssertNotNil(
+            ApproovURLSession.taskObserver.registeredSessionConfig(for: task),
+            "a task should carry its registration until it is processed"
+        )
+
+        task.resume()
+        wait(for: [completed], timeout: 20.0)
+
+        XCTAssertNil(
+            ApproovURLSession.taskObserver.registeredSessionConfig(for: task),
+            "the registration should be released once the task has been processed"
+        )
     }
 
     private func sha256Base64(_ value: String) -> String {

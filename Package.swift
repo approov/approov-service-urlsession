@@ -4,7 +4,7 @@ import PackageDescription
 // The version main is at — must match the top CHANGELOG entry, in lock-step with the podspec
 // s.version and the runtime user-property string. Bump all three (and add the CHANGELOG entry)
 // in a PR; the "Release Current Main Branch" CI job (release.yml) then tags main at this version.
-let releaseTAG = "3.5.11"
+let releaseTAG = "3.5.12"
 // SDK package version (used for both iOS and watchOS)
 let sdkVersion: Version = "3.5.3"
 let useMiniSDK = ProcessInfo.processInfo.environment["APPROOV_USE_MINI_SDK"] == "1"
