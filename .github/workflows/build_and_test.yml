@@ -39,6 +39,8 @@ jobs:
         uses: actions/checkout@v5
         with:
           path: approov-service-urlsession
+          # full history and tags, for the API breakage check against the latest release
+          fetch-depth: 0
 
       # -----------------------------------------------------------------------
       # 2. Clone core-service-layers-testing as a sibling directory
@@ -124,6 +126,56 @@ jobs:
           swift test --verbose 2>&1 | tee test_output.txt
 
       # -----------------------------------------------------------------------
+      # 5a. Run the tests again under Thread Sanitizer
+      #     The library's shared state is synchronized by hand (see
+      #     ApproovService), so data races are checked at runtime as well as
+      #     by the Swift 6 compiler.
+      # -----------------------------------------------------------------------
+      - name: Test with Thread Sanitizer
+        working-directory: approov-service-urlsession
+        env:
+          TESTING_REPLY_URL: ${{ env.TESTING_REPLY_URL }}
+          TESTING_REPLY_URL_UNPROTECTED: ${{ env.TESTING_REPLY_URL_UNPROTECTED }}
+        run: swift test --sanitize=thread --scratch-path .build-tsan
+
+      # -----------------------------------------------------------------------
+      # 5b. Source compatibility with Swift 5 and Swift 6 apps
+      #     Builds app-style code in both language modes with warnings as
+      #     errors. See CompatibilityTests/README.md.
+      # -----------------------------------------------------------------------
+      - name: Source compatibility (Swift 5 and Swift 6 apps)
+        working-directory: approov-service-urlsession
+        run: swift build --package-path CompatibilityTests
+
+      # -----------------------------------------------------------------------
+      # 5c. Public API breakage check against the latest release tag
+      #     Intentional, reviewed changes are listed in the allowlist.
+      # -----------------------------------------------------------------------
+      - name: API breakage check
+        working-directory: approov-service-urlsession
+        run: |
+          BASELINE=$(git describe --tags --abbrev=0)
+          echo "Comparing the public API with release $BASELINE"
+          swift package diagnose-api-breaking-changes "$BASELINE" \
+            --products ApproovURLSessionPackage \
+            --breakage-allowlist-path .github/api-breakage/allowlist.txt
+
+      # -----------------------------------------------------------------------
+      # 5d. Build for iOS against the real Approov SDK
+      #     Everything above uses the mini-SDK on macOS. Apps use the binary
+      #     Approov SDK, so the library is also built against it for iOS.
+      # -----------------------------------------------------------------------
+      - name: Build for iOS Simulator (Approov SDK)
+        working-directory: approov-service-urlsession
+        env:
+          APPROOV_USE_MINI_SDK: "0"
+        run: |
+          set -o pipefail
+          xcodebuild -scheme ApproovURLSessionPackage \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath .build-ios build | tail -n 20
+
+      # -----------------------------------------------------------------------
       # 6. Print test summary
       #    Parses the Swift test output captured in the previous step.
       # -----------------------------------------------------------------------
@@ -204,9 +256,9 @@ jobs:
   #   - CHANGELOG.md has a top version header (## [x.y.z]);
   #   - that top version is NOT already tagged (forces a new CHANGELOG entry
   #     after each release before more release changes land); and
-  #   - Package.swift releaseTAG, every root .podspec s.version, and the
-  #     approov-service-urlsession/<version> telemetry string each carry that
-  #     same top CHANGELOG version (so main is always ready to tag).
+  #   - Package.swift releaseTAG and the approov-service-urlsession/<version>
+  #     telemetry string each carry that same top CHANGELOG version (so main is
+  #     always ready to tag).
   # Tagging is a SEPARATE, manual step: the "Release Current Main Branch"
   # workflow (release.yml) only verifies and tags main's HEAD — it never pushes
   # a commit to main, so the version is bumped here via PR, not by CI.
@@ -258,19 +310,6 @@ jobs:
             echo "::error::telemetry version ($TEL) must match the top CHANGELOG version ($VERSION)"
             fail=1
           fi
-
-          for p in *.podspec; do
-            [ -e "$p" ] || continue
-            POD=$(grep -m1 -oE "\.version[[:space:]]*=[[:space:]]*\"$SEMVER\"" "$p" | grep -oE "$SEMVER") || true
-            if [ -z "$POD" ]; then
-              echo "::error::$p s.version must be an x.y.z version"
-              grep -nE '\.version[[:space:]]*=' "$p" || true
-              fail=1
-            elif [ "$POD" != "$VERSION" ]; then
-              echo "::error::$p s.version ($POD) must match the top CHANGELOG version ($VERSION)"
-              fail=1
-            fi
-          done
 
           if [ "$fail" -ne 0 ]; then
             echo "::error::Release verification failed."

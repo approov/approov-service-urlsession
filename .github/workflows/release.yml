@@ -10,9 +10,9 @@ name: Release Current Main Branch
 #   2. refuses to proceed if that version is already tagged (i.e. someone forgot
 #      to add a new CHANGELOG entry for this release);
 #   3. verifies main already carries that exact version in lock-step in
-#      Package.swift (releaseTAG), every root .podspec (s.version) and the
-#      approov-service-urlsession/<version> telemetry string — the version is
-#      bumped beforehand via a normal PR, not by CI; and
+#      Package.swift (releaseTAG) and the approov-service-urlsession/<version>
+#      telemetry string — the version is bumped beforehand via a normal PR, not
+#      by CI; and
 #   4. tags main's HEAD with the version and pushes the tag.
 #
 # Because the tag points at main's HEAD, the released commit always belongs to a
@@ -53,20 +53,15 @@ jobs:
             exit 1
           fi
 
-          # main must already carry $VERSION in all three locations (bumped via PR
+          # main must already carry $VERSION in both locations (bumped via PR
           # before releasing). This job only tags — it never pushes to main.
           fail=0
           grep -qE "releaseTAG[[:space:]]*=[[:space:]]*\"$VERSION\"" Package.swift \
             || { echo "::error::Package.swift releaseTAG is not $VERSION"; fail=1; }
           grep -qF "approov-service-urlsession/$VERSION" "$SRC" \
             || { echo "::error::$SRC telemetry is not approov-service-urlsession/$VERSION"; fail=1; }
-          for PODSPEC in *.podspec; do
-            [ -e "$PODSPEC" ] || continue
-            grep -qE "\.version[[:space:]]*=[[:space:]]*\"$VERSION\"" "$PODSPEC" \
-              || { echo "::error::$PODSPEC s.version is not $VERSION"; fail=1; }
-          done
           if [ "$fail" -ne 0 ]; then
-            echo "::error::main is not stamped to $VERSION. Open a PR bumping Package.swift releaseTAG, every *.podspec s.version and the telemetry string to $VERSION (matching the top CHANGELOG entry), merge it, then re-run this release."
+            echo "::error::main is not stamped to $VERSION. Open a PR bumping Package.swift releaseTAG and the telemetry string to $VERSION (matching the top CHANGELOG entry), merge it, then re-run this release."
             exit 1
           fi
 

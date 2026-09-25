@@ -53,7 +53,7 @@ public enum ApproovError: Error, LocalizedError {
 }
 
 // possible results from an Approov request update
-public enum ApproovFetchDecision {
+public enum ApproovFetchDecision: Sendable {
     case ShouldProceed      // Proceed with request
     case ShouldRetry        // User can retry request
     case ShouldFail         // Request should not be made
@@ -61,7 +61,7 @@ public enum ApproovFetchDecision {
 }
 
 // result from adding Approov protection to a request
-public struct ApproovUpdateResponse {
+public struct ApproovUpdateResponse: Sendable {
     public internal(set) var request: URLRequest
     public internal(set) var decision: ApproovFetchDecision
     public internal(set) var sdkMessage: String
@@ -69,7 +69,7 @@ public struct ApproovUpdateResponse {
 }
 
 // Log level for controlling the verbosity of os_log output from the ApproovService
-public enum ApproovLogLevel: Int, Comparable {
+public enum ApproovLogLevel: Int, Comparable, Sendable {
     case off = 0
     case error = 1
     case warning = 2
@@ -85,42 +85,46 @@ public class ApproovService {
     // private initializer
     private init() {}
 
+    // All mutable static state below is marked nonisolated(unsafe) because it is synchronized by hand rather than by
+    // the compiler: every read and write happens inside a sync block on the dispatch queue declared alongside it
+    // (initializerQueue, stateQueue, loggingQueue or failureCacheQueue). Any new access must keep to that rule.
+
     // the dispatch queue to manage serial access to intializer-modified variables
     private static let initializerQueue = DispatchQueue(label: "ApproovService.initializer", qos: .userInitiated)
 
     // configuration string used for initialization
-    private static var configString: String?
+    nonisolated(unsafe) private static var configString: String?
 
     // status of Approov SDK initialization
-    private static var serviceIsInitialized = false
+    nonisolated(unsafe) private static var serviceIsInitialized = false
 
     // the dispatch queue to manage serial access to other ApproovService state
     private static let stateQueue = DispatchQueue(label: "ApproovService.state", qos: .userInitiated)
 
     // if we should proceed on network fail
-    private static var proceedOnNetworkFail = false
+    nonisolated(unsafe) private static var proceedOnNetworkFail = false
 
     // binding header name
-    private static var bindingHeader = ""
+    nonisolated(unsafe) private static var bindingHeader = ""
 
     // Approov token default header
-    private static var approovTokenHeader = "Approov-Token"
+    nonisolated(unsafe) private static var approovTokenHeader = "Approov-Token"
 
     // Approov token custom prefix: any prefix to be added such as "Bearer "
-    private static var approovTokenPrefix = ""
+    nonisolated(unsafe) private static var approovTokenPrefix = ""
 
     // Approov TraceID optional header
-    private static var approovTraceIDHeader: String? = "Approov-TraceID"
+    nonisolated(unsafe) private static var approovTraceIDHeader: String? = "Approov-TraceID"
 
     // The mutator instance used to control ApproovService behavior at key points in the flow.
     // Unless set using the ApproovService.setServiceMutator() method, the default
     // behaviour defined in the default implementation of ApproovServiceMutator will be used.
-    private static var serviceMutator: ApproovServiceMutator = ApproovServiceMutatorDefault.shared
+    nonisolated(unsafe) private static var serviceMutator: ApproovServiceMutator = ApproovServiceMutatorDefault.shared
 
     // dedicated queue for thread-safe access to the logging level (separate from stateQueue to
     // avoid nested sync deadlocks when logging is checked inside stateQueue-protected methods)
     private static let loggingQueue = DispatchQueue(label: "ApproovService.logging", qos: .userInitiated)
-    private static var _loggingLevel: ApproovLogLevel = .info
+    nonisolated(unsafe) private static var _loggingLevel: ApproovLogLevel = .info
 
     // the current logging level for os_log output from the ApproovService
     static var loggingLevel: ApproovLogLevel {
@@ -130,22 +134,22 @@ public class ApproovService {
 
     // map of headers that should have their values substituted for secure strings, mapped to their
     // required prefixes
-    private static var substitutionHeaders: Dictionary<String, String> = Dictionary()
+    nonisolated(unsafe) private static var substitutionHeaders: Dictionary<String, String> = Dictionary()
 
     // set of query parameters that may be substituted, specified by the key name
-    private static var substitutionQueryParams: Set<String> = Set()
+    nonisolated(unsafe) private static var substitutionQueryParams: Set<String> = Set()
 
     // map of URL regexs that should be excluded from any Approov protection, mapped to the compiled Pattern
-    private static var exclusionURLRegexs: Dictionary<String, NSRegularExpression> = Dictionary()
+    nonisolated(unsafe) private static var exclusionURLRegexs: Dictionary<String, NSRegularExpression> = Dictionary()
 
     // Cached failure result from the last Approov token fetch that returned a failure status.
     // Protected by failureCacheQueue for thread-safe access. This avoids redundant ~1s SDK calls
     // when the platform is in a sustained failure state (e.g. no network, MITM detected).
     private static let failureCacheQueue = DispatchQueue(label: "ApproovService.failureCache", qos: .userInitiated)
-    private static var cachedFailureResult: ApproovTokenFetchResult? = nil
-    private static var cachedFailureTime: TimeInterval? = nil
-    private static var failureCacheTTL: TimeInterval = 0.5 // seconds
-    private static var failureCacheMissGroup: DispatchGroup? = nil
+    nonisolated(unsafe) private static var cachedFailureResult: ApproovTokenFetchResult? = nil
+    nonisolated(unsafe) private static var cachedFailureTime: TimeInterval? = nil
+    nonisolated(unsafe) private static var failureCacheTTL: TimeInterval = 0.5 // seconds
+    nonisolated(unsafe) private static var failureCacheMissGroup: DispatchGroup? = nil
 
 
     
@@ -258,9 +262,9 @@ public class ApproovService {
             }
             serviceIsInitialized = true
             if !config.isEmpty {
-                // Must match the top CHANGELOG entry (in lock-step with Package.swift releaseTAG
-                // and the podspec s.version); bump all three in a PR before tagging a release.
-                Approov.setUserProperty("approov-service-urlsession/3.5.13")
+                // Must match the top CHANGELOG entry (in lock-step with Package.swift releaseTAG);
+                // bump both in a PR before tagging a release.
+                Approov.setUserProperty("approov-service-urlsession/3.6.0")
             }
         }
     }
@@ -430,7 +434,7 @@ public class ApproovService {
     }
 
     // Indicates if the Approov fetch status should be used as the token header value if the token is empty
-    private static var useApproovStatusIfNoToken: Bool = false
+    nonisolated(unsafe) private static var useApproovStatusIfNoToken: Bool = false
 
     /**
      * Sets a flag indicating if the Approov fetch status (e.g. "NO_NETWORK", "MITM_DETECTED")

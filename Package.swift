@@ -1,10 +1,9 @@
-// swift-tools-version:5.8
+// swift-tools-version:6.0
 import Foundation
 import PackageDescription
-// The version main is at — must match the top CHANGELOG entry, in lock-step with the podspec
-// s.version and the runtime user-property string. Bump all three (and add the CHANGELOG entry)
-// in a PR; the "Release Current Main Branch" CI job (release.yml) then tags main at this version.
-let releaseTAG = "3.5.13"
+// The version main is at — must match the top CHANGELOG entry, in lock-step with the runtime
+// user-property string. Bump both (and add the CHANGELOG entry) in a PR; the "Release Current Main Branch" CI job (release.yml) then tags main at this version.
+let releaseTAG = "3.6.0"
 // SDK package version (used for both iOS and watchOS)
 let sdkVersion: Version = "3.5.3"
 let useMiniSDK = ProcessInfo.processInfo.environment["APPROOV_USE_MINI_SDK"] == "1"
@@ -38,7 +37,11 @@ var packageTargets: [Target] = [
             .product(name: "RawStructuredFieldValues", package: "swift-http-structured-headers")
         ],
         path: "Sources/ApproovURLSession",
-        exclude: ["README.md", "LICENSE", "util/sig/LICENSE"]
+        exclude: ["README.md", "LICENSE", "util/sig/LICENSE"],
+        // The library is compiled in the Swift 6 language mode with complete data-race checking. This is
+        // independent of the language mode of the app that depends on it: Swift 5 and Swift 6 apps are both
+        // supported.
+        swiftSettings: [.swiftLanguageMode(.v6)]
     )
 ]
 
@@ -51,7 +54,10 @@ if useMiniSDK {
                 .product(name: "Approov", package: "mini-sdk-ios"),
                 .product(name: "MiniSDKTestSupport", package: "mini-sdk-ios")
             ],
-            path: "Tests/ApproovURLSessionMiniSDKTests"
+            path: "Tests/ApproovURLSessionMiniSDKTests",
+            // The tests are written like existing app code, in the Swift 5 language mode, so they also check that the
+            // Swift 6 library remains source compatible with Swift 5 apps.
+            swiftSettings: [.swiftLanguageMode(.v5)]
         )
     )
 }

@@ -4,6 +4,26 @@ All notable changes to this package will be documented in this file.
 
 The format is based on Keep a Changelog and this project adheres to Semantic Versioning.
 
+## [3.6.0] - 2026-09-25
+
+### Added
+- Swift 6 support. The package compiles in the Swift 6 language mode with complete data-race checking, and apps can use it from either the Swift 5 or the Swift 6 language mode. No existing API is removed or renamed, and apps in the Swift 5 language mode need no source changes and get no new warnings.
+- `ApproovUpdateResponse`, `ApproovFetchDecision`, `ApproovLogLevel` and `ApproovServiceMutatorDefault` conform to `Sendable`, and `ApproovURLSession` and `ApproovSessionTaskObserver` restate the `Sendable` conformance of their base classes. Swift 6 apps can pass these values between actors and tasks, for example returning the result of `updateRequestWithApproov` from a detached task, which previously failed to compile.
+- CI gates for Swift 6 support: the tests also run under Thread Sanitizer, app-style fixtures in the Swift 5 and Swift 6 language modes must compile without warnings (`CompatibilityTests`), the public API is checked for breaking changes against the latest release, and the package is built for iOS against the Approov SDK.
+
+### Fixed
+- The completion handlers of the `ApproovURLSession` task methods (`dataTask`, `uploadTask`, `downloadTask`, `getAllTasks`, `getTasksWithCompletionHandler`, `flush` and `reset`) are now `@Sendable`, matching `URLSession`. Previously, in a Swift 6 app, a completion handler written inside a `@MainActor` type was treated as main-actor code although `URLSession` runs it on its delegate queue; the Swift runtime reports this as a data race. The methods are marked `@preconcurrency`, like the `URLSession` methods they override, so Swift 5 apps see no change.
+
+### Changed
+- Minimum toolchain: Xcode 16 (Swift 6.0), up from Xcode 14.3 (Swift 5.8). The App Store already requires Xcode 16 or later. Deployment targets are unchanged.
+- The SPKI header table used by dynamic pinning is now an immutable, lazily initialised constant rather than a dictionary populated on first use under a dedicated queue.
+
+### Removed
+- CocoaPods support. The podspecs (`ApproovURLSession.podspec` and the versioned copies under `ApproovURLSession/`) are removed, and the Swift Package Manager is the only supported way to add the package. CocoaPods is being deprecated: its trunk is becoming read-only. Apps that use CocoaPods keep working, because CocoaPods reads the podspec at the git tag they pin, so versions up to 3.5.13 stay available. To get this and later versions, move the dependency to the Swift Package Manager.
+
+### Note for Swift 6 apps
+- A completion handler passed to an `ApproovURLSession` task method is no longer isolated to the enclosing actor, exactly as with `URLSession`. Code that updated main-actor state directly from such a handler, which was already a data race at runtime, now fails to compile and must hop back explicitly, for example with `Task { @MainActor in ... }` or `DispatchQueue.main.async`.
+
 ## [3.5.13] - 2026-09-25
 
 ### Fixed

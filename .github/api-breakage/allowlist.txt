@@ -1,0 +1,9 @@
+API breakage: func ApproovURLSession.dataTask(with:completionHandler:) is now with @preconcurrency
+API breakage: func ApproovURLSession.downloadTask(with:completionHandler:) is now with @preconcurrency
+API breakage: func ApproovURLSession.downloadTask(withResumeData:completionHandler:) is now with @preconcurrency
+API breakage: func ApproovURLSession.uploadTask(with:from:completionHandler:) is now with @preconcurrency
+API breakage: func ApproovURLSession.uploadTask(with:fromFile:completionHandler:) is now with @preconcurrency
+API breakage: func ApproovURLSession.flush(completionHandler:) is now with @preconcurrency
+API breakage: func ApproovURLSession.getTasksWithCompletionHandler(_:) is now with @preconcurrency
+API breakage: func ApproovURLSession.getAllTasks(completionHandler:) is now with @preconcurrency
+API breakage: func ApproovURLSession.reset(completionHandler:) is now with @preconcurrency

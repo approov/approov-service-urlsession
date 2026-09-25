@@ -59,11 +59,11 @@ final class PinningTaskDelegate: NSObject, URLSessionTaskDelegate {
         return taskDelegate.responds(to: aSelector) ? taskDelegate : nil
     }
 
-    func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+    func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
         pinningDelegate.urlSession(session, didReceive: challenge, completionHandler: completionHandler)
     }
 
-    func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+    func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
         pinningDelegate.urlSession(session, task: task, didReceive: challenge, completionHandler: completionHandler)
     }
 }

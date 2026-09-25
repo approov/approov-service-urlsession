@@ -19,11 +19,12 @@ import Approov
 import CommonCrypto
 import os.log
 
-// Delegate class implementing all available URLSessionDelegate types and implementing Approov dynamic pinning
-class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDelegate, URLSessionDataDelegate, URLSessionDownloadDelegate {
+// Delegate class implementing all available URLSessionDelegate types and implementing Approov dynamic pinning.
+// URLSessionDelegate is Sendable, so this class is too: it is final and all of its stored state is immutable.
+final class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDelegate, URLSessionDataDelegate, URLSessionDownloadDelegate {
     
     // any optional further delegate provided
-    var optionalURLDelegate: URLSessionDelegate?
+    let optionalURLDelegate: URLSessionDelegate?
     
     // constants to provide the SPKI headers for the public key hashes
     struct Constants {
@@ -49,42 +50,26 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
         ]
     }
     
-    // the PKI queue to manage serial access to the PKI initialization
-    private static let pkiQueue = DispatchQueue(label: "ApproovService.pki", qos: .userInitiated)
-    
-    // SPKI headers for both RSA and ECC
-    private static var spkiHeaders = [String:[Int:Data]]()
-    
-    // Indicates if the SPKI headers have been initialized
-    private static var isInitialized = false
-    
-    /**
-     * Initialize the SPKI dictionary.
-     */
-    private static func initializeSPKI() {
-        pkiQueue.sync {
-            if !isInitialized {
-                var rsaDict = [Int:Data]()
-                rsaDict[2048] = Data(Constants.rsa2048SPKIHeader)
-                rsaDict[3072] = Data(Constants.rsa3072SPKIHeader)
-                rsaDict[4096] = Data(Constants.rsa4096SPKIHeader)
-                var eccDict = [Int:Data]()
-                eccDict[256] = Data(Constants.ecdsaSecp256r1SPKIHeader)
-                eccDict[384] = Data(Constants.ecdsaSecp384r1SPKIHeader)
-                spkiHeaders[kSecAttrKeyTypeRSA as String] = rsaDict
-                spkiHeaders[kSecAttrKeyTypeECSECPrimeRandom as String] = eccDict
-                isInitialized = true
-            }
-        }
-    }
-    
+    // SPKI headers for both RSA and ECC, keyed by key type and then key size. A static let is initialized lazily
+    // and exactly once, in a thread-safe way, and is immutable thereafter.
+    private static let spkiHeaders: [String: [Int: Data]] = [
+        kSecAttrKeyTypeRSA as String: [
+            2048: Data(Constants.rsa2048SPKIHeader),
+            3072: Data(Constants.rsa3072SPKIHeader),
+            4096: Data(Constants.rsa4096SPKIHeader),
+        ],
+        kSecAttrKeyTypeECSECPrimeRandom as String: [
+            256: Data(Constants.ecdsaSecp256r1SPKIHeader),
+            384: Data(Constants.ecdsaSecp384r1SPKIHeader),
+        ],
+    ]
+
     /**
      * Initialize the delegate, providing it another optional user provided delegate.
      *
      * @param delegate is the optional user delegate
      */
     init(with delegate: URLSessionDelegate?) {
-        PinningURLSessionDelegate.initializeSPKI()
         self.optionalURLDelegate = delegate
     }
 
@@ -124,7 +109,7 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
      *  Requests credentials from the delegate in response to a session-level authentication request from the remote server
      *  https://developer.apple.com/documentation/foundation/urlsessiondelegate/1409308-urlsession
      */
-    func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+    func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
         if !challenge.protectionSpace.authenticationMethod.isEqual(NSURLAuthenticationMethodServerTrust) {
             if let userDelegate = optionalURLDelegate,
                userDelegate.responds(to: #selector(URLSessionDelegate.urlSession(_:didReceive:completionHandler:))) {
@@ -199,7 +184,7 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
      *  Requests credentials from the delegate in response to an authentication request from the remote server
      *  https://developer.apple.com/documentation/foundation/urlsessiontaskdelegate/1411595-urlsession
      */
-    func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+    func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
         if !challenge.protectionSpace.authenticationMethod.isEqual(NSURLAuthenticationMethodServerTrust) {
             if let taskDelegate = optionalURLDelegate as? URLSessionTaskDelegate,
                taskDelegate.responds(to: #selector(URLSessionTaskDelegate.urlSession(_:task:didReceive:completionHandler:))) {
@@ -275,7 +260,7 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
      *  Tells the delegate that the remote server requested an HTTP redirect
      *  https://developer.apple.com/documentation/foundation/urlsessiontaskdelegate/1411626-urlsession
      */
-    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping @Sendable (URLRequest?) -> Void) {
         if let delegate = optionalURLDelegate as? URLSessionTaskDelegate {
             delegate.urlSession?(session, task: task, willPerformHTTPRedirection: response, newRequest: request, completionHandler: completionHandler)
         } else {
@@ -287,7 +272,7 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
      *  Tells the delegate when a task requires a new request body stream to send to the remote server
      *  https://developer.apple.com/documentation/foundation/urlsessiontaskdelegate/1410001-urlsession
      */
-    func urlSession(_ session: URLSession, task: URLSessionTask, needNewBodyStream completionHandler: @escaping (InputStream?) -> Void) {
+    func urlSession(_ session: URLSession, task: URLSessionTask, needNewBodyStream completionHandler: @escaping @Sendable (InputStream?) -> Void) {
         if let delegate = optionalURLDelegate as? URLSessionTaskDelegate {
             delegate.urlSession?(session, task: task, needNewBodyStream: completionHandler)
         }
@@ -308,7 +293,7 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
      *  https://developer.apple.com/documentation/foundation/urlsessiontaskdelegate/2873415-urlsession
      */
     @available(iOS 11.0, *)
-    func urlSession(_ session: URLSession, task: URLSessionTask, willBeginDelayedRequest request: URLRequest, completionHandler: @escaping (URLSession.DelayedRequestDisposition, URLRequest?) -> Void) {
+    func urlSession(_ session: URLSession, task: URLSessionTask, willBeginDelayedRequest request: URLRequest, completionHandler: @escaping @Sendable (URLSession.DelayedRequestDisposition, URLRequest?) -> Void) {
         if let delegate = optionalURLDelegate as? URLSessionTaskDelegate {
             delegate.urlSession?(session, task:task, willBeginDelayedRequest: request, completionHandler: completionHandler)
         } else {
@@ -383,7 +368,7 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
      *  Tells the delegate that the data task received the initial reply (headers) from the server
      *  https://developer.apple.com/documentation/foundation/urlsessiondatadelegate/1410027-urlsession
      */
-    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse, completionHandler: @escaping (URLSession.ResponseDisposition) -> Void)
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse, completionHandler: @escaping @Sendable (URLSession.ResponseDisposition) -> Void)
     {
         if let delegate = optionalURLDelegate as? URLSessionDataDelegate {
             delegate.urlSession?(session, dataTask: dataTask, didReceive: response, completionHandler: completionHandler)
@@ -426,7 +411,7 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
      *  Asks the delegate whether the data (or upload) task should store the response in the cache
      *  https://developer.apple.com/documentation/foundation/urlsessiondatadelegate/1411612-urlsession
      */
-    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, willCacheResponse proposedResponse: CachedURLResponse, completionHandler: @escaping (CachedURLResponse?) -> Void) {
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, willCacheResponse proposedResponse: CachedURLResponse, completionHandler: @escaping @Sendable (CachedURLResponse?) -> Void) {
         if let delegate = optionalURLDelegate as? URLSessionDataDelegate {
             delegate.urlSession?(session, dataTask: dataTask, willCacheResponse: proposedResponse, completionHandler: completionHandler)
         } else {
