@@ -47,7 +47,7 @@ var packageTargets: [Target] = [
 ]
 
 if useMiniSDK {
-    packageTargets.append(
+    packageTargets.append(contentsOf: [
         .testTarget(
             name: "ApproovURLSessionMiniSDKTests",
             dependencies: [
@@ -59,8 +59,16 @@ if useMiniSDK {
             // The tests are written like existing app code, in the Swift 5 language mode, so they also check that the
             // Swift 6 library remains source compatible with Swift 5 apps.
             swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .testTarget(
+            name: "ApproovURLSessionSwift6Tests",
+            dependencies: ["ApproovURLSessionPackage"],
+            path: "Tests/ApproovURLSessionSwift6Tests",
+            // Runtime checks of how Swift 6 apps see the service layer. Run with
+            // SWIFT_UNEXPECTED_EXECUTOR_LOG_LEVEL=2 so that an actor isolation violation traps instead of logging.
+            swiftSettings: [.swiftLanguageMode(.v6)]
         )
-    )
+    ])
 }
 
 let package = Package(

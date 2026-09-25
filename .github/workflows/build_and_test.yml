@@ -24,6 +24,9 @@ jobs:
       # Required for the redeploy script invocation on failure
       CLOUDFLARE_API_TOKEN_WORKERS_DEV: ${{ secrets.CLOUDFLARE_API_TOKEN_WORKERS_DEV }}
       CLOUDFLARE_ACCOUNT_ID_WORKERS_DEV: ${{ secrets.CLOUDFLARE_ACCOUNT_ID_WORKERS_DEV }}
+      # Make the Swift runtime trap, rather than log, when code isolated to an actor runs off it
+      # (see Tests/ApproovURLSessionSwift6Tests)
+      SWIFT_UNEXPECTED_EXECUTOR_LOG_LEVEL: "2"
       # iOS Mini-SDK configuration for Package.swift
       APPROOV_USE_MINI_SDK: "1"
       APPROOV_MINI_SDK_PATH: "../core-service-layers-testing/mini-sdk/ios"
@@ -136,6 +139,8 @@ jobs:
         env:
           TESTING_REPLY_URL: ${{ env.TESTING_REPLY_URL }}
           TESTING_REPLY_URL_UNPROTECTED: ${{ env.TESTING_REPLY_URL_UNPROTECTED }}
+          # races inside the mini-SDK test double only; see the file
+          TSAN_OPTIONS: suppressions=${{ github.workspace }}/approov-service-urlsession/.github/tsan-suppressions.txt
         run: swift test --sanitize=thread --scratch-path .build-tsan
 
       # -----------------------------------------------------------------------
@@ -153,6 +158,9 @@ jobs:
       # -----------------------------------------------------------------------
       - name: API breakage check
         working-directory: approov-service-urlsession
+        env:
+          # The baseline is checked out under .build, so the mini-SDK path must be absolute
+          APPROOV_MINI_SDK_PATH: ${{ github.workspace }}/core-service-layers-testing/mini-sdk/ios
         run: |
           BASELINE=$(git describe --tags --abbrev=0)
           echo "Comparing the public API with release $BASELINE"
@@ -248,6 +256,49 @@ jobs:
 
           sys.exit(0 if overall_ok else 1)
           EOF
+
+  # ---------------------------------------------------------------------------
+  # Minimum toolchain (Xcode 16).
+  #
+  # The package declares swift-tools-version 6.0, so apps may build it with
+  # Xcode 16, while build-and-test uses the runner's default, newer Xcode. This
+  # job builds the library and the compatibility fixtures with the oldest
+  # Xcode 16 on the runner image, for iOS against the Approov SDK. It needs no
+  # mini-SDK or reply workers.
+  # ---------------------------------------------------------------------------
+  build-minimum-toolchain:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v5
+
+      - name: Select the oldest Xcode 16
+        run: |
+          XCODE=$(ls -d /Applications/Xcode_16*.app | sort -V | head -n 1)
+          if [ -z "$XCODE" ]; then
+            echo "::error::No Xcode 16 found on the runner image"
+            exit 1
+          fi
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
+          swift --version
+
+      - name: Build for iOS Simulator (Approov SDK)
+        run: |
+          set -o pipefail
+          xcodebuild -scheme ApproovURLSessionPackage \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath .build-ios build | tail -n 20
+
+      - name: Source compatibility fixtures for iOS (Approov SDK)
+        working-directory: CompatibilityTests
+        run: |
+          set -o pipefail
+          # the -Package scheme builds both fixture targets
+          xcodebuild -scheme ApproovURLSessionCompatibilityTests-Package \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath ../.build-ios-compat build | tail -n 20
 
   # ---------------------------------------------------------------------------
   # Release readiness check (verification ONLY — never tags).

@@ -465,7 +465,7 @@ public class ApproovURLSession: URLSession, @unchecked Sendable {
     @available(iOS 15.0, *)
     public func downloadWithApproov(for request: URLRequest, delegate: URLSessionTaskDelegate? = nil) async throws -> (URL, URLResponse) {
         return try await performWithApproov(delegate: delegate) { session, completionHandler in
-            session.downloadTask(with: request, completionHandler: completionHandler)
+            session.downloadTask(with: request, completionHandler: ApproovURLSession.keepingDownloadedFile(completionHandler))
         }
     }
 
@@ -478,7 +478,32 @@ public class ApproovURLSession: URLSession, @unchecked Sendable {
     @available(iOS 15.0, *)
     public func downloadWithApproov(from url: URL, delegate: URLSessionTaskDelegate? = nil) async throws -> (URL, URLResponse) {
         return try await performWithApproov(delegate: delegate) { session, completionHandler in
-            session.downloadTask(with: url, completionHandler: completionHandler)
+            session.downloadTask(with: url, completionHandler: ApproovURLSession.keepingDownloadedFile(completionHandler))
+        }
+    }
+
+    /**
+     * URLSession deletes the file it passes to a download task's completion handler as soon as the handler returns, but
+     * the async download methods return to their caller after that. Like URLSession.download(for:), they must hand the file
+     * to the caller, so the file is first moved to a new location in the temporary directory. The caller owns the file and
+     * must move or delete it.
+     */
+    private static func keepingDownloadedFile(
+        _ completionHandler: @escaping @Sendable (URL?, URLResponse?, Error?) -> Void
+    ) -> @Sendable (URL?, URLResponse?, Error?) -> Void {
+        return { location, response, error in
+            guard let location = location, error == nil else {
+                completionHandler(location, response, error)
+                return
+            }
+            let destination = FileManager.default.temporaryDirectory
+                .appendingPathComponent("ApproovDownload_\(UUID().uuidString).tmp")
+            do {
+                try FileManager.default.moveItem(at: location, to: destination)
+                completionHandler(destination, response, nil)
+            } catch {
+                completionHandler(nil, response, error)
+            }
         }
     }
 }
