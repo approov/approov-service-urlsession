@@ -13,6 +13,8 @@ Once you click `Add Package` the last step will confirm the package product and 
 
 Alternatively, use `cocoapods` and add the package dependencies similar to how they are used in the example [`shapes-app/Podfile`](https://github.com/approov/quickstart-ios-swift-urlsession/blob/master/shapes-app/Podfile) in the [Quickstart](https://github.com/approov/quickstart-ios-swift-urlsession) repository.
 
+The package requires Xcode 16 or later and supports apps written in either the Swift 5 or the Swift 6 language mode. In Swift 6, the completion handlers of the `ApproovURLSession` task methods are `@Sendable`, as they are on `URLSession`, so they do not run on the actor they were written in; hop back explicitly, for example with `Task { @MainActor in ... }`, to update actor state.
+
 ## USING APPROOV SERVICE
 The `ApproovURLSession` class mimics the interface of the `URLSession` class provided by Apple but includes an additional Approov attestation calls. The simplest way to use the `ApproovURLSession` class is to find and replace all the `URLSession` construction calls with `ApproovURLSession`. 
 

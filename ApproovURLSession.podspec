@@ -3,7 +3,7 @@ Pod::Spec.new do |s|
   # The version main is at — must match the top CHANGELOG entry, in lock-step with Package.swift
   # releaseTAG and the runtime user-property string. Bump all three in a PR; the "Release Current
   # Main Branch" CI job then tags main at this version.
-  s.version      = "3.5.13"
+  s.version      = "3.6.0"
   s.summary      = "Approov mobile attestation SDK"
   s.description  = <<-DESC
     Approov SDK integrates security attestation and secure string fetching for both iOS and watchOS apps.
@@ -17,6 +17,10 @@ Pod::Spec.new do |s|
   # Supported platforms
   s.ios.deployment_target = '11.0'
   s.watchos.deployment_target = '9.0'
+
+  # Swift language modes the sources compile in. Without this, CocoaPods compiles the pod in the language mode of the
+  # app target, so a Swift 6 app built it in Swift 6 mode. The sources compile in both modes (Xcode 16 or later).
+  s.swift_versions = ['5.0', '6.0']
 
   # Specify the source code paths for the combined target
   s.source_files = "Sources/ApproovURLSession/**/*.{swift,h}"

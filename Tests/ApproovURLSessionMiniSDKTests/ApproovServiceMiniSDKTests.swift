@@ -1534,6 +1534,111 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
 
     /// The inherited URLSession properties must describe the session the caller created,
     /// not the uninitialised URLSession base.
+    // MARK: - Shared state under concurrency
+
+    /// The mutable static state of ApproovService and the pinning delegate is synchronized by hand (nonisolated(unsafe)
+    /// guarded by dispatch queues), so the compiler cannot check it. This test hammers every configuration setter and getter
+    /// from many threads while requests are being updated and sent, so that Thread Sanitizer (swift test --sanitize=thread)
+    /// reports any access that is not guarded. Without the sanitizer it still checks that nothing crashes or deadlocks.
+    func testConfigurationAndRequestsAreSafeUnderConcurrentAccess() throws {
+        try reinitializeServiceWithTargetHost()
+        let url = try XCTUnwrap(URL(string: targetURLString))
+        let iterations = 200
+
+        // requests sent through the pinned sessions while the configuration changes underneath them
+        let sessions = (0..<4).map { _ in ApproovURLSession(configuration: .ephemeral) }
+        defer { sessions.forEach { $0.invalidateAndCancel() } }
+        let responses = (0..<16).map { expectation(description: "response \($0)") }
+        for (index, response) in responses.enumerated() {
+            sessions[index % sessions.count].dataTask(with: url) { _, _, _ in
+                // the outcome depends on the configuration at the time; only completion matters here
+                response.fulfill()
+            }.resume()
+        }
+
+        DispatchQueue.concurrentPerform(iterations: 8) { worker in
+            for i in 0..<iterations {
+                let header = "X-Stress-\(worker)-\(i % 4)"
+                switch (worker + i) % 8 {
+                case 0:
+                    ApproovService.addSubstitutionHeader(header: header, prefix: nil)
+                    ApproovService.removeSubstitutionHeader(header: header)
+                    _ = ApproovService.getSubstitutionHeaders()
+                case 1:
+                    ApproovService.addSubstitutionQueryParam(key: header)
+                    ApproovService.removeSubstitutionQueryParam(key: header)
+                    _ = ApproovService.getSubstitutionQueryParams()
+                case 2:
+                    ApproovService.addExclusionURLRegex(urlRegex: "^https://stress-\(worker)\\.example/.*")
+                    ApproovService.removeExclusionURLRegex(urlRegex: "^https://stress-\(worker)\\.example/.*")
+                    _ = ApproovService.getExclusionURLRegexs()
+                case 3:
+                    ApproovService.setApproovHeader(header: "Approov-Token", prefix: i % 2 == 0 ? "" : "Bearer ")
+                    ApproovService.setApproovTraceIDHeader(header: i % 2 == 0 ? "Approov-TraceID" : nil)
+                    _ = ApproovService.getApproovTokenHeader()
+                    _ = ApproovService.getApproovTraceIDHeader()
+                case 4:
+                    ApproovService.setBindingHeader(header: i % 2 == 0 ? "" : "Authorization")
+                    ApproovService.setUseApproovStatusIfNoToken(shouldUse: i % 2 == 0)
+                    ApproovService.setLoggingLevel(i % 2 == 0 ? .off : .error)
+                case 5:
+                    ApproovService.setServiceMutator(i % 2 == 0 ? nil : ApproovServiceMutatorDefault.shared)
+                    _ = ApproovService.getServiceMutator()
+                    ApproovService.setFailureCacheTTL(ttl: 0.5)
+                case 6:
+                    _ = ApproovService.isInitialized()
+                    _ = ApproovService.isApproovEnabled()
+                    _ = ApproovService.getProceedOnNetworkFailure()
+                    ApproovSessionTaskObserver.enableLogging = false
+                default:
+                    var request = URLRequest(url: url)
+                    request.setValue("value", forHTTPHeaderField: header)
+                    _ = ApproovService.updateRequestWithApproov(request: request, sessionConfig: nil)
+                }
+            }
+        }
+
+        wait(for: responses, timeout: 60)
+        ApproovService.setLoggingLevel(.off)
+    }
+
+    /// URLSession deletes a download task's temporary file as soon as the task's completion handler returns, while
+    /// URLSession.download(for:) hands the file to the caller, who must move or delete it. The async download methods
+    /// must do the same: the file must still exist after they return, however long the caller takes to read it.
+    func testAsyncDownloadMethodsHandTheFileToTheCaller() async throws {
+        try reinitializeServiceWithTargetHost()
+        let session = ApproovURLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        let url = try XCTUnwrap(URL(string: targetURLString))
+
+        let downloads: [(String, () async throws -> URL)] = [
+            ("URLSession.download(for:) (control)", {
+                try await URLSession.shared.download(for: URLRequest(url: url)).0
+            }),
+            ("downloadWithApproov(for:)", {
+                try await session.downloadWithApproov(for: URLRequest(url: url)).0
+            }),
+            ("downloadWithApproov(from:)", {
+                try await session.downloadWithApproov(from: url).0
+            }),
+            ("downloadWithApproov(for:delegate:)", {
+                try await session.downloadWithApproov(for: URLRequest(url: url), delegate: EmptyTaskDelegate()).0
+            }),
+            ("downloadWithApproov(from:delegate:)", {
+                try await session.downloadWithApproov(from: url, delegate: EmptyTaskDelegate()).0
+            }),
+        ]
+        for (name, download) in downloads {
+            let fileURL = try await download()
+            defer { try? FileManager.default.removeItem(at: fileURL) }
+            // give URLSession ample time to clean up anything it still owns
+            try await Task.sleep(nanoseconds: 300_000_000)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: fileURL.path), "\(name): the downloaded file was deleted")
+            let body = try Data(contentsOf: fileURL)
+            XCTAssertFalse(body.isEmpty, "\(name): the downloaded file is empty")
+        }
+    }
+
     func testSessionReportsTheConfigurationAndQueueItWasCreatedWith() {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 7

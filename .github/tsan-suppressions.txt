@@ -1,0 +1,7 @@
+# ThreadSanitizer suppressions for the test run.
+#
+# The mini-SDK test double (core-service-layers-testing, mini-sdk/ios/Sources/Approov/Approov.m) keeps its state in
+# nonatomic properties of MPState that it writes from every thread calling Approov.fetchTokenAndWait, so concurrent
+# token fetches race inside the test double itself. This does not involve the service layer, and the production
+# Approov SDK is not used by the tests. Remove this once the mini-SDK synchronizes MPState.
+race:MPState
