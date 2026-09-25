@@ -56,17 +56,34 @@ public class ApproovURLSession: URLSession {
         self.init(configuration: configuration, delegate: nil, delegateQueue: nil)
     }
 
+    /**
+     *  A copy of the configuration object for this session. The URLSession base class is never initialized (see
+     *  init(configuration:delegate:delegateQueue:)), so its own value is not the configuration supplied by the caller.
+     *  https://developer.apple.com/documentation/foundation/urlsession/1411477-configuration
+     */
+    public override var configuration: URLSessionConfiguration {
+        return self.pinnedURLSession.configuration
+    }
+
+    /**
+     *  The operation queue provided when this session was created, or the one created for it. The URLSession base
+     *  class is never initialized, so its own value is not the queue supplied by the caller.
+     *  https://developer.apple.com/documentation/foundation/urlsession/1411571-delegatequeue
+     */
+    public override var delegateQueue: OperationQueue {
+        return self.pinnedURLSession.delegateQueue
+    }
+
     /// Registers all task-specific Approov state as one record. The observer
     /// keys this by task object identity because taskIdentifier is only unique
     /// within a single URLSession.
     private func observe(
         _ task: URLSessionTask,
-        in pinningSession: URLSession? = nil,
         completionHandler: ApproovTaskCompletionHandling? = nil
     ) {
         ApproovURLSession.taskObserver.observe(
             task: task,
-            pinningSession: pinningSession ?? pinnedURLSession,
+            pinningSession: pinnedURLSession,
             sessionConfig: urlSessionConfiguration,
             completionHandler: completionHandler
         )
@@ -353,182 +370,114 @@ public class ApproovURLSession: URLSession {
     }
     
     /**
+     * Runs a task created on the pinned session and returns its result, for the async convenience methods below.
+     * A delegate supplied by the caller is attached to the task alone, as URLSession does for its own async methods:
+     * the request still uses this session's configuration and connections, callbacks the delegate does not
+     * implement are delivered to the session delegate, and the task releases the delegate when it completes.
+     * Authentication challenges are still subject to Approov pinning, see PinningTaskDelegate.
+     */
+    @available(iOS 15.0, *)
+    private func performWithApproov<Value>(
+        delegate: URLSessionTaskDelegate?,
+        makeTask: (URLSession, @escaping @Sendable (Value?, URLResponse?, Error?) -> Void) -> URLSessionTask
+    ) async throws -> (Value, URLResponse) {
+        return try await withCheckedThrowingContinuation { continuation in
+            let completionGate = ApproovTaskCompletionGate<Value> { value, response, error in
+                if let error = error {
+                    continuation.resume(throwing: error)
+                } else if let value = value, let response = response {
+                    continuation.resume(returning: (value, response))
+                } else {
+                    continuation.resume(throwing: URLError(.badServerResponse))
+                }
+            }
+            let task = makeTask(self.pinnedURLSession) { value, response, error in
+                completionGate.complete(value: value, response: response, error: error)
+            }
+            // the task delegate must be set before the task is first resumed
+            if let delegate = delegate {
+                task.delegate = PinningTaskDelegate(wrapping: delegate)
+            }
+            observe(task, completionHandler: completionGate)
+            task.resume()
+        }
+    }
+
+    /**
      * Implementation of "data(for request: URLRequest, delegate: URLSessionTaskDelegate? = nil) async throws -> (Data, URLResponse)" that is defined
      * in an extension of URLSession and therefore cannot be overridden. The URLSession version cannot be used directly because it is not possible to
-     * fully initialize the base URLSession class instance.  Note that if a delegate is provided then this will override any delegate supplied during the
-     * construction of the URLSession.
+     * fully initialize the base URLSession class instance. If a delegate is provided then it receives the callbacks for this task that it implements,
+     * and the delegate supplied during the construction of the URLSession receives the rest.
      */
     @available(iOS 15.0, *)
     public func dataWithApproov(for request: URLRequest, delegate: URLSessionTaskDelegate? = nil) async throws -> (Data, URLResponse) {
-        return try await withCheckedThrowingContinuation { continuation in
-            let completionHandler = { @Sendable (data: Data?, response: URLResponse?, error: Error?) in
-                if let error = error {
-                    continuation.resume(throwing: error)
-                } else {
-                    continuation.resume(returning: (data!, response!))
-                }
-            }
-            var urlSession = self.pinnedURLSession
-            if delegate != nil {
-                let sessionDelegate = PinningURLSessionDelegate(with: delegate)
-                urlSession = URLSession(configuration: configuration, delegate: sessionDelegate, delegateQueue: delegateQueue)
-            }
-            let completionGate = ApproovTaskCompletionGate<Data>(handler: completionHandler)
-            let task = urlSession.dataTask(with: request) { data, response, error in
-                completionGate.complete(value: data, response: response, error: error)
-            }
-            observe(task, in: urlSession, completionHandler: completionGate)
-            task.resume()
+        return try await performWithApproov(delegate: delegate) { session, completionHandler in
+            session.dataTask(with: request, completionHandler: completionHandler)
         }
     }
-    
+
     /**
      * Implementation of "data(from url: URL, delegate: URLSessionTaskDelegate? = nil) async throws -> (Data, URLResponse)" that is defined
      * in an extension of URLSession and therefore cannot be overridden. The URLSession version cannot be used directly because it is not possible to
-     * fully initialize the base URLSession class instance.  Note that if a delegate is provided then this will override any delegate supplied during the
-     * construction of the URLSession.
+     * fully initialize the base URLSession class instance. If a delegate is provided then it receives the callbacks for this task that it implements,
+     * and the delegate supplied during the construction of the URLSession receives the rest.
      */
     @available(iOS 15.0, *)
     public func dataWithApproov(from url: URL, delegate: URLSessionTaskDelegate? = nil) async throws -> (Data, URLResponse) {
-        return try await withCheckedThrowingContinuation { continuation in
-            let completionHandler = { @Sendable (data: Data?, response: URLResponse?, error: Error?) in
-                if let error = error {
-                    continuation.resume(throwing: error)
-                } else {
-                    continuation.resume(returning: (data!, response!))
-                }
-            }
-            var urlSession = self.pinnedURLSession
-            if delegate != nil {
-                let sessionDelegate = PinningURLSessionDelegate(with: delegate)
-                urlSession = URLSession(configuration: configuration, delegate: sessionDelegate, delegateQueue: delegateQueue)
-            }
-            let completionGate = ApproovTaskCompletionGate<Data>(handler: completionHandler)
-            let task = urlSession.dataTask(with: url) { data, response, error in
-                completionGate.complete(value: data, response: response, error: error)
-            }
-            observe(task, in: urlSession, completionHandler: completionGate)
-            task.resume()
+        return try await performWithApproov(delegate: delegate) { session, completionHandler in
+            session.dataTask(with: url, completionHandler: completionHandler)
         }
     }
-    
+
     /**
      * Implementation of "upload(for request: URLRequest, fromFile fileURL: URL, delegate: URLSessionTaskDelegate? = nil) async throws -> (Data, URLResponse)" that is defined
      * in an extension of URLSession and therefore cannot be overridden. The URLSession version cannot be used directly because it is not possible to
-     * fully initialize the base URLSession class instance.  Note that if a delegate is provided then this will override any delegate supplied during the
-     * construction of the URLSession.
+     * fully initialize the base URLSession class instance. If a delegate is provided then it receives the callbacks for this task that it implements,
+     * and the delegate supplied during the construction of the URLSession receives the rest.
      */
     @available(iOS 15.0, *)
     public func uploadWithApproov(for request: URLRequest, fromFile fileURL: URL, delegate: URLSessionTaskDelegate? = nil) async throws -> (Data, URLResponse) {
-        return try await withCheckedThrowingContinuation { continuation in
-            let completionHandler = { @Sendable (data: Data?, response: URLResponse?, error: Error?) in
-                if let error = error {
-                    continuation.resume(throwing: error)
-                } else {
-                    continuation.resume(returning: (data!, response!))
-                }
-            }
-            var urlSession = self.pinnedURLSession
-            if delegate != nil {
-                let sessionDelegate = PinningURLSessionDelegate(with: delegate)
-                urlSession = URLSession(configuration: configuration, delegate: sessionDelegate, delegateQueue: delegateQueue)
-            }
-            let completionGate = ApproovTaskCompletionGate<Data>(handler: completionHandler)
-            let task = urlSession.uploadTask(with: request, fromFile: fileURL) { data, response, error in
-                completionGate.complete(value: data, response: response, error: error)
-            }
-            observe(task, in: urlSession, completionHandler: completionGate)
-            task.resume()
+        return try await performWithApproov(delegate: delegate) { session, completionHandler in
+            session.uploadTask(with: request, fromFile: fileURL, completionHandler: completionHandler)
         }
     }
-    
+
     /**
      * Implementation of "upload(for request: URLRequest, from bodyData: Data, delegate: URLSessionTaskDelegate? = nil) async throws -> (Data, URLResponse)" that is defined
      * in an extension of URLSession and therefore cannot be overridden. The URLSession version cannot be used directly because it is not possible to
-     * fully initialize the base URLSession class instance.  Note that if a delegate is provided then this will override any delegate supplied during the
-     * construction of the URLSession.
+     * fully initialize the base URLSession class instance. If a delegate is provided then it receives the callbacks for this task that it implements,
+     * and the delegate supplied during the construction of the URLSession receives the rest.
      */
     @available(iOS 15.0, *)
     public func uploadWithApproov(for request: URLRequest, from bodyData: Data, delegate: URLSessionTaskDelegate? = nil) async throws -> (Data, URLResponse) {
-        return try await withCheckedThrowingContinuation { continuation in
-            let completionHandler = { @Sendable (data: Data?, response: URLResponse?, error: Error?) in
-                if let error = error {
-                    continuation.resume(throwing: error)
-                } else {
-                    continuation.resume(returning: (data!, response!))
-                }
-            }
-            var urlSession = self.pinnedURLSession
-            if delegate != nil {
-                let sessionDelegate = PinningURLSessionDelegate(with: delegate)
-                urlSession = URLSession(configuration: configuration, delegate: sessionDelegate, delegateQueue: delegateQueue)
-            }
-            let completionGate = ApproovTaskCompletionGate<Data>(handler: completionHandler)
-            let task = urlSession.uploadTask(with: request, from: bodyData) { data, response, error in
-                completionGate.complete(value: data, response: response, error: error)
-            }
-            observe(task, in: urlSession, completionHandler: completionGate)
-            task.resume()
+        return try await performWithApproov(delegate: delegate) { session, completionHandler in
+            session.uploadTask(with: request, from: bodyData, completionHandler: completionHandler)
         }
     }
-    
+
     /**
      * Implementation of "download(for request: URLRequest, delegate: URLSessionTaskDelegate? = nil) async throws -> (URL, URLResponse)" that is defined
      * in an extension of URLSession and therefore cannot be overridden. The URLSession version cannot be used directly because it is not possible to
-     * fully initialize the base URLSession class instance.  Note that if a delegate is provided then this will override any delegate supplied during the
-     * construction of the URLSession.
+     * fully initialize the base URLSession class instance. If a delegate is provided then it receives the callbacks for this task that it implements,
+     * and the delegate supplied during the construction of the URLSession receives the rest.
      */
     @available(iOS 15.0, *)
     public func downloadWithApproov(for request: URLRequest, delegate: URLSessionTaskDelegate? = nil) async throws -> (URL, URLResponse) {
-        return try await withCheckedThrowingContinuation { continuation in
-            let completionHandler = { @Sendable (url: URL?, response: URLResponse?, error: Error?) in
-                if let error = error {
-                    continuation.resume(throwing: error)
-                } else {
-                    continuation.resume(returning: (url!, response!))
-                }
-            }
-            var urlSession = self.pinnedURLSession
-            if delegate != nil {
-                let sessionDelegate = PinningURLSessionDelegate(with: delegate)
-                urlSession = URLSession(configuration: configuration, delegate: sessionDelegate, delegateQueue: delegateQueue)
-            }
-            let completionGate = ApproovTaskCompletionGate<URL>(handler: completionHandler)
-            let task = urlSession.downloadTask(with: request) { url, response, error in
-                completionGate.complete(value: url, response: response, error: error)
-            }
-            observe(task, in: urlSession, completionHandler: completionGate)
-            task.resume()
+        return try await performWithApproov(delegate: delegate) { session, completionHandler in
+            session.downloadTask(with: request, completionHandler: completionHandler)
         }
     }
-    
+
     /**
      * Implementation of "download(from url: URL, delegate: URLSessionTaskDelegate? = nil) async throws -> (URL, URLResponse)" that is defined
      * in an extension of URLSession and therefore cannot be overridden. The URLSession version cannot be used directly because it is not possible to
-     * fully initialize the base URLSession class instance. Note that if a delegate is provided then this will override any delegate supplied during the
-     * construction of the URLSession.
+     * fully initialize the base URLSession class instance. If a delegate is provided then it receives the callbacks for this task that it implements,
+     * and the delegate supplied during the construction of the URLSession receives the rest.
      */
     @available(iOS 15.0, *)
     public func downloadWithApproov(from url: URL, delegate: URLSessionTaskDelegate? = nil) async throws -> (URL, URLResponse) {
-        return try await withCheckedThrowingContinuation { continuation in
-            let completionHandler = { @Sendable (url: URL?, response: URLResponse?, error: Error?) in
-                if let error = error {
-                    continuation.resume(throwing: error)
-                } else {
-                    continuation.resume(returning: (url!, response!))
-                }
-            }
-            var urlSession = self.pinnedURLSession
-            if delegate != nil {
-                let sessionDelegate = PinningURLSessionDelegate(with: delegate)
-                urlSession = URLSession(configuration: configuration, delegate: sessionDelegate, delegateQueue: delegateQueue)
-            }
-            let completionGate = ApproovTaskCompletionGate<URL>(handler: completionHandler)
-            let task = urlSession.downloadTask(with: url) { url, response, error in
-                completionGate.complete(value: url, response: response, error: error)
-            }
-            observe(task, in: urlSession, completionHandler: completionGate)
-            task.resume()
+        return try await performWithApproov(delegate: delegate) { session, completionHandler in
+            session.downloadTask(with: url, completionHandler: completionHandler)
         }
     }
 }

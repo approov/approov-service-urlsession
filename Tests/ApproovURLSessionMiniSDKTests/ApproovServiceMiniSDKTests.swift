@@ -1405,6 +1405,150 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
         )
     }
 
+    // MARK: - Async convenience methods with a task delegate
+
+    /// Every async convenience method used to build a new URLSession per call whenever a delegate
+    /// was supplied, from the inherited `configuration`. ApproovURLSession never initialises its
+    /// URLSession base, so that configuration carried none of the caller's headers, timeouts,
+    /// cookie storage or cache. Each method must send the request with the session's configuration.
+    func testAsyncMethodsWithDelegateUseTheSessionConfiguration() async throws {
+        try reinitializeServiceWithTargetHost()
+        let marker = "async-delegate-config-marker"
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.httpAdditionalHeaders = ["X-Config-Marker": marker]
+        let session = ApproovURLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+
+        let url = try XCTUnwrap(URL(string: targetURLString))
+        var postRequest = URLRequest(url: url)
+        postRequest.httpMethod = "POST"
+        postRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let body = Data("{\"check\":\"async-delegate\"}".utf8)
+        let bodyFile = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try body.write(to: bodyFile)
+        defer { try? FileManager.default.removeItem(at: bodyFile) }
+
+        let calls: [(String, () async throws -> Data)] = [
+            ("dataWithApproov(for:)", {
+                try await session.dataWithApproov(for: URLRequest(url: url), delegate: EmptyTaskDelegate()).0
+            }),
+            ("dataWithApproov(from:)", {
+                try await session.dataWithApproov(from: url, delegate: EmptyTaskDelegate()).0
+            }),
+            ("uploadWithApproov(for:from:)", {
+                try await session.uploadWithApproov(for: postRequest, from: body, delegate: EmptyTaskDelegate()).0
+            }),
+            ("uploadWithApproov(for:fromFile:)", {
+                try await session.uploadWithApproov(for: postRequest, fromFile: bodyFile, delegate: EmptyTaskDelegate()).0
+            }),
+            ("downloadWithApproov(for:)", {
+                try Data(contentsOf: try await session.downloadWithApproov(for: URLRequest(url: url), delegate: EmptyTaskDelegate()).0)
+            }),
+            ("downloadWithApproov(from:)", {
+                try Data(contentsOf: try await session.downloadWithApproov(from: url, delegate: EmptyTaskDelegate()).0)
+            }),
+        ]
+        for (name, call) in calls {
+            let reply = try JSONSerialization.jsonObject(with: try await call()) as? [String: Any]
+            XCTAssertEqual(getHeader(from: reply, key: "X-Config-Marker"), marker,
+                           "\(name) dropped the session configuration's additional headers")
+            XCTAssertNotNil(getHeader(from: reply, key: "Approov-Token"), "\(name) sent the request without an Approov token")
+        }
+    }
+
+    /// A delegate passed to an async convenience method must be released once the request
+    /// completes. Previously the per-call URLSession was never invalidated, and a URLSession
+    /// retains its delegate until it is, so every such call leaked the session and the delegate.
+    func testAsyncMethodWithDelegateReleasesTheDelegate() async throws {
+        let session = ApproovURLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        let url = try XCTUnwrap(URL(string: targetURLString))
+
+        weak var weakDelegate: EmptyTaskDelegate?
+        do {
+            let delegate = EmptyTaskDelegate()
+            weakDelegate = delegate
+            _ = try await session.dataWithApproov(for: URLRequest(url: url), delegate: delegate)
+        }
+        // URLSession drops its reference to a task delegate as the task finishes, which can
+        // trail the completion handler slightly.
+        for _ in 0..<100 where weakDelegate != nil {
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTAssertNil(weakDelegate, "the delegate passed to dataWithApproov(for:delegate:) outlived its request")
+    }
+
+    /// URLSession offers the server-trust challenge to a task delegate ahead of the session delegate
+    /// whenever the task delegate implements urlSession(_:didReceive:completionHandler:). A delegate
+    /// passed to an async convenience method must still be subject to Approov pinning: this one
+    /// accepts any certificate, and the request must still fail on a pin mismatch.
+    func testAsyncMethodWithDelegateStillEnforcesPinning() async throws {
+        try reinitializeServiceWithTargetHost()
+        MiniSDKAttesterProxyController.setNextPinningDirectiveJSON("{\"operation\": \"getPins\", \"shouldFail\": true}")
+        let session = ApproovURLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        let url = try XCTUnwrap(URL(string: targetURLString))
+
+        let delegate = TrustAnyCertificateTaskDelegate()
+        do {
+            _ = try await session.dataWithApproov(for: URLRequest(url: url), delegate: delegate)
+            XCTFail("a task delegate that accepts any certificate bypassed Approov pinning")
+        } catch {
+            // expected: pinning rejected the connection
+        }
+    }
+
+    /// Callbacks the task delegate does not implement are delivered to the delegate the session
+    /// was created with, as they are for URLSession.data(for:delegate:). Previously the per-call
+    /// session replaced the session delegate entirely.
+    func testAsyncMethodWithDelegateFallsBackToTheSessionDelegate() async throws {
+        let sessionDelegate = MetricsRecordingDelegate()
+        let sessionMetrics = expectation(description: "session delegate received metrics")
+        sessionDelegate.onMetrics = { sessionMetrics.fulfill() }
+        let session = ApproovURLSession(configuration: .ephemeral, delegate: sessionDelegate, delegateQueue: nil)
+        defer { session.invalidateAndCancel() }
+        let url = try XCTUnwrap(URL(string: targetURLString))
+
+        _ = try await session.dataWithApproov(for: URLRequest(url: url), delegate: EmptyTaskDelegate())
+        await fulfillment(of: [sessionMetrics], timeout: 5.0)
+    }
+
+    /// Callbacks the task delegate does implement are delivered to it rather than to the
+    /// session delegate.
+    func testAsyncMethodWithDelegateDeliversCallbacksToTheTaskDelegate() async throws {
+        let sessionDelegate = MetricsRecordingDelegate()
+        let sessionMetrics = expectation(description: "session delegate received metrics")
+        sessionMetrics.isInverted = true
+        sessionDelegate.onMetrics = { sessionMetrics.fulfill() }
+        let taskDelegate = MetricsRecordingDelegate()
+        let taskMetrics = expectation(description: "task delegate received metrics")
+        taskDelegate.onMetrics = { taskMetrics.fulfill() }
+        let session = ApproovURLSession(configuration: .ephemeral, delegate: sessionDelegate, delegateQueue: nil)
+        defer { session.invalidateAndCancel() }
+        let url = try XCTUnwrap(URL(string: targetURLString))
+
+        _ = try await session.dataWithApproov(for: URLRequest(url: url), delegate: taskDelegate)
+        await fulfillment(of: [taskMetrics], timeout: 5.0)
+        await fulfillment(of: [sessionMetrics], timeout: 0.5)
+    }
+
+    /// The inherited URLSession properties must describe the session the caller created,
+    /// not the uninitialised URLSession base.
+    func testSessionReportsTheConfigurationAndQueueItWasCreatedWith() {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 7
+        configuration.httpAdditionalHeaders = ["X-Config-Marker": "marker"]
+        let queue = OperationQueue()
+        let session = ApproovURLSession(configuration: configuration, delegate: nil, delegateQueue: queue)
+        defer { session.invalidateAndCancel() }
+
+        XCTAssertEqual(session.configuration.timeoutIntervalForRequest, 7)
+        XCTAssertEqual(session.configuration.httpAdditionalHeaders?["X-Config-Marker"] as? String, "marker")
+        XCTAssertNotNil(session.configuration.httpCookieStorage)
+        XCTAssertNotNil(session.configuration.urlCache)
+        XCTAssertTrue(session.delegateQueue === queue)
+    }
+
     private func sha256Base64(_ value: String) -> String {
         Data(SHA256.hash(data: Data(value.utf8))).base64EncodedString()
     }
@@ -1419,5 +1563,29 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
         default:
             XCTFail("Expected decision \(expected), got \(decision)", file: file, line: line)
         }
+    }
+}
+
+/// A task delegate that implements no callbacks.
+private final class EmptyTaskDelegate: NSObject, URLSessionTaskDelegate {}
+
+/// A task delegate that accepts any server certificate at the session-level challenge.
+private final class TrustAnyCertificateTaskDelegate: NSObject, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
+                    completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        if let serverTrust = challenge.protectionSpace.serverTrust {
+            completionHandler(.useCredential, URLCredential(trust: serverTrust))
+        } else {
+            completionHandler(.performDefaultHandling, nil)
+        }
+    }
+}
+
+/// A delegate that reports when it receives task metrics.
+private final class MetricsRecordingDelegate: NSObject, URLSessionTaskDelegate {
+    var onMetrics: (() -> Void)?
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didFinishCollecting metrics: URLSessionTaskMetrics) {
+        onMetrics?()
     }
 }

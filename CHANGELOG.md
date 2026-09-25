@@ -4,6 +4,16 @@ All notable changes to this package will be documented in this file.
 
 The format is based on Keep a Changelog and this project adheres to Semantic Versioning.
 
+## [3.5.13] - 2026-09-25
+
+### Fixed
+- The async convenience methods (`dataWithApproov`, `uploadWithApproov` and `downloadWithApproov`) no longer create a new `URLSession` for each call that supplies a delegate (#63). That session was built from the inherited `configuration` and `delegateQueue`, which belong to the `URLSession` base class that `ApproovURLSession` cannot initialise: `configuration` was `nil` behind a non-optional type, so the caller's headers, timeouts, cookie storage and cache were silently dropped, and the session was never invalidated, leaking it and its delegate for the lifetime of the process (present since 3.2.5). The task is now created on the pinned session and the delegate is attached to it with `URLSessionTask.delegate`, as `URLSession.data(for:delegate:)` does, so the task releases it on completion and the request reuses the session's connections. Server-trust challenges still go through Approov pinning even when the supplied delegate implements `urlSession(_:didReceive:completionHandler:)`, which `URLSession` would otherwise offer that challenge ahead of the session delegate.
+- `ApproovURLSession.configuration` and `ApproovURLSession.delegateQueue` now return the configuration and queue the session was created with, rather than the values of the uninitialised base class.
+- A completion that reports neither an error nor a result now throws `URLError(.badServerResponse)` from the async convenience methods instead of trapping on a force unwrap.
+
+### Changed
+- When a delegate is supplied to an async convenience method, the delegate passed to `init(configuration:delegate:delegateQueue:)` now receives the callbacks for that task that the supplied delegate does not implement, matching `URLSession`. Previously it received none of them.
+
 ## [3.5.12] - 2026-08-14
 
 ### Fixed
