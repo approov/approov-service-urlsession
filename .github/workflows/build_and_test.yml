@@ -256,9 +256,9 @@ jobs:
   #   - CHANGELOG.md has a top version header (## [x.y.z]);
   #   - that top version is NOT already tagged (forces a new CHANGELOG entry
   #     after each release before more release changes land); and
-  #   - Package.swift releaseTAG and the approov-service-urlsession/<version>
-  #     telemetry string each carry that same top CHANGELOG version (so main is
-  #     always ready to tag).
+  #   - Package.swift releaseTAG, every root .podspec s.version, and the
+  #     approov-service-urlsession/<version> telemetry string each carry that
+  #     same top CHANGELOG version (so main is always ready to tag).
   # Tagging is a SEPARATE, manual step: the "Release Current Main Branch"
   # workflow (release.yml) only verifies and tags main's HEAD — it never pushes
   # a commit to main, so the version is bumped here via PR, not by CI.
@@ -310,6 +310,19 @@ jobs:
             echo "::error::telemetry version ($TEL) must match the top CHANGELOG version ($VERSION)"
             fail=1
           fi
+
+          for p in *.podspec; do
+            [ -e "$p" ] || continue
+            POD=$(grep -m1 -oE "\.version[[:space:]]*=[[:space:]]*\"$SEMVER\"" "$p" | grep -oE "$SEMVER") || true
+            if [ -z "$POD" ]; then
+              echo "::error::$p s.version must be an x.y.z version"
+              grep -nE '\.version[[:space:]]*=' "$p" || true
+              fail=1
+            elif [ "$POD" != "$VERSION" ]; then
+              echo "::error::$p s.version ($POD) must match the top CHANGELOG version ($VERSION)"
+              fail=1
+            fi
+          done
 
           if [ "$fail" -ne 0 ]; then
             echo "::error::Release verification failed."

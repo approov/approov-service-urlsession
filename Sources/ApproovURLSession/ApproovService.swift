@@ -262,8 +262,8 @@ public class ApproovService {
             }
             serviceIsInitialized = true
             if !config.isEmpty {
-                // Must match the top CHANGELOG entry (in lock-step with Package.swift releaseTAG);
-                // bump both in a PR before tagging a release.
+                // Must match the top CHANGELOG entry (in lock-step with Package.swift releaseTAG
+                // and the podspec s.version); bump all three in a PR before tagging a release.
                 Approov.setUserProperty("approov-service-urlsession/3.6.0")
             }
         }

@@ -11,7 +11,7 @@ Enter the repository `https://github.com/approov/approov-service-urlsession.git`
 
 Once you click `Add Package` the last step will confirm the package product and target selection. The `approov-service-urlsession` is actually an open source wrapper layer that allows you to easily use Approov with `URLSession`. This has a further dependency to the closed source [Approov SDK](https://github.com/approov/approov-ios-sdk).
 
-CocoaPods is no longer supported from version 3.6.0. Apps that use CocoaPods can keep using version 3.5.13 or earlier, which remain available by git tag, and should move to the Swift Package Manager to receive later versions.
+Alternatively, use `cocoapods` and add the package dependencies similar to how they are used in the example [`shapes-app/Podfile`](https://github.com/approov/quickstart-ios-swift-urlsession/blob/master/shapes-app/Podfile) in the [Quickstart](https://github.com/approov/quickstart-ios-swift-urlsession) repository.
 
 The package requires Xcode 16 or later and supports apps written in either the Swift 5 or the Swift 6 language mode. In Swift 6, the completion handlers of the `ApproovURLSession` task methods are `@Sendable`, as they are on `URLSession`, so they do not run on the actor they were written in; hop back explicitly, for example with `Task { @MainActor in ... }`, to update actor state.
 
