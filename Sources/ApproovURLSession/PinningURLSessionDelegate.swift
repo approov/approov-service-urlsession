@@ -276,7 +276,8 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
      *  https://developer.apple.com/documentation/foundation/urlsessiontaskdelegate/1411626-urlsession
      */
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
-        if let delegate = optionalURLDelegate as? URLSessionTaskDelegate {
+        if let delegate = optionalURLDelegate as? URLSessionTaskDelegate,
+           delegate.responds(to: #selector(URLSessionTaskDelegate.urlSession(_:task:willPerformHTTPRedirection:newRequest:completionHandler:))) {
             delegate.urlSession?(session, task: task, willPerformHTTPRedirection: response, newRequest: request, completionHandler: completionHandler)
         } else {
             completionHandler(request)
@@ -288,8 +289,13 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
      *  https://developer.apple.com/documentation/foundation/urlsessiontaskdelegate/1410001-urlsession
      */
     func urlSession(_ session: URLSession, task: URLSessionTask, needNewBodyStream completionHandler: @escaping (InputStream?) -> Void) {
-        if let delegate = optionalURLDelegate as? URLSessionTaskDelegate {
+        if let delegate = optionalURLDelegate as? URLSessionTaskDelegate,
+           delegate.responds(to: #selector(URLSessionTaskDelegate.urlSession(_:task:needNewBodyStream:))) {
             delegate.urlSession?(session, task: task, needNewBodyStream: completionHandler)
+        } else {
+            // No delegate implementation, so there is no replacement stream to offer. The handler
+            // must still be called or the task never finishes.
+            completionHandler(nil)
         }
     }
     
@@ -309,7 +315,8 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
      */
     @available(iOS 11.0, *)
     func urlSession(_ session: URLSession, task: URLSessionTask, willBeginDelayedRequest request: URLRequest, completionHandler: @escaping (URLSession.DelayedRequestDisposition, URLRequest?) -> Void) {
-        if let delegate = optionalURLDelegate as? URLSessionTaskDelegate {
+        if let delegate = optionalURLDelegate as? URLSessionTaskDelegate,
+           delegate.responds(to: #selector(URLSessionTaskDelegate.urlSession(_:task:willBeginDelayedRequest:completionHandler:))) {
             delegate.urlSession?(session, task:task, willBeginDelayedRequest: request, completionHandler: completionHandler)
         } else {
             completionHandler(URLSession.DelayedRequestDisposition.continueLoading, request)
@@ -365,8 +372,12 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
      */
     @available(iOS 17.0, macOS 14.0, watchOS 10.0, *)
     func urlSession(_ session: URLSession, task: URLSessionTask, needNewBodyStreamFrom offset: Int64, completionHandler: @escaping @Sendable (InputStream?) -> Void) {
-        if let delegate = optionalURLDelegate as? URLSessionTaskDelegate {
+        if let delegate = optionalURLDelegate as? URLSessionTaskDelegate,
+           delegate.responds(to: #selector(URLSessionTaskDelegate.urlSession(_:task:needNewBodyStreamFrom:completionHandler:))) {
             delegate.urlSession?(session, task: task, needNewBodyStreamFrom: offset, completionHandler: completionHandler)
+        } else {
+            // As above: no implementation means no stream to offer, but the handler must be called.
+            completionHandler(nil)
         }
     }
     
@@ -385,7 +396,8 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
      */
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse, completionHandler: @escaping (URLSession.ResponseDisposition) -> Void)
     {
-        if let delegate = optionalURLDelegate as? URLSessionDataDelegate {
+        if let delegate = optionalURLDelegate as? URLSessionDataDelegate,
+           delegate.responds(to: #selector(URLSessionDataDelegate.urlSession(_:dataTask:didReceive:completionHandler:))) {
             delegate.urlSession?(session, dataTask: dataTask, didReceive: response, completionHandler: completionHandler)
         } else {
             completionHandler(URLSession.ResponseDisposition.allow)
@@ -427,10 +439,11 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
      *  https://developer.apple.com/documentation/foundation/urlsessiondatadelegate/1411612-urlsession
      */
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, willCacheResponse proposedResponse: CachedURLResponse, completionHandler: @escaping (CachedURLResponse?) -> Void) {
-        if let delegate = optionalURLDelegate as? URLSessionDataDelegate {
+        if let delegate = optionalURLDelegate as? URLSessionDataDelegate,
+           delegate.responds(to: #selector(URLSessionDataDelegate.urlSession(_:dataTask:willCacheResponse:completionHandler:))) {
             delegate.urlSession?(session, dataTask: dataTask, willCacheResponse: proposedResponse, completionHandler: completionHandler)
         } else {
-                completionHandler(proposedResponse)
+            completionHandler(proposedResponse)
         }
     }
     

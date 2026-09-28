@@ -905,6 +905,25 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
                        "a trust-any task delegate was not rejected on a WebSocket: \(code.map(String.init) ?? "nil")")
     }
 
+    /// A URLSessionDataDelegate may implement any subset of its optional methods. Where no completion
+    /// handler is supplied, URLSession delivers the response through the delegate, and the wrapper
+    /// forwards that callback with delegate.urlSession?(...), which is a no-op when the caller has not
+    /// implemented it. The completion handler is then never called and the task never finishes.
+    /// Exercised on an upload task, which is the shape that has no completion-handler variant in play.
+    func testPartialDataDelegateDoesNotHangAnUpload() throws {
+        try reinitializeServiceWithTargetHost()
+        let caller = PartialDataDelegate()
+        let session = ApproovURLSession(configuration: .ephemeral, delegate: caller, delegateQueue: nil)
+        defer { session.invalidateAndCancel() }
+        var request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let done = expectation(description: "upload finished")
+        caller.onComplete = { _ in done.fulfill() }
+        session.uploadTask(with: request, from: Data("{\"a\":1}".utf8)).resume()
+        wait(for: [done], timeout: 8)
+    }
+
     func testInstallMessageSigningMalformedDERFailsOpen() throws {
         let malformedSignatures: [(String, Data)] = [
             ("malformed-der", Data([0x31, 0x00])),
@@ -1021,64 +1040,64 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
                         "CONTROL FAILED: httpBody produced no digest either, so the test proves nothing")
     }
 
-    /// Consequence of the above: a REQUIRED body digest fails every upload shape closed, exercised
-    /// through the real upload API rather than the request processor, since the claim is about
-    /// uploadTask and not about updateRequestWithApproov.
+    /// A REQUIRED body digest fails every upload shape closed, all five overloads, asserted on the
+    /// Approov error rather than on the presence of any error. A digest rejection cancels the task, so
+    /// "some error happened" would also be satisfied by a network failure or a pinning rejection and
+    /// would not establish the cause. The real error reaches a completion handler where there is one,
+    /// and the session delegate's didBecomeInvalidWithError where there is not.
     func testRequiredBodyDigestFailsEveryUploadShapeClosed() throws {
-        try reinitializeServiceWithTargetHost()
-        let factory = try ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory()
-            .setUseInstallMessageSigning()
-            .setBodyDigestConfig(ApproovDefaultMessageSigning.DIGEST_SHA256, required: true)
-        ApproovService.setServiceMutator(ApproovDefaultMessageSigning().setDefaultFactory(factory))
-
         let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try Data("{\"upload\":\"file\"}".utf8).write(to: file)
         defer { try? FileManager.default.removeItem(at: file) }
+        let body = Data("{\"upload\":\"data\"}".utf8)
 
-        var request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        // (label, makes the task on the given session, true when the error arrives by handler)
+        let shapes: [(String, (ApproovURLSession, URLRequest, @escaping (Error?) -> Void) -> URLSessionUploadTask)] = [
+            ("uploadTask(with:from:)", { s, r, _ in s.uploadTask(with: r, from: body) }),
+            ("uploadTask(with:from:completionHandler:)", { s, r, report in
+                s.uploadTask(with: r, from: body) { _, _, e in report(e) } }),
+            ("uploadTask(with:fromFile:)", { s, r, _ in s.uploadTask(with: r, fromFile: file) }),
+            ("uploadTask(with:fromFile:completionHandler:)", { s, r, report in
+                s.uploadTask(with: r, fromFile: file) { _, _, e in report(e) } }),
+            ("uploadTask(withStreamedRequest:)", { s, r, _ in
+                var streamed = r
+                streamed.httpBodyStream = InputStream(data: body)
+                return s.uploadTask(withStreamedRequest: streamed) }),
+        ]
 
-        XCTAssertNotNil(uploadTaskFailure(for: request, from: Data("{\"upload\":\"data\"}".utf8)),
-                        "uploadTask(with:from:) proceeded despite a required body digest")
-        XCTAssertNotNil(uploadTaskFailure(for: request, fromFile: file),
-                        "uploadTask(with:fromFile:) proceeded despite a required body digest")
+        for (label, makeTask) in shapes {
+            try reinitializeServiceWithTargetHost()
+            let factory = try ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory()
+                .setUseInstallMessageSigning()
+                .setBodyDigestConfig(ApproovDefaultMessageSigning.DIGEST_SHA256, required: true)
+            ApproovService.setServiceMutator(ApproovDefaultMessageSigning().setDefaultFactory(factory))
 
-        var streamed = request
-        streamed.httpBodyStream = InputStream(data: Data("{\"upload\":\"stream\"}".utf8))
-        XCTAssertNotNil(uploadTaskFailure(for: streamed, streamed: true),
-                        "uploadTask(withStreamedRequest:) proceeded despite a required body digest")
-    }
+            let recorder = InvalidationRecordingDelegate()
+            let session = ApproovURLSession(configuration: .ephemeral, delegate: recorder, delegateQueue: nil)
+            defer { session.invalidateAndCancel() }
 
-    /// With the digest OPTIONAL a streamed upload proceeds through the real API and is signed, but the
-    /// signature covers no body. Asserted on the wire, not on the request processor.
-    func testUploadFromStreamedRequestWithOptionalDigestIsSignedWithoutBodyCoverage() throws {
-        try reinitializeServiceWithTargetHost()
-        let factory = try ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory()
-            .setUseInstallMessageSigning()
-            .setBodyDigestConfig(ApproovDefaultMessageSigning.DIGEST_SHA256, required: false)
-        ApproovService.setServiceMutator(ApproovDefaultMessageSigning().setDefaultFactory(factory))
+            var request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        var request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBodyStream = InputStream(data: Data("{\"upload\":\"stream\"}".utf8))
+            let reported = expectation(description: label)
+            reported.assertForOverFulfill = false
+            var seen: Error?
+            let report: (Error?) -> Void = { e in
+                if seen == nil { seen = e }
+                reported.fulfill()
+            }
+            recorder.onInvalid = report
+            makeTask(session, request, report).resume()
+            wait(for: [reported], timeout: 15)
 
-        let recorder = CompletionRecordingDelegate()
-        let session = ApproovURLSession(configuration: .ephemeral, delegate: recorder, delegateQueue: nil)
-        defer { session.invalidateAndCancel() }
-        let done = expectation(description: "streamed upload")
-        var failure: Error?
-        recorder.onComplete = { failure = $0; done.fulfill() }
-        let task = session.uploadTask(withStreamedRequest: request)
-        task.resume()
-        wait(for: [done], timeout: 15)
-
-        XCTAssertNil(failure, "the streamed upload failed with an optional digest: \(String(describing: failure))")
-        let sent = task.currentRequest
-        XCTAssertNotNil(sent?.value(forHTTPHeaderField: "Signature"), "the streamed upload was not signed")
-        XCTAssertNil(sent?.value(forHTTPHeaderField: "Content-Digest"),
-                     "a Content-Digest appeared for a body that cannot be read")
+            guard case let ApproovError.permanentError(message)? = seen else {
+                XCTFail("\(label): expected an Approov permanentError, got \(String(describing: seen))")
+                continue
+            }
+            XCTAssertTrue(message.contains("Failed to create required body digest"),
+                          "\(label): wrong cause: \(message)")
+        }
     }
 
     /// uploadTask(with:fromFile:) keeps the body in a file that URLSession reads itself, so the layer
@@ -2021,6 +2040,31 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
 
 /// A task delegate that implements no callbacks.
 private final class EmptyTaskDelegate: NSObject, URLSessionTaskDelegate {}
+
+/// Conforms to URLSessionDataDelegate but implements only didReceive data, which is legal: every
+/// method on that protocol is optional. The wrapper's forwarding must still complete the response
+/// and cache callbacks on its behalf.
+private final class PartialDataDelegate: NSObject, URLSessionDataDelegate {
+    var bytes = 0
+    var onComplete: ((Error?) -> Void)?
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        bytes += data.count
+    }
+    // Deliberately does NOT implement urlSession(_:dataTask:didReceive:completionHandler:) or
+    // willCacheResponse, both of which are optional on URLSessionDataDelegate.
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        onComplete?(error)
+    }
+}
+
+/// Records the session-invalidation error, which is where the Approov error reaches a caller whose
+/// task has no completion handler.
+private final class InvalidationRecordingDelegate: NSObject, URLSessionTaskDelegate {
+    var onInvalid: ((Error?) -> Void)?
+    func urlSession(_ session: URLSession, didBecomeInvalidWithError error: Error?) {
+        onInvalid?(error)
+    }
+}
 
 /// Records task completion, which is the reliable signal for a WebSocket that never opens.
 private final class CompletionRecordingDelegate: NSObject, URLSessionTaskDelegate {
