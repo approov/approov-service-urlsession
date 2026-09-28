@@ -101,6 +101,8 @@ Note that the methods related to [Performing Asynchronous Transfers](https://dev
 
 `downloadWithApproov(from url: URL, delegate: URLSessionTaskDelegate? = nil) async throws -> (URL, URLResponse)`
 
+As with the `URLSession` versions, a `delegate` supplied to one of these methods applies to that task only. The request uses the session's configuration, the delegate receives the callbacks it implements, and the delegate the session was created with receives the rest. Approov pinning is applied to the connection regardless of how the supplied delegate handles authentication challenges.
+
 # Changelog
 
 Please see the [CHANGELOG.md](CHANGELOG.md) for more information on the changes in each version.
