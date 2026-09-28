@@ -79,13 +79,15 @@ public class ApproovURLSession: URLSession {
     /// within a single URLSession.
     private func observe(
         _ task: URLSessionTask,
-        completionHandler: ApproovTaskCompletionHandling? = nil
+        completionHandler: ApproovTaskCompletionHandling? = nil,
+        guardOnly: Bool = false
     ) {
         ApproovURLSession.taskObserver.observe(
             task: task,
             pinningSession: pinnedURLSession,
             sessionConfig: urlSessionConfiguration,
-            completionHandler: completionHandler
+            completionHandler: completionHandler,
+            guardOnly: guardOnly
         )
     }
     
@@ -178,12 +180,17 @@ public class ApproovURLSession: URLSession {
      *
      *  NOT SUPPORTED BY APPROOV. A resumed download replays a request whose Approov token was
      *  embedded in the resume data and has since expired, so no valid token can be presented and
-     *  none is added. TLS pinning still applies. Start a fresh downloadTask instead.
+     *  none is added. Start a fresh downloadTask instead.
+     *
+     *  Pinning is applied by the session delegate, so it holds for a task left alone, but these
+     *  tasks are not observed and so are NOT covered by the task-delegate guard: assigning a task
+     *  delegate that answers the server-trust challenge removes pinning from a resumed download.
+     *  Do not rely on pinning here.
      *
      *  The override is kept rather than removed: without it the inherited URLSession implementation
      *  would run against a base class this subclass cannot initialise.
      */
-    @available(*, deprecated, message: "Not supported by Approov. A resumed download replays a request whose Approov token was embedded in the resume data and has since expired, so no valid token can be presented and none is added. TLS pinning still applies. Start a fresh downloadTask instead.")
+    @available(*, deprecated, message: "Not supported by Approov. A resumed download replays a request whose Approov token was embedded in the resume data and has since expired, so no valid token can be presented and none is added. Pinning is applied by the session delegate but is NOT protected against a task delegate that answers the server-trust challenge, because these tasks are not observed. Start a fresh downloadTask instead.")
     public override func downloadTask(withResumeData: Data) -> URLSessionDownloadTask {
         return self.pinnedURLSession.downloadTask(withResumeData: withResumeData)
     }
@@ -194,12 +201,17 @@ public class ApproovURLSession: URLSession {
      *
      *  NOT SUPPORTED BY APPROOV. A resumed download replays a request whose Approov token was
      *  embedded in the resume data and has since expired, so no valid token can be presented and
-     *  none is added. TLS pinning still applies. Start a fresh downloadTask instead.
+     *  none is added. Start a fresh downloadTask instead.
+     *
+     *  Pinning is applied by the session delegate, so it holds for a task left alone, but these
+     *  tasks are not observed and so are NOT covered by the task-delegate guard: assigning a task
+     *  delegate that answers the server-trust challenge removes pinning from a resumed download.
+     *  Do not rely on pinning here.
      *
      *  The override is kept rather than removed: without it the inherited URLSession implementation
      *  would run against a base class this subclass cannot initialise.
      */
-    @available(*, deprecated, message: "Not supported by Approov. A resumed download replays a request whose Approov token was embedded in the resume data and has since expired, so no valid token can be presented and none is added. TLS pinning still applies. Start a fresh downloadTask instead.")
+    @available(*, deprecated, message: "Not supported by Approov. A resumed download replays a request whose Approov token was embedded in the resume data and has since expired, so no valid token can be presented and none is added. Pinning is applied by the session delegate but is NOT protected against a task delegate that answers the server-trust challenge, because these tasks are not observed. Start a fresh downloadTask instead.")
     public override func downloadTask(withResumeData: Data, completionHandler: @escaping (URL?, URLResponse?, Error?) -> Void) -> URLSessionDownloadTask {
         return self.pinnedURLSession.downloadTask(withResumeData: withResumeData, completionHandler: completionHandler)
     }
@@ -372,7 +384,7 @@ public class ApproovURLSession: URLSession {
     @available(iOS 13.0, *)
     public override func webSocketTask(with: URLRequest) -> URLSessionWebSocketTask {
         let task = self.pinnedURLSession.webSocketTask(with: with)
-        observe(task)
+        observe(task, guardOnly: true)
         return task
     }
     
@@ -383,7 +395,7 @@ public class ApproovURLSession: URLSession {
     @available(iOS 13.0, *)
     public override func webSocketTask(with: URL, protocols: [String]) -> URLSessionWebSocketTask {
         let task = self.pinnedURLSession.webSocketTask(with: with, protocols: protocols)
-        observe(task)
+        observe(task, guardOnly: true)
         return task
     }
     

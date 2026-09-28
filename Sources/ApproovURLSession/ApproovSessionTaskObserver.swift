@@ -63,16 +63,23 @@ public class ApproovSessionTaskObserver: NSObject {
         let pinningSession: URLSession
         let sessionConfig: URLSessionConfiguration
         let completionHandler: ApproovTaskCompletionHandling?
+        /// When true the task is watched only to reject a delegate that would decide server trust.
+        /// No Approov token is fetched and the request is not mutated. Used for task types the
+        /// request pipeline cannot process, currently WebSockets, whose wss:// URL is rejected by
+        /// the token fetch as a bad url.
+        let guardOnly: Bool
         /// Owning the observation token means observation stops when this registration is
         /// released, with no manual addObserver/removeObserver pairing to get wrong.
         var observation: NSKeyValueObservation?
 
         init(pinningSession: URLSession,
              sessionConfig: URLSessionConfiguration,
-             completionHandler: ApproovTaskCompletionHandling?) {
+             completionHandler: ApproovTaskCompletionHandling?,
+             guardOnly: Bool = false) {
             self.pinningSession = pinningSession
             self.sessionConfig = sessionConfig
             self.completionHandler = completionHandler
+            self.guardOnly = guardOnly
         }
     }
 
@@ -103,12 +110,14 @@ public class ApproovSessionTaskObserver: NSObject {
         task: URLSessionTask,
         pinningSession: URLSession,
         sessionConfig: URLSessionConfiguration,
-        completionHandler: ApproovTaskCompletionHandling? = nil
+        completionHandler: ApproovTaskCompletionHandling? = nil,
+        guardOnly: Bool = false
     ) {
         let registration = TaskRegistration(
             pinningSession: pinningSession,
             sessionConfig: sessionConfig,
-            completionHandler: completionHandler
+            completionHandler: completionHandler,
+            guardOnly: guardOnly
         )
         // Observe with the block-based API: the token is owned by the registration, and the
         // typed change value removes the need to map a raw state number.
@@ -229,6 +238,14 @@ public class ApproovSessionTaskObserver: NSObject {
                 )
             }
             task.cancel()
+            return
+        }
+
+        // A guard-only task is watched for the delegate check above and nothing else. The request
+        // pipeline cannot process it: fetching a token for a wss:// URL fails with "bad url", and
+        // running it here would cancel every WebSocket. Resume and leave it alone.
+        if registration.guardOnly {
+            task.resume()
             return
         }
 

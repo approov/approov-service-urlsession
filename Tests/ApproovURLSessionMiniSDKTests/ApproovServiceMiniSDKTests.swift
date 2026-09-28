@@ -845,8 +845,31 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
                        "the application's own Content-Digest was deleted")
     }
 
-    /// A WebSocket upgrade is attested and pinned like any other request: the task is now observed, so
-    /// the pin check runs. Attestation is connect-time only; nothing re-attests the live socket after.
+    /// POSITIVE PATH, and the one that matters most: a WebSocket to a protected host must still
+    /// connect. Observing these tasks through the full request pipeline cancelled every one of them,
+    /// because the Approov token fetch rejects a wss:// URL with "bad url". The reply worker does not
+    /// speak WebSocket, so the expected outcome is an HTTP-level upgrade failure, which proves TLS
+    /// completed and nothing cancelled the task. A cancellation here means the layer broke it.
+    func testWebSocketToAProtectedHostIsNotCancelledByTheLayer() throws {
+        try reinitializeServiceWithTargetHost()
+        let recorder = CompletionRecordingDelegate()
+        let session = ApproovURLSession(configuration: .ephemeral, delegate: recorder, delegateQueue: nil)
+        defer { session.invalidateAndCancel() }
+        let wsURL = try XCTUnwrap(URL(string: targetURLString.replacingOccurrences(of: "https://", with: "wss://")))
+        let done = expectation(description: "ws not cancelled")
+        var code: Int?
+        recorder.onComplete = { code = ($0 as NSError?)?.code; done.fulfill() }
+        session.webSocketTask(with: wsURL).resume()
+        wait(for: [done], timeout: 20)
+        XCTAssertNotEqual(code, NSURLErrorCancelled,
+                          "the layer cancelled a legitimate WebSocket to a protected host")
+        XCTAssertEqual(code, NSURLErrorBadServerResponse,
+                       "expected the worker to refuse the upgrade after a completed TLS handshake, got \(code.map(String.init) ?? "nil")")
+    }
+
+    /// Pinning still applies to the upgrade, through the session delegate. Verified non-vacuous:
+    /// remove the forced pin failure and this test fails, because the positive path above returns
+    /// NSURLErrorBadServerResponse rather than a cancellation.
     func testWebSocketUpgradeIsPinned() throws {
         try reinitializeServiceWithTargetHost()
         MiniSDKAttesterProxyController.setNextPinningDirectiveJSON("{\"operation\": \"getPins\", \"shouldFail\": true}")
@@ -855,31 +878,31 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
         defer { session.invalidateAndCancel() }
         let wsURL = try XCTUnwrap(URL(string: targetURLString.replacingOccurrences(of: "https://", with: "wss://")))
         let done = expectation(description: "ws pinned")
-        var failure: Error?
-        recorder.onComplete = { failure = $0; done.fulfill() }
+        var code: Int?
+        recorder.onComplete = { code = ($0 as NSError?)?.code; done.fulfill() }
         session.webSocketTask(with: wsURL).resume()
         wait(for: [done], timeout: 20)
-        XCTAssertEqual((failure as NSError?)?.code, NSURLErrorCancelled,
-                       "a failing pin check did not stop the WebSocket upgrade: \(String(describing: failure))")
+        XCTAssertEqual(code, NSURLErrorCancelled,
+                       "a failing pin check did not stop the WebSocket upgrade: \(code.map(String.init) ?? "nil")")
     }
 
-    /// The 3.5.14 guard must now cover WebSocket tasks too: a task delegate that would answer the
-    /// server-trust challenge is rejected rather than allowed to displace pinning.
+    /// The guard covers WebSocket tasks: a task delegate that would answer the server-trust challenge
+    /// is rejected. Contrast with the positive path, which is not cancelled.
     func testWebSocketTaskDelegateCannotDisplacePinning() throws {
         try reinitializeServiceWithTargetHost()
-        MiniSDKAttesterProxyController.setNextPinningDirectiveJSON("{\"operation\": \"getPins\", \"shouldFail\": true}")
-        let session = ApproovURLSession(configuration: .ephemeral)
+        let recorder = CompletionRecordingDelegate()
+        let session = ApproovURLSession(configuration: .ephemeral, delegate: recorder, delegateQueue: nil)
         defer { session.invalidateAndCancel() }
         let wsURL = try XCTUnwrap(URL(string: targetURLString.replacingOccurrences(of: "https://", with: "wss://")))
         let done = expectation(description: "ws guard")
-        var failure: Error?
+        var code: Int?
+        recorder.onComplete = { code = ($0 as NSError?)?.code; done.fulfill() }
         let task = session.webSocketTask(with: wsURL)
         task.delegate = TrustAnyCertificateTaskDelegate()
         task.resume()
-        task.sendPing { failure = $0; done.fulfill() }
         wait(for: [done], timeout: 20)
-        XCTAssertEqual((failure as NSError?)?.code, NSURLErrorCancelled,
-                       "a trust-any task delegate got a WebSocket past pinning: \(String(describing: failure))")
+        XCTAssertEqual(code, NSURLErrorCancelled,
+                       "a trust-any task delegate was not rejected on a WebSocket: \(code.map(String.init) ?? "nil")")
     }
 
     func testInstallMessageSigningMalformedDERFailsOpen() throws {
@@ -998,8 +1021,9 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
                         "CONTROL FAILED: httpBody produced no digest either, so the test proves nothing")
     }
 
-    /// Consequence of the above: a REQUIRED body digest fails every upload task closed, including the
-    /// in-memory shape. A customer configuring required digests cannot use uploadTask at all.
+    /// Consequence of the above: a REQUIRED body digest fails every upload shape closed, exercised
+    /// through the real upload API rather than the request processor, since the claim is about
+    /// uploadTask and not about updateRequestWithApproov.
     func testRequiredBodyDigestFailsEveryUploadShapeClosed() throws {
         try reinitializeServiceWithTargetHost()
         let factory = try ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory()
@@ -1007,37 +1031,27 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
             .setBodyDigestConfig(ApproovDefaultMessageSigning.DIGEST_SHA256, required: true)
         ApproovService.setServiceMutator(ApproovDefaultMessageSigning().setDefaultFactory(factory))
 
-        var request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
-        request.httpMethod = "POST"
-        // As the signer sees it for any uploadTask: no httpBody, because the body is a parameter.
-        let response = ApproovService.updateRequestWithApproov(request: request, sessionConfig: nil)
-        XCTAssertEqual(response.decision, .ShouldFail,
-                       "an upload with a required digest did not fail closed")
-    }
-
-    /// A streamed request body is a one-shot stream: reading it to digest it would exhaust it before
-    /// URLSession could send it. With the digest REQUIRED that must fail closed, not proceed unsigned.
-    func testUploadFromStreamedRequestWithRequiredDigestFailsClosed() throws {
-        try reinitializeServiceWithTargetHost()
-        let factory = try ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory()
-            .setUseInstallMessageSigning()
-            .setBodyDigestConfig(ApproovDefaultMessageSigning.DIGEST_SHA256, required: true)
-        ApproovService.setServiceMutator(ApproovDefaultMessageSigning().setDefaultFactory(factory))
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try Data("{\"upload\":\"file\"}".utf8).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
 
         var request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
         request.httpMethod = "POST"
-        request.httpBodyStream = InputStream(data: Data("{\"upload\":\"stream\"}".utf8))
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        let response = ApproovService.updateRequestWithApproov(request: request, sessionConfig: nil)
-        XCTAssertEqual(response.decision, .ShouldFail, "a streamed body with a required digest did not fail closed")
-        guard case let ApproovError.permanentError(message)? = response.error else {
-            return XCTFail("expected permanentError, got \(String(describing: response.error))")
-        }
-        XCTAssertTrue(message.contains("Failed to create required body digest"), "unexpected message: \(message)")
+        XCTAssertNotNil(uploadTaskFailure(for: request, from: Data("{\"upload\":\"data\"}".utf8)),
+                        "uploadTask(with:from:) proceeded despite a required body digest")
+        XCTAssertNotNil(uploadTaskFailure(for: request, fromFile: file),
+                        "uploadTask(with:fromFile:) proceeded despite a required body digest")
+
+        var streamed = request
+        streamed.httpBodyStream = InputStream(data: Data("{\"upload\":\"stream\"}".utf8))
+        XCTAssertNotNil(uploadTaskFailure(for: streamed, streamed: true),
+                        "uploadTask(withStreamedRequest:) proceeded despite a required body digest")
     }
 
-    /// With the digest OPTIONAL the same streamed upload proceeds and is signed, but the signature
-    /// covers no body. A verifier must not read a valid signature as proof the body was covered.
+    /// With the digest OPTIONAL a streamed upload proceeds through the real API and is signed, but the
+    /// signature covers no body. Asserted on the wire, not on the request processor.
     func testUploadFromStreamedRequestWithOptionalDigestIsSignedWithoutBodyCoverage() throws {
         try reinitializeServiceWithTargetHost()
         let factory = try ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory()
@@ -1047,11 +1061,23 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
 
         var request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
         request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBodyStream = InputStream(data: Data("{\"upload\":\"stream\"}".utf8))
 
-        let signed = try ApproovService.signRequest(request)
-        XCTAssertNotNil(signed.value(forHTTPHeaderField: "Signature"), "the streamed upload was not signed")
-        XCTAssertNil(signed.value(forHTTPHeaderField: "Content-Digest"),
+        let recorder = CompletionRecordingDelegate()
+        let session = ApproovURLSession(configuration: .ephemeral, delegate: recorder, delegateQueue: nil)
+        defer { session.invalidateAndCancel() }
+        let done = expectation(description: "streamed upload")
+        var failure: Error?
+        recorder.onComplete = { failure = $0; done.fulfill() }
+        let task = session.uploadTask(withStreamedRequest: request)
+        task.resume()
+        wait(for: [done], timeout: 15)
+
+        XCTAssertNil(failure, "the streamed upload failed with an optional digest: \(String(describing: failure))")
+        let sent = task.currentRequest
+        XCTAssertNotNil(sent?.value(forHTTPHeaderField: "Signature"), "the streamed upload was not signed")
+        XCTAssertNil(sent?.value(forHTTPHeaderField: "Content-Digest"),
                      "a Content-Digest appeared for a body that cannot be read")
     }
 
@@ -1511,6 +1537,36 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
             fatalError("TESTING_REPLY_URL_UNPROTECTED environment variable is not set")
         }
         return url
+    }
+
+    /// Runs an upload task through the real API and reports the error it completed with, so a
+    /// fail-closed outcome can be asserted at the task level rather than on the request processor.
+    private func uploadTaskFailure(for request: URLRequest, fromFile file: URL? = nil, from data: Data? = nil, streamed: Bool = false) -> Error? {
+        let expectation = self.expectation(description: "upload failure")
+        var failure: Error?
+        let session = ApproovURLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        let handler: (Data?, URLResponse?, Error?) -> Void = { _, _, e in
+            failure = e
+            expectation.fulfill()
+        }
+        let task: URLSessionUploadTask
+        if streamed {
+            task = session.uploadTask(withStreamedRequest: request)
+            // a streamed upload has no completion handler, so completion arrives via the delegate
+        } else if let file = file {
+            task = session.uploadTask(with: request, fromFile: file, completionHandler: handler)
+        } else {
+            task = session.uploadTask(with: request, from: data, completionHandler: handler)
+        }
+        if streamed {
+            let recorder = CompletionRecordingDelegate()
+            recorder.onComplete = { e in failure = e; expectation.fulfill() }
+            task.delegate = recorder
+        }
+        task.resume()
+        waitForExpectations(timeout: 15.0)
+        return failure
     }
 
     /// Runs an upload task and returns the reply worker's echo of the request, so the headers that
