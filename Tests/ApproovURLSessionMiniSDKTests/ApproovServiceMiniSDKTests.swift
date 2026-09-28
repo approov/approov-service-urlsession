@@ -1549,6 +1549,44 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
         XCTAssertTrue(session.delegateQueue === queue)
     }
 
+    /// URLSession deletes a download's temporary file when the task's completion handler returns, so the async
+    /// download methods must hand the caller a file it owns, as URLSession.download(for:) does. URLSession.shared
+    /// is the control: if the control ever fails, the test is wrong rather than the library.
+    func testAsyncDownloadMethodsHandTheFileToTheCaller() async throws {
+        try reinitializeServiceWithTargetHost()
+        let session = ApproovURLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        let url = try XCTUnwrap(URL(string: targetURLString))
+
+        let downloads: [(String, () async throws -> URL)] = [
+            ("URLSession.download(for:) (control)", {
+                try await URLSession.shared.download(for: URLRequest(url: url)).0
+            }),
+            ("downloadWithApproov(for:)", {
+                try await session.downloadWithApproov(for: URLRequest(url: url)).0
+            }),
+            ("downloadWithApproov(from:)", {
+                try await session.downloadWithApproov(from: url).0
+            }),
+            ("downloadWithApproov(for:delegate:)", {
+                try await session.downloadWithApproov(for: URLRequest(url: url), delegate: EmptyTaskDelegate()).0
+            }),
+            ("downloadWithApproov(from:delegate:)", {
+                try await session.downloadWithApproov(from: url, delegate: EmptyTaskDelegate()).0
+            }),
+        ]
+        for (name, download) in downloads {
+            let fileURL = try await download()
+            defer { try? FileManager.default.removeItem(at: fileURL) }
+            // give URLSession ample time to clean up anything it still owns
+            try await Task.sleep(nanoseconds: 300_000_000)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: fileURL.path), "\(name): the downloaded file was deleted")
+            let body = try Data(contentsOf: fileURL)
+            XCTAssertFalse(body.isEmpty, "\(name): the downloaded file is empty")
+        }
+    }
+
+
     private func sha256Base64(_ value: String) -> String {
         Data(SHA256.hash(data: Data(value.utf8))).base64EncodedString()
     }
