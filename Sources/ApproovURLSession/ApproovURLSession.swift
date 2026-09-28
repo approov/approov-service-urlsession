@@ -175,7 +175,13 @@ public class ApproovURLSession: URLSession {
     /**
      *  Creates a download task to resume a previously canceled or failed download
      *  https://developer.apple.com/documentation/foundation/urlsession/1409226-downloadtask
-     *  NOTE: this call is not protected by Approov
+     *
+     *  NOT SUPPORTED BY APPROOV. A resumed download replays a request whose Approov token was
+     *  embedded in the resume data and has since expired, so no valid token can be presented and
+     *  none is added. TLS pinning still applies. Start a fresh downloadTask instead.
+     *
+     *  The override is kept rather than removed: without it the inherited URLSession implementation
+     *  would run against a base class this subclass cannot initialise.
      */
     @available(*, deprecated, message: "Not supported by Approov. A resumed download replays a request whose Approov token was embedded in the resume data and has since expired, so no valid token can be presented and none is added. TLS pinning still applies. Start a fresh downloadTask instead.")
     public override func downloadTask(withResumeData: Data) -> URLSessionDownloadTask {
@@ -185,7 +191,13 @@ public class ApproovURLSession: URLSession {
     /**
      *  Creates a download task to resume a previously canceled or failed download and calls a handler upon completion
      *  https://developer.apple.com/documentation/foundation/urlsession/1411598-downloadtask
-     *  NOTE: this call is not protected by Approov
+     *
+     *  NOT SUPPORTED BY APPROOV. A resumed download replays a request whose Approov token was
+     *  embedded in the resume data and has since expired, so no valid token can be presented and
+     *  none is added. TLS pinning still applies. Start a fresh downloadTask instead.
+     *
+     *  The override is kept rather than removed: without it the inherited URLSession implementation
+     *  would run against a base class this subclass cannot initialise.
      */
     @available(*, deprecated, message: "Not supported by Approov. A resumed download replays a request whose Approov token was embedded in the resume data and has since expired, so no valid token can be presented and none is added. TLS pinning still applies. Start a fresh downloadTask instead.")
     public override func downloadTask(withResumeData: Data, completionHandler: @escaping (URL?, URLResponse?, Error?) -> Void) -> URLSessionDownloadTask {
