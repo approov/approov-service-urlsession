@@ -1498,6 +1498,57 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
         }
     }
 
+    /// A task delegate implementing the session-level challenge callback is offered the server-trust
+    /// challenge before the session delegate, so it would decide pinning for that task. The classic
+    /// task methods hand back a task whose delegate the caller can still set, so the task must be
+    /// rejected rather than allowed to run unpinned. Without the guard this request returns 200 with
+    /// the pin check forced to fail.
+    func testClassicTaskWithSessionLevelChallengeDelegateIsRejected() throws {
+        try reinitializeServiceWithTargetHost()
+        MiniSDKAttesterProxyController.setNextPinningDirectiveJSON("{\"operation\": \"getPins\", \"shouldFail\": true}")
+        let session = ApproovURLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        let url = try XCTUnwrap(URL(string: targetURLString))
+
+        let done = expectation(description: "task finished")
+        var failure: Error?
+        var status = -1
+        let task = session.dataTask(with: URLRequest(url: url)) { _, response, error in
+            status = (response as? HTTPURLResponse)?.statusCode ?? -1
+            failure = error
+            done.fulfill()
+        }
+        task.delegate = TrustAnyCertificateTaskDelegate()
+        task.resume()
+        wait(for: [done], timeout: 20)
+
+        XCTAssertNotNil(failure, "a task delegate that accepts any certificate bypassed pinning on the classic task API (status \(status))")
+    }
+
+    /// The guard must not reject a delegate that only implements the task-level challenge callback:
+    /// it cannot see a server-trust challenge, and rejecting it would break mutual TLS callers.
+    func testClassicTaskWithTaskLevelOnlyChallengeDelegateStillRuns() throws {
+        try reinitializeServiceWithTargetHost()
+        let session = ApproovURLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        let url = try XCTUnwrap(URL(string: targetURLString))
+
+        let done = expectation(description: "task finished")
+        var status = -1
+        var failure: Error?
+        let task = session.dataTask(with: URLRequest(url: url)) { _, response, error in
+            status = (response as? HTTPURLResponse)?.statusCode ?? -1
+            failure = error
+            done.fulfill()
+        }
+        task.delegate = TaskLevelOnlyChallengeDelegate()
+        task.resume()
+        wait(for: [done], timeout: 20)
+
+        XCTAssertNil(failure, "a task-level-only challenge delegate was rejected: \(String(describing: failure))")
+        XCTAssertEqual(status, 200)
+    }
+
     /// Callbacks the task delegate does not implement are delivered to the delegate the session
     /// was created with, as they are for URLSession.data(for:delegate:). Previously the per-call
     /// session replaced the session delegate entirely.
@@ -1616,6 +1667,16 @@ private final class TrustAnyCertificateTaskDelegate: NSObject, URLSessionTaskDel
         } else {
             completionHandler(.performDefaultHandling, nil)
         }
+    }
+}
+
+/// Accepts any server certificate at the task-level challenge only. Cannot override pinning,
+/// because connection-level challenges are never offered to that selector, so a task carrying it
+/// must still be allowed to run.
+private final class TaskLevelOnlyChallengeDelegate: NSObject, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge,
+                    completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        completionHandler(.performDefaultHandling, nil)
     }
 }
 

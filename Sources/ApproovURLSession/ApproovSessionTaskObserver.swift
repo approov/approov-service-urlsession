@@ -161,6 +161,18 @@ public class ApproovSessionTaskObserver: NSObject {
         }
     }
 
+    /// True when the task carries a delegate, other than our own wrapper, that would be offered the
+    /// server-trust challenge ahead of the session delegate. Only the session-level selector is
+    /// checked: URLSession delivers connection-level challenges, server trust among them, to that
+    /// selector and never to the task-level one, so a delegate implementing only the task-level
+    /// callback cannot override pinning and must keep working for its own challenges.
+    private static func taskDelegateCouldOverridePinning(_ task: URLSessionTask) -> Bool {
+        guard #available(iOS 15.0, macOS 12.0, watchOS 8.0, tvOS 15.0, *) else { return false }
+        guard let delegate = task.delegate else { return false }
+        if delegate is PinningTaskDelegate { return false }
+        return delegate.responds(to: #selector(URLSessionDelegate.urlSession(_:didReceive:completionHandler:)))
+    }
+
     /// Handles a state change reported by the per-task observation installed in observe(task:).
     /// The registration is taken off the task first, so this runs at most once per task.
     private func handleStateChange(of task: URLSessionTask, newState: URLSessionTask.State) {
@@ -194,6 +206,28 @@ public class ApproovSessionTaskObserver: NSObject {
         }
 
         task.suspend()
+
+        // A task delegate that implements the session-level challenge callback is offered the
+        // server-trust challenge ahead of the session delegate, so it decides pinning for this
+        // task and PinningURLSessionDelegate never runs. ApproovURLSession owns that decision for
+        // a protected host, so such a task cannot be allowed to proceed. The delegate is settable
+        // only until the task is resumed, and it cannot be replaced now, so the task is rejected
+        // rather than re-wrapped. Reached before the TLS handshake because the task is suspended
+        // above. The async convenience methods are unaffected: they attach a PinningTaskDelegate,
+        // which routes both challenge callbacks through pinning. A delegate implementing only the
+        // task-level callback is left alone, since connection-level challenges are never offered
+        // to it.
+        if ApproovSessionTaskObserver.taskDelegateCouldOverridePinning(task) {
+            if ApproovService.loggingLevel >= .error {
+                os_log(
+                    "ApproovService: Rejecting URLSession task %d: its task delegate implements urlSession(_:didReceive:completionHandler:) and would decide server trust instead of Approov. Pass the delegate to one of the WithApproov methods, or to ApproovURLSession's initializer, so pinning is applied.",
+                    type: .error, task.taskIdentifier
+                )
+            }
+            task.cancel()
+            return
+        }
+
         DispatchQueue.global(qos: .userInitiated).async {
             guard let currentRequest = task.currentRequest else {
                 task.cancel()
