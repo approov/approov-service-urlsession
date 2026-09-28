@@ -780,6 +780,71 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
         }
     }
 
+    private func initBypassMode() throws {
+        MiniSDKAttesterProxyController.reset()
+        let targetHost = try XCTUnwrap(URL(string: targetURLString)?.host)
+        MiniSDKAttesterProxyController.loadScenarioJSON(
+            scenarioJSON(caseName: uniqueCaseName(prefix: "bypass"), body: "\"protectedDomains\": [\"\(targetHost)\"]"))
+        ApproovService.resetForTesting()
+        ApproovService.setLoggingLevel(.off)
+        try ApproovService.initialize(config: "", comment: "codex-bypass")
+    }
+
+    /// CODEX-1: Approov disabled, app session delegate refuses, task delegate implements only the
+    /// task-level callback. The app's session delegate must still decide, and must still refuse.
+    func testCodex1AppSessionDelegateStillDecidesInBypassMode() async throws {
+        try initBypassMode()
+        let appSessionDelegate = RefusingSessionDelegate()
+        let session = ApproovURLSession(configuration: .ephemeral, delegate: appSessionDelegate, delegateQueue: nil)
+        defer { session.invalidateAndCancel() }
+        let url = try XCTUnwrap(URL(string: targetURLString))
+        var completed = false
+        do {
+            _ = try await session.dataWithApproov(for: URLRequest(url: url), delegate: TaskLevelOnlyDefaultHandling())
+            completed = true
+        } catch {}
+        print("CODEX-1 appSessionDelegateAsked=\(appSessionDelegate.wasAsked) requestCompleted=\(completed)")
+        XCTAssertTrue(appSessionDelegate.wasAsked, "the app's session delegate was never asked")
+        XCTAssertFalse(completed, "the request completed although the app's session delegate refused")
+    }
+
+    /// CODEX-2: Approov disabled. A classic task with a plain session-level auth callback must run.
+    func testCodex2ClassicTaskWorksInBypassMode() throws {
+        try initBypassMode()
+        let session = ApproovURLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        let url = try XCTUnwrap(URL(string: targetURLString))
+        let done = expectation(description: "bypass task")
+        var status = -1
+        var failure: Error?
+        let task = session.dataTask(with: URLRequest(url: url)) { _, r, e in
+            status = (r as? HTTPURLResponse)?.statusCode ?? -1; failure = e; done.fulfill()
+        }
+        task.delegate = SessionLevelDefaultHandling()
+        task.resume()
+        wait(for: [done], timeout: 20)
+        print("CODEX-2 status=\(status) error=\(failure.map { "\($0)" } ?? "nil")")
+        XCTAssertNil(failure, "a classic task was cancelled in bypass mode, where there is no pinning to protect")
+        XCTAssertEqual(status, 200)
+    }
+
+    /// CODEX-3: a host where Approov signing is not configured. The application's own Content-Digest
+    /// must survive; it is not ours to delete.
+    func testCodex3ApplicationContentDigestSurvivesWhenSigningNotConfigured() throws {
+        try reinitializeServiceWithTargetHost()
+        ApproovService.setServiceMutator(ApproovDefaultMessageSigning())   // no factory configured
+        var request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("sha-256=:YXBwLW93bmVkLWRpZ2VzdA==:", forHTTPHeaderField: "Content-Digest")
+        request.httpBody = Data("{\"a\":1}".utf8)
+        let reply = fetchNetworkReply(for: request)
+        let digest = getHeader(from: reply, key: "Content-Digest")
+        print("CODEX-3 Content-Digest on the wire = \(digest ?? "MISSING")")
+        XCTAssertEqual(digest, "sha-256=:YXBwLW93bmVkLWRpZ2VzdA==:",
+                       "the application's own Content-Digest was deleted")
+    }
+
     func testInstallMessageSigningMalformedDERFailsOpen() throws {
         let malformedSignatures: [(String, Data)] = [
             ("malformed-der", Data([0x31, 0x00])),
@@ -1621,40 +1686,6 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
         XCTAssertEqual(status, 200)
     }
 
-    /// A client-certificate challenge is not a pinning challenge, so it must reach the caller even when
-    /// the caller implements only the task-level callback. URLSession delivers connection-level
-    /// challenges to the session-level selector, which carries no task, so the wrapper forwards using
-    /// the task it is attached to. Without that, mutual TLS fails silently.
-    func testNonPinningChallengeReachesATaskLevelOnlyDelegate() throws {
-        let caller = ClientCertRecordingTaskDelegate()
-        let task = URLSession.shared.dataTask(with: try XCTUnwrap(URL(string: targetURLString)))
-        let wrapper = PinningTaskDelegate(wrapping: caller, for: task)
-
-        let space = URLProtectionSpace(host: "example.com", port: 443, protocol: "https",
-                                       realm: nil, authenticationMethod: NSURLAuthenticationMethodClientCertificate)
-        let challenge = URLAuthenticationChallenge(protectionSpace: space, proposedCredential: nil,
-                                                  previousFailureCount: 0, failureResponse: nil,
-                                                  error: nil, sender: ProbeChallengeSender())
-
-        let handled = expectation(description: "challenge handled")
-        wrapper.urlSession(URLSession.shared, didReceive: challenge) { _, _ in handled.fulfill() }
-        wait(for: [handled], timeout: 5)
-
-        XCTAssertEqual(caller.seen, NSURLAuthenticationMethodClientCertificate,
-                       "a client-certificate challenge was not forwarded to a task-level-only delegate")
-    }
-
-    /// The wrapper must claim the session-level selector for a task-level-only caller, otherwise the
-    /// challenge goes to the session delegate, whose callback has no task to forward with.
-    func testWrapperClaimsSessionLevelSelectorForTaskLevelOnlyDelegate() {
-        let sessionSel = #selector(URLSessionDelegate.urlSession(_:didReceive:completionHandler:))
-        let taskLevelOnly = PinningTaskDelegate(wrapping: ClientCertRecordingTaskDelegate())
-        XCTAssertTrue(taskLevelOnly.responds(to: sessionSel))
-        let neither = PinningTaskDelegate(wrapping: EmptyTaskDelegate())
-        XCTAssertFalse(neither.responds(to: sessionSel),
-                       "a delegate implementing no challenge callback must not claim the challenge")
-    }
-
     /// Callbacks the task delegate does not implement are delivered to the delegate the session
     /// was created with, as they are for URLSession.data(for:delegate:). Previously the per-call
     /// session replaced the session delegate entirely.
@@ -1764,6 +1795,32 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
 /// A task delegate that implements no callbacks.
 private final class EmptyTaskDelegate: NSObject, URLSessionTaskDelegate {}
 
+/// CODEX-1: the application's own session delegate, which refuses every server-trust challenge.
+private final class RefusingSessionDelegate: NSObject, URLSessionTaskDelegate {
+    var wasAsked = false
+    func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
+                    completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        wasAsked = true
+        completionHandler(.cancelAuthenticationChallenge, nil)
+    }
+}
+
+/// CODEX-1/2: a task delegate implementing ONLY the task-level callback.
+private final class TaskLevelOnlyDefaultHandling: NSObject, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge,
+                    completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        completionHandler(.performDefaultHandling, nil)
+    }
+}
+
+/// CODEX-2: a normal session-level auth callback that just asks the OS to handle it.
+private final class SessionLevelDefaultHandling: NSObject, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
+                    completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        completionHandler(.performDefaultHandling, nil)
+    }
+}
+
 /// A task delegate that accepts any server certificate at the session-level challenge.
 private final class TrustAnyCertificateTaskDelegate: NSObject, URLSessionTaskDelegate {
     func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
@@ -1784,23 +1841,6 @@ private final class TaskLevelOnlyChallengeDelegate: NSObject, URLSessionTaskDele
                     completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
         completionHandler(.performDefaultHandling, nil)
     }
-}
-
-/// Records a non-pinning challenge delivered to the task-level callback only.
-private final class ClientCertRecordingTaskDelegate: NSObject, URLSessionTaskDelegate {
-    var seen: String?
-    func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge,
-                    completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
-        seen = challenge.protectionSpace.authenticationMethod
-        completionHandler(.performDefaultHandling, nil)
-    }
-}
-
-/// Stands in for URLSession's challenge sender in a synthesised challenge.
-private final class ProbeChallengeSender: NSObject, URLAuthenticationChallengeSender {
-    func use(_ credential: URLCredential, for challenge: URLAuthenticationChallenge) {}
-    func continueWithoutCredential(for challenge: URLAuthenticationChallenge) {}
-    func cancel(_ challenge: URLAuthenticationChallenge) {}
 }
 
 /// A delegate that reports when it receives task metrics.

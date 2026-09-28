@@ -171,8 +171,11 @@ public class ApproovDefaultMessageSigning: ApproovServiceMutator, CustomStringCo
             // Generate and add a message signature
             let provider = ApproovURLSessionComponentProvider(request: request)
             guard let params = try buildSignatureParameters(provider: provider, changes: changes) else {
-                // No signature to be added; proceed with the original request
-                return ApproovDefaultMessageSigning.withoutSignatureHeaders(provider.getRequest())
+                // No signature to be added; proceed with the original request. Nothing of ours was
+                // put on it, so nothing of ours is removed: a Signature or Content-Digest here is the
+                // application's own, for a host we are not signing for, and deleting it would corrupt
+                // a request we never touched.
+                return request
             }
 
             // Unsupported signing algorithm is a developer misconfiguration: fail closed
