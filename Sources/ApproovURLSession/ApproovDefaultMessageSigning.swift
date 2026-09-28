@@ -151,6 +151,19 @@ public class ApproovDefaultMessageSigning: ApproovServiceMutator, CustomStringCo
      *             to the ApproovServiceMutator.handleInterceptorProcessedRequest
      *             method.
      */
+    /// A request carrying no signing headers. Returned from every path that proceeds unsigned, so a
+    /// value left by the application, or by an earlier pass over the same request, is never sent with
+    /// a token and body it does not authenticate. Content-Digest is included: generateBodyDigest
+    /// mutates the provider's request before the fail-open paths below are reached, so omitting it
+    /// would send a body digest that no signature covers.
+    private static func withoutSignatureHeaders(_ request: URLRequest) -> URLRequest {
+        var unsigned = request
+        for field in ["Signature", "Signature-Input", "Signature-Base-Digest", "Content-Digest"] {
+            unsigned.setValue(nil, forHTTPHeaderField: field)
+        }
+        return unsigned
+    }
+
     @available(*, deprecated, message: "Use handleInterceptorProcessedRequest instead.")
     public func processedRequest(_ request: URLRequest, changes: ApproovRequestMutations) throws -> URLRequest {
         // If the request doesn't have an Approov token, we don't need to sign it
@@ -159,7 +172,7 @@ public class ApproovDefaultMessageSigning: ApproovServiceMutator, CustomStringCo
             let provider = ApproovURLSessionComponentProvider(request: request)
             guard let params = try buildSignatureParameters(provider: provider, changes: changes) else {
                 // No signature to be added; proceed with the original request
-                return request
+                return ApproovDefaultMessageSigning.withoutSignatureHeaders(provider.getRequest())
             }
 
             // Unsupported signing algorithm is a developer misconfiguration: fail closed
@@ -192,7 +205,7 @@ public class ApproovDefaultMessageSigning: ApproovServiceMutator, CustomStringCo
                         if ApproovService.loggingLevel >= .error {
                             os_log("ApproovService: install message signature unavailable, skipping signing", type: .error)
                         }
-                        return request
+                        return ApproovDefaultMessageSigning.withoutSignatureHeaders(provider.getRequest())
                     }
                     // decode the signature from ASN.1 DER format (a malformed signature fails open via the catch)
                     signature = try ApproovDefaultMessageSigning.decodeASN_1_DER_ES256_Signature(decodedSignature)
@@ -203,7 +216,7 @@ public class ApproovDefaultMessageSigning: ApproovServiceMutator, CustomStringCo
                         if ApproovService.loggingLevel >= .error {
                             os_log("ApproovService: account message signature unavailable, skipping signing", type: .error)
                         }
-                        return request
+                        return ApproovDefaultMessageSigning.withoutSignatureHeaders(provider.getRequest())
                     }
                     signature = decodedSignature
                 }
@@ -214,19 +227,19 @@ public class ApproovDefaultMessageSigning: ApproovServiceMutator, CustomStringCo
                     if ApproovService.loggingLevel >= .error {
                         os_log("ApproovService: failed to serialize signature headers, skipping signing", type: .error)
                     }
-                    return request
+                    return ApproovDefaultMessageSigning.withoutSignatureHeaders(provider.getRequest())
                 }
 
                 // Add headers to the request
                 var signedRequest = provider.getRequest()
-                signedRequest.addValue(sigHeader, forHTTPHeaderField: "Signature")
-                signedRequest.addValue(sigInputHeader, forHTTPHeaderField: "Signature-Input")
+                signedRequest.setValue(sigHeader, forHTTPHeaderField: "Signature")
+                signedRequest.setValue(sigInputHeader, forHTTPHeaderField: "Signature-Input")
 
                 if params.isDebugMode() {
                     let digest = ApproovDefaultMessageSigning.sha256(data: Data(message.utf8))
                     // The optional debug digest header must not drop a valid signature on failure.
                     if let sigBaseDigestHeader = try? SFV.serializeDictionary(key: "sha-256", data: digest) {
-                        signedRequest.addValue(sigBaseDigestHeader, forHTTPHeaderField: "Signature-Base-Digest")
+                        signedRequest.setValue(sigBaseDigestHeader, forHTTPHeaderField: "Signature-Base-Digest")
                     } else if ApproovService.loggingLevel >= .debug {
                         os_log("ApproovService: Failed to serialize Signature-Base-Digest header - no debug entry", type: .debug)
                     }
@@ -240,10 +253,11 @@ public class ApproovDefaultMessageSigning: ApproovServiceMutator, CustomStringCo
                 if ApproovService.loggingLevel >= .error {
                     os_log("ApproovService: message signing failed, proceeding unsigned: %@", type: .error, error.localizedDescription)
                 }
-                return request
+                return ApproovDefaultMessageSigning.withoutSignatureHeaders(provider.getRequest())
             }
         }
 
+        // No Approov token on the request, so nothing was signed and nothing of ours to strip.
         return request
     }
 
@@ -604,7 +618,7 @@ public class SignatureParametersFactory {
             guard let digestHeader = try SFV.serializeDictionary(key: bodyDigestAlg, data: digest) else {
                 throw ApproovError.permanentError(message: "Failed to serialize Content-Digest header")
             }
-            request.addValue(digestHeader, forHTTPHeaderField: "Content-Digest")
+            request.setValue(digestHeader, forHTTPHeaderField: "Content-Digest")
             provider.setRequest(request)
         } catch let error {
             throw ApproovError.permanentError(message: "Failed to serialize Content-Digest header: \(error)")

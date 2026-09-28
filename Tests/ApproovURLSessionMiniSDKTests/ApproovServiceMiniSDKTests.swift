@@ -708,6 +708,78 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
     /// Malformed and truncated ES256 ASN.1/DER install signatures should throw
     /// inside the decoder, be caught by the fail-open signing policy, and allow
     /// the request to proceed unsigned.
+    /// A fail-open must emit no signing headers, including ones the caller had already set. Before the
+    /// fix every fail-open path returned the inbound request untouched, so a stale Signature was
+    /// transmitted with a token and body it does not authenticate.
+    func testFailOpenStripsStaleSignatureHeadersSuppliedByTheCaller() throws {
+        try reinitializeServiceWithTargetHost()
+        let factory = ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory()
+            .setUseInstallMessageSigning()
+        let signer = ApproovDefaultMessageSigning()
+            .setInstallMessageSignatureProviderForTesting { _ in Data([0x31, 0x00]).base64EncodedString() }
+            .setDefaultFactory(factory)
+        ApproovService.setServiceMutator(signer)
+
+        var request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
+        request.httpMethod = "GET"
+        request.setValue("install=:c3RhbGU=:", forHTTPHeaderField: "Signature")
+        request.setValue("install=(\"@method\")", forHTTPHeaderField: "Signature-Input")
+        request.setValue("sha-256=:c3RhbGU=:", forHTTPHeaderField: "Signature-Base-Digest")
+        let reply = fetchNetworkReply(for: request)
+
+        XCTAssertNotNil(getHeader(from: reply, key: "Approov-Token"), "the token must survive a fail-open")
+        XCTAssertNil(getHeader(from: reply, key: "Signature"), "a stale Signature survived the fail-open")
+        XCTAssertNil(getHeader(from: reply, key: "Signature-Input"), "a stale Signature-Input survived the fail-open")
+        XCTAssertNil(getHeader(from: reply, key: "Signature-Base-Digest"), "a stale Signature-Base-Digest survived the fail-open")
+    }
+
+    /// The body-digest case needs a body: generateBodyDigest mutates the provider's request before the
+    /// fail-open paths run, so a body-less fixture cannot catch a Content-Digest left behind with no
+    /// signature covering it.
+    func testFailOpenStripsTheBodyDigestItAlreadyAdded() throws {
+        try reinitializeServiceWithTargetHost()
+        let factory = try ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory()
+            .setUseInstallMessageSigning()
+            .setBodyDigestConfig("sha-256", required: false)
+        let signer = ApproovDefaultMessageSigning()
+            .setInstallMessageSignatureProviderForTesting { _ in Data([0x31, 0x00]).base64EncodedString() }
+            .setDefaultFactory(factory)
+        ApproovService.setServiceMutator(signer)
+
+        var request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = Data("{\"check\":\"fail-open-digest\"}".utf8)
+        let reply = fetchNetworkReply(for: request)
+
+        XCTAssertNotNil(getHeader(from: reply, key: "Approov-Token"), "the token must survive a fail-open")
+        XCTAssertNil(getHeader(from: reply, key: "Signature"), "a signature was sent despite the fail-open")
+        XCTAssertNil(getHeader(from: reply, key: "Content-Digest"),
+                     "a body digest was sent with no signature covering it")
+    }
+
+    /// A stale value on a header that must appear exactly once has to be replaced, not appended to.
+    /// addValue produced "install=:old:, install=:new:", which RFC 9421 verifiers reject.
+    func testSigningHeadersReplaceAStaleValueRatherThanAppending() throws {
+        try reinitializeServiceWithTargetHost()
+        let factory = ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory()
+            .setUseInstallMessageSigning()
+        ApproovService.setServiceMutator(ApproovDefaultMessageSigning().setDefaultFactory(factory))
+
+        var request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
+        request.httpMethod = "GET"
+        request.setValue("install=:c3RhbGU=:", forHTTPHeaderField: "Signature")
+        request.setValue("install=(\"@method\")", forHTTPHeaderField: "Signature-Input")
+        let reply = fetchNetworkReply(for: request)
+
+        for field in ["Signature", "Signature-Input"] {
+            let value = try XCTUnwrap(getHeader(from: reply, key: field), "\(field) missing; signing did not run")
+            let members = value.components(separatedBy: "install=").count - 1
+            XCTAssertEqual(members, 1, "\(field) carries \(members) dictionary members: \(value)")
+            XCTAssertFalse(value.contains("c3RhbGU="), "\(field) still carries the stale value: \(value)")
+        }
+    }
+
     func testInstallMessageSigningMalformedDERFailsOpen() throws {
         let malformedSignatures: [(String, Data)] = [
             ("malformed-der", Data([0x31, 0x00])),
