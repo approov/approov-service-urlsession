@@ -29,10 +29,10 @@ import Foundation
 /// on to the caller's delegate.
 @available(iOS 15.0, *)
 final class PinningTaskDelegate: NSObject, URLSessionTaskDelegate {
-    private static let challengeSelectors: Set<Selector> = [
-        #selector(URLSessionDelegate.urlSession(_:didReceive:completionHandler:)),
-        #selector(URLSessionTaskDelegate.urlSession(_:task:didReceive:completionHandler:)),
-    ]
+    private static let sessionChallengeSelector =
+        #selector(URLSessionDelegate.urlSession(_:didReceive:completionHandler:))
+    private static let taskChallengeSelector =
+        #selector(URLSessionTaskDelegate.urlSession(_:task:didReceive:completionHandler:))
 
     // the delegate supplied by the caller for this task
     private let taskDelegate: URLSessionTaskDelegate
@@ -40,15 +40,30 @@ final class PinningTaskDelegate: NSObject, URLSessionTaskDelegate {
     // applies pinning to challenges before any reach the caller's delegate
     private let pinningDelegate: PinningURLSessionDelegate
 
-    init(wrapping delegate: URLSessionTaskDelegate) {
+    // The task this delegate is attached to. URLSession's session-level challenge callback carries no
+    // task, so without this a challenge arriving there cannot be handed to a caller that implements
+    // only the task-level callback. Weak: the task owns its delegate.
+    private weak var task: URLSessionTask?
+
+    init(wrapping delegate: URLSessionTaskDelegate, for task: URLSessionTask? = nil) {
         self.taskDelegate = delegate
         self.pinningDelegate = PinningURLSessionDelegate(with: delegate)
+        self.task = task
     }
 
     // Challenges are claimed only when the caller's delegate implements them; otherwise URLSession delivers
     // them to the session delegate, which applies pinning itself.
     override func responds(to aSelector: Selector!) -> Bool {
-        if PinningTaskDelegate.challengeSelectors.contains(aSelector) {
+        if aSelector == PinningTaskDelegate.sessionChallengeSelector {
+            // Claimed when the caller implements either challenge callback. URLSession delivers
+            // connection-level challenges, server trust and client certificates among them, only to
+            // this selector, so declining it when the caller implements just the task-level callback
+            // would send those to the session delegate, which cannot forward them on: its callback
+            // carries no task. Claiming it lets pinning run first and the rest reach the caller.
+            return taskDelegate.responds(to: aSelector)
+                || taskDelegate.responds(to: PinningTaskDelegate.taskChallengeSelector)
+        }
+        if aSelector == PinningTaskDelegate.taskChallengeSelector {
             return taskDelegate.responds(to: aSelector)
         }
         return super.responds(to: aSelector) || taskDelegate.responds(to: aSelector)
@@ -60,6 +75,16 @@ final class PinningTaskDelegate: NSObject, URLSessionTaskDelegate {
     }
 
     func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        // A challenge that is not about pinning, from a caller that implements only the task-level
+        // callback, is forwarded there with the task this delegate is attached to. Client-certificate,
+        // NTLM and Negotiate challenges arrive on this selector, so without this they would be lost.
+        if !challenge.protectionSpace.authenticationMethod.isEqual(NSURLAuthenticationMethodServerTrust),
+           !taskDelegate.responds(to: PinningTaskDelegate.sessionChallengeSelector),
+           taskDelegate.responds(to: PinningTaskDelegate.taskChallengeSelector),
+           let task = task {
+            taskDelegate.urlSession?(session, task: task, didReceive: challenge, completionHandler: completionHandler)
+            return
+        }
         pinningDelegate.urlSession(session, didReceive: challenge, completionHandler: completionHandler)
     }
 

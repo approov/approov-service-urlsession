@@ -396,7 +396,7 @@ public class ApproovURLSession: URLSession {
             }
             // the task delegate must be set before the task is first resumed
             if let delegate = delegate {
-                task.delegate = PinningTaskDelegate(wrapping: delegate)
+                task.delegate = PinningTaskDelegate(wrapping: delegate, for: task)
             }
             observe(task, completionHandler: completionGate)
             task.resume()

@@ -1549,6 +1549,40 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
         XCTAssertEqual(status, 200)
     }
 
+    /// A client-certificate challenge is not a pinning challenge, so it must reach the caller even when
+    /// the caller implements only the task-level callback. URLSession delivers connection-level
+    /// challenges to the session-level selector, which carries no task, so the wrapper forwards using
+    /// the task it is attached to. Without that, mutual TLS fails silently.
+    func testNonPinningChallengeReachesATaskLevelOnlyDelegate() throws {
+        let caller = ClientCertRecordingTaskDelegate()
+        let task = URLSession.shared.dataTask(with: try XCTUnwrap(URL(string: targetURLString)))
+        let wrapper = PinningTaskDelegate(wrapping: caller, for: task)
+
+        let space = URLProtectionSpace(host: "example.com", port: 443, protocol: "https",
+                                       realm: nil, authenticationMethod: NSURLAuthenticationMethodClientCertificate)
+        let challenge = URLAuthenticationChallenge(protectionSpace: space, proposedCredential: nil,
+                                                  previousFailureCount: 0, failureResponse: nil,
+                                                  error: nil, sender: ProbeChallengeSender())
+
+        let handled = expectation(description: "challenge handled")
+        wrapper.urlSession(URLSession.shared, didReceive: challenge) { _, _ in handled.fulfill() }
+        wait(for: [handled], timeout: 5)
+
+        XCTAssertEqual(caller.seen, NSURLAuthenticationMethodClientCertificate,
+                       "a client-certificate challenge was not forwarded to a task-level-only delegate")
+    }
+
+    /// The wrapper must claim the session-level selector for a task-level-only caller, otherwise the
+    /// challenge goes to the session delegate, whose callback has no task to forward with.
+    func testWrapperClaimsSessionLevelSelectorForTaskLevelOnlyDelegate() {
+        let sessionSel = #selector(URLSessionDelegate.urlSession(_:didReceive:completionHandler:))
+        let taskLevelOnly = PinningTaskDelegate(wrapping: ClientCertRecordingTaskDelegate())
+        XCTAssertTrue(taskLevelOnly.responds(to: sessionSel))
+        let neither = PinningTaskDelegate(wrapping: EmptyTaskDelegate())
+        XCTAssertFalse(neither.responds(to: sessionSel),
+                       "a delegate implementing no challenge callback must not claim the challenge")
+    }
+
     /// Callbacks the task delegate does not implement are delivered to the delegate the session
     /// was created with, as they are for URLSession.data(for:delegate:). Previously the per-call
     /// session replaced the session delegate entirely.
@@ -1678,6 +1712,23 @@ private final class TaskLevelOnlyChallengeDelegate: NSObject, URLSessionTaskDele
                     completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
         completionHandler(.performDefaultHandling, nil)
     }
+}
+
+/// Records a non-pinning challenge delivered to the task-level callback only.
+private final class ClientCertRecordingTaskDelegate: NSObject, URLSessionTaskDelegate {
+    var seen: String?
+    func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge,
+                    completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        seen = challenge.protectionSpace.authenticationMethod
+        completionHandler(.performDefaultHandling, nil)
+    }
+}
+
+/// Stands in for URLSession's challenge sender in a synthesised challenge.
+private final class ProbeChallengeSender: NSObject, URLAuthenticationChallengeSender {
+    func use(_ credential: URLCredential, for challenge: URLAuthenticationChallenge) {}
+    func continueWithoutCredential(for challenge: URLAuthenticationChallenge) {}
+    func cancel(_ challenge: URLAuthenticationChallenge) {}
 }
 
 /// A delegate that reports when it receives task metrics.
