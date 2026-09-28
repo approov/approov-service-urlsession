@@ -968,6 +968,116 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
     ///
     /// Required body digest generation is a policy error and must fail closed
     /// when no repeatable body is available.
+    /// No upload task can carry a body digest, whichever shape the body takes. uploadTask supplies the
+    /// body as a parameter or a file, never in request.httpBody, which is the only place the signer
+    /// looks. So an upload is signed over its method, target and headers, and the body is not covered.
+    /// Contrast with a dataTask carrying the same bytes in httpBody, which is covered.
+    func testNoUploadTaskShapeCarriesABodyDigest() throws {
+        try reinitializeServiceWithTargetHost()
+        let factory = try ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory()
+            .setUseInstallMessageSigning()
+            .setBodyDigestConfig(ApproovDefaultMessageSigning.DIGEST_SHA256, required: false)
+        ApproovService.setServiceMutator(ApproovDefaultMessageSigning().setDefaultFactory(factory))
+
+        let body = Data("{\"upload\":\"data\"}".utf8)
+        var request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        // uploadTask(with:from:), body passed as a parameter
+        let fromData = uploadNetworkReply(for: request, from: body)
+        XCTAssertNotNil(getHeader(from: fromData, key: "Signature"), "the upload was not signed")
+        XCTAssertNil(getHeader(from: fromData, key: "Content-Digest"),
+                     "uploadTask(with:from:) unexpectedly carried a Content-Digest")
+
+        // control: the same bytes in request.httpBody through a dataTask ARE covered
+        var withBody = request
+        withBody.httpBody = body
+        let control = fetchNetworkReply(for: withBody)
+        XCTAssertNotNil(getHeader(from: control, key: "Content-Digest"),
+                        "CONTROL FAILED: httpBody produced no digest either, so the test proves nothing")
+    }
+
+    /// Consequence of the above: a REQUIRED body digest fails every upload task closed, including the
+    /// in-memory shape. A customer configuring required digests cannot use uploadTask at all.
+    func testRequiredBodyDigestFailsEveryUploadShapeClosed() throws {
+        try reinitializeServiceWithTargetHost()
+        let factory = try ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory()
+            .setUseInstallMessageSigning()
+            .setBodyDigestConfig(ApproovDefaultMessageSigning.DIGEST_SHA256, required: true)
+        ApproovService.setServiceMutator(ApproovDefaultMessageSigning().setDefaultFactory(factory))
+
+        var request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
+        request.httpMethod = "POST"
+        // As the signer sees it for any uploadTask: no httpBody, because the body is a parameter.
+        let response = ApproovService.updateRequestWithApproov(request: request, sessionConfig: nil)
+        XCTAssertEqual(response.decision, .ShouldFail,
+                       "an upload with a required digest did not fail closed")
+    }
+
+    /// A streamed request body is a one-shot stream: reading it to digest it would exhaust it before
+    /// URLSession could send it. With the digest REQUIRED that must fail closed, not proceed unsigned.
+    func testUploadFromStreamedRequestWithRequiredDigestFailsClosed() throws {
+        try reinitializeServiceWithTargetHost()
+        let factory = try ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory()
+            .setUseInstallMessageSigning()
+            .setBodyDigestConfig(ApproovDefaultMessageSigning.DIGEST_SHA256, required: true)
+        ApproovService.setServiceMutator(ApproovDefaultMessageSigning().setDefaultFactory(factory))
+
+        var request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
+        request.httpMethod = "POST"
+        request.httpBodyStream = InputStream(data: Data("{\"upload\":\"stream\"}".utf8))
+
+        let response = ApproovService.updateRequestWithApproov(request: request, sessionConfig: nil)
+        XCTAssertEqual(response.decision, .ShouldFail, "a streamed body with a required digest did not fail closed")
+        guard case let ApproovError.permanentError(message)? = response.error else {
+            return XCTFail("expected permanentError, got \(String(describing: response.error))")
+        }
+        XCTAssertTrue(message.contains("Failed to create required body digest"), "unexpected message: \(message)")
+    }
+
+    /// With the digest OPTIONAL the same streamed upload proceeds and is signed, but the signature
+    /// covers no body. A verifier must not read a valid signature as proof the body was covered.
+    func testUploadFromStreamedRequestWithOptionalDigestIsSignedWithoutBodyCoverage() throws {
+        try reinitializeServiceWithTargetHost()
+        let factory = try ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory()
+            .setUseInstallMessageSigning()
+            .setBodyDigestConfig(ApproovDefaultMessageSigning.DIGEST_SHA256, required: false)
+        ApproovService.setServiceMutator(ApproovDefaultMessageSigning().setDefaultFactory(factory))
+
+        var request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
+        request.httpMethod = "POST"
+        request.httpBodyStream = InputStream(data: Data("{\"upload\":\"stream\"}".utf8))
+
+        let signed = try ApproovService.signRequest(request)
+        XCTAssertNotNil(signed.value(forHTTPHeaderField: "Signature"), "the streamed upload was not signed")
+        XCTAssertNil(signed.value(forHTTPHeaderField: "Content-Digest"),
+                     "a Content-Digest appeared for a body that cannot be read")
+    }
+
+    /// uploadTask(with:fromFile:) keeps the body in a file that URLSession reads itself, so the layer
+    /// never sees it either. Signed, but again with no body coverage.
+    func testUploadFromFileIsSignedWithoutBodyCoverage() throws {
+        try reinitializeServiceWithTargetHost()
+        let factory = try ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory()
+            .setUseInstallMessageSigning()
+            .setBodyDigestConfig(ApproovDefaultMessageSigning.DIGEST_SHA256, required: false)
+        ApproovService.setServiceMutator(ApproovDefaultMessageSigning().setDefaultFactory(factory))
+
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try Data("{\"upload\":\"file\"}".utf8).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+
+        var request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let reply = uploadNetworkReply(for: request, fromFile: file)
+
+        XCTAssertNotNil(getHeader(from: reply, key: "Approov-Token"), "the file upload carried no token")
+        XCTAssertNil(getHeader(from: reply, key: "Content-Digest"),
+                     "a Content-Digest appeared for a body held in a file")
+    }
+
     func testRequiredBodyDigestFailureFailsClosed() throws {
         try reinitializeServiceWithTargetHost()
 
@@ -1401,6 +1511,30 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
             fatalError("TESTING_REPLY_URL_UNPROTECTED environment variable is not set")
         }
         return url
+    }
+
+    /// Runs an upload task and returns the reply worker's echo of the request, so the headers that
+    /// actually reached the wire can be inspected. Mirrors fetchNetworkReply for uploads.
+    private func uploadNetworkReply(for request: URLRequest, fromFile file: URL? = nil, from data: Data? = nil) -> [String: Any]? {
+        let expectation = self.expectation(description: "upload request")
+        var receivedData: Data?
+        let session = ApproovURLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        let handler: (Data?, URLResponse?, Error?) -> Void = { d, _, _ in
+            receivedData = d
+            expectation.fulfill()
+        }
+        let task: URLSessionUploadTask
+        if let file = file {
+            task = session.uploadTask(with: request, fromFile: file, completionHandler: handler)
+        } else {
+            task = session.uploadTask(with: request, from: data, completionHandler: handler)
+        }
+        task.resume()
+        waitForExpectations(timeout: 10.0)
+        guard let d = receivedData,
+              let obj = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return nil }
+        return obj
     }
 
     private func fetchNetworkReply(for request: URLRequest) -> [String: Any]? {
