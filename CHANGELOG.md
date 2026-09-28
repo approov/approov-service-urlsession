@@ -4,6 +4,30 @@ All notable changes to this package will be documented in this file.
 
 The format is based on Keep a Changelog and this project adheres to Semantic Versioning.
 
+## [3.6.0] - 2026-09-25
+
+### Added
+- Swift 6 support. The package compiles in the Swift 6 language mode with complete data-race checking, and apps can use it from either the Swift 5 or the Swift 6 language mode. No existing API is removed or renamed, and apps in the Swift 5 language mode need no source changes and get no new warnings.
+- `ApproovUpdateResponse`, `ApproovFetchDecision`, `ApproovLogLevel` and `ApproovServiceMutatorDefault` conform to `Sendable`, and `ApproovURLSession` and `ApproovSessionTaskObserver` restate the `Sendable` conformance of their base classes. Swift 6 apps can pass these values between actors and tasks, for example returning the result of `updateRequestWithApproov` from a detached task, which previously failed to compile.
+- CocoaPods: the podspec declares `swift_versions` (5.0 and 6.0). Without it, CocoaPods compiled the pod in the Swift language mode of the app target, so it failed to build in apps set to Swift 6.
+- CI gates for Swift 6 support:
+  - The tests run again under Thread Sanitizer, including a new stress test that changes the configuration from many threads while requests are being updated and sent.
+  - New runtime tests in the Swift 6 language mode (`ApproovURLSessionSwift6Tests`) run with `SWIFT_UNEXPECTED_EXECUTOR_LOG_LEVEL=2`, so an actor isolation violation fails the run.
+  - App-style fixtures in the Swift 5 and Swift 6 language modes must compile without warnings (`CompatibilityTests`).
+  - The public API is checked for breaking changes against the latest release.
+  - The package is built for iOS against the Approov SDK, both with the default Xcode and with the oldest Xcode 16.
+
+### Fixed
+- `downloadWithApproov(for:delegate:)` and `downloadWithApproov(from:delegate:)` could return the URL of a file that no longer existed. `URLSession` deletes a download's temporary file as soon as the task's completion handler returns, and these methods returned to the caller only after that, so reading the file raced with its deletion (present since 3.2.5). The file is now moved to a new location in the temporary directory before the handler returns. As with `URLSession.download(for:)`, the caller owns the returned file and must move or delete it.
+- The completion handlers of the `ApproovURLSession` task methods (`dataTask`, `uploadTask`, `downloadTask`, `getAllTasks`, `getTasksWithCompletionHandler`, `flush` and `reset`) are now `@Sendable`, matching `URLSession`. Previously, in a Swift 6 app, a completion handler written inside a `@MainActor` type was treated as main-actor code although `URLSession` runs it on its delegate queue; the Swift runtime reports this as a data race. The methods are marked `@preconcurrency`, like the `URLSession` methods they override, so Swift 5 apps see no change.
+
+### Changed
+- Minimum toolchain: Xcode 16 (Swift 6.0), up from Xcode 14.3 (Swift 5.8). The App Store already requires Xcode 16 or later. Deployment targets are unchanged.
+- The SPKI header table used by dynamic pinning is now an immutable, lazily initialised constant rather than a dictionary populated on first use under a dedicated queue.
+
+### Note for Swift 6 apps
+- A completion handler passed to an `ApproovURLSession` task method is no longer isolated to the enclosing actor, exactly as with `URLSession`. Code that updated main-actor state directly from such a handler, which was already a data race at runtime, now fails to compile and must hop back explicitly, for example with `Task { @MainActor in ... }` or `DispatchQueue.main.async`.
+
 ## [3.5.13] - 2026-09-25
 
 ### Fixed

@@ -19,7 +19,7 @@ import os.log
 
 /// Type-erased access to a completion gate, used when Approov rejects a request
 /// before URLSession can produce a response.
-protocol ApproovTaskCompletionHandling: AnyObject {
+protocol ApproovTaskCompletionHandling: AnyObject, Sendable {
     func complete(with error: Error)
 }
 
@@ -55,11 +55,15 @@ final class ApproovTaskCompletionGate<Value>: ApproovTaskCompletionHandling, @un
 // Approov protection in an asynchronous thread. The actual networking task can then be resumed with the Approov protection. This
 // mechanism avoids any networking operations being executed in the context of the original calling thread, since this might
 // legitimately be from the main UI thread.
-public class ApproovSessionTaskObserver: NSObject {
+// @unchecked Sendable: the only mutable state is the associated-object registrations, accessed on registrationsQueue,
+// and the logging flag, accessed on loggingQueue.
+public class ApproovSessionTaskObserver: NSObject, @unchecked Sendable {
     /// Everything needed to process one task. Held by the task itself as an associated
     /// object, so its lifetime is exactly the task's: it cannot outlive the task, and a
     /// later task allocated at the same address cannot inherit it.
-    private final class TaskRegistration {
+    /// @unchecked Sendable: observation is assigned before the registration is published on the task, and is
+    /// otherwise only touched on registrationsQueue; all other properties are immutable.
+    private final class TaskRegistration: @unchecked Sendable {
         let pinningSession: URLSession
         let sessionConfig: URLSessionConfiguration
         let completionHandler: ApproovTaskCompletionHandling?
@@ -76,11 +80,13 @@ public class ApproovSessionTaskObserver: NSObject {
         }
     }
 
-    /// Key for the associated object holding the registration on a task.
-    private static var registrationKey: UInt8 = 0
+    /// Key for the associated object holding the registration on a task. Only its address is used; it is never
+    /// read or written, so it is not shared mutable state.
+    nonisolated(unsafe) private static var registrationKey: UInt8 = 0
 
     private static let loggingQueue = DispatchQueue(label: "io.approov.ApproovService.loggingQueue", qos: .userInitiated)
-    private static var _enableLogging: Bool = false
+    // accessed only on loggingQueue
+    nonisolated(unsafe) private static var _enableLogging: Bool = false
     public static var enableLogging: Bool {
         get {
             return loggingQueue.sync { _enableLogging }

@@ -263,7 +263,7 @@ public extension ApproovServiceMutator {
     }
 }
 
-public struct ApproovServiceMutatorDefault: ApproovServiceMutator, CustomStringConvertible {
+public struct ApproovServiceMutatorDefault: ApproovServiceMutator, CustomStringConvertible, Sendable {
     public static let shared = ApproovServiceMutatorDefault()
 
     public var description: String {

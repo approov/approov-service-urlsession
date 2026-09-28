@@ -20,15 +20,16 @@ import os.log
 // Provides an implementation of URLSession with Approov protection, including dynamic pinning. Methods delegate to an underlying
 // URLSession after adding Approov protection. Note that the "Performing Asynchronous Transfers" methods defined from iOS 15 do not
 // currently add Approov protection.
-public class ApproovURLSession: URLSession {
+// URLSession is Sendable; this subclass restates it as @unchecked because its stored state is immutable after init.
+public class ApproovURLSession: URLSession, @unchecked Sendable {
     // configuration for this session
-    var urlSessionConfiguration: URLSessionConfiguration
+    let urlSessionConfiguration: URLSessionConfiguration
     
     // delegate used to apply pinning to connections
-    var pinningURLSessionDelegate: PinningURLSessionDelegate
+    let pinningURLSessionDelegate: PinningURLSessionDelegate
     
     // URLSession with a delegate that applies pinning
-    var pinnedURLSession: URLSession
+    let pinnedURLSession: URLSession
     
     // task observer used across all sessions
     static let taskObserver: ApproovSessionTaskObserver = ApproovSessionTaskObserver()
@@ -111,7 +112,7 @@ public class ApproovURLSession: URLSession {
      *  Creates a task that retrieves the contents of the specified URL, then calls a handler upon completion
      *  https://developer.apple.com/documentation/foundation/urlsession/1410330-datatask
      */
-    public override func dataTask(with url: URL, completionHandler: @escaping (Data?, URLResponse?, Error?) -> Void) -> URLSessionDataTask {
+    @preconcurrency public override func dataTask(with url: URL, completionHandler: @escaping @Sendable (Data?, URLResponse?, Error?) -> Void) -> URLSessionDataTask {
         return dataTask(with: URLRequest(url: url), completionHandler: completionHandler)
     }
     
@@ -119,7 +120,7 @@ public class ApproovURLSession: URLSession {
      *  Creates a task that retrieves the contents of a URL based on the specified URL request object, and calls a handler upon completion
      *  https://developer.apple.com/documentation/foundation/urlsession/1407613-datatask
      */
-    public override func dataTask(with request: URLRequest, completionHandler: @escaping (Data?, URLResponse?, Error?) -> Void) -> URLSessionDataTask {
+    @preconcurrency public override func dataTask(with request: URLRequest, completionHandler: @escaping @Sendable (Data?, URLResponse?, Error?) -> Void) -> URLSessionDataTask {
         let completionGate = ApproovTaskCompletionGate<Data>(handler: completionHandler)
         let task = self.pinnedURLSession.dataTask(with: request) { data, response, error in
             completionGate.complete(value: data, response: response, error: error)
@@ -154,7 +155,7 @@ public class ApproovURLSession: URLSession {
      *  and calls a handler upon completion
      *  https://developer.apple.com/documentation/foundation/urlsession/1411608-downloadtask
      */
-    public override func downloadTask(with: URL, completionHandler: @escaping (URL?, URLResponse?, Error?) -> Void) -> URLSessionDownloadTask {
+    @preconcurrency public override func downloadTask(with: URL, completionHandler: @escaping @Sendable (URL?, URLResponse?, Error?) -> Void) -> URLSessionDownloadTask {
         return downloadTask(with: URLRequest(url: with), completionHandler: completionHandler)
     }
     
@@ -163,7 +164,7 @@ public class ApproovURLSession: URLSession {
      *  saves the results to a file, and calls a handler upon completion.
      *  https://developer.apple.com/documentation/foundation/nsurlsession/1411511-downloadtaskwithrequest?language=objc
      */
-    public override func downloadTask(with request: URLRequest, completionHandler: @escaping (URL?, URLResponse?, Error?) -> Void) -> URLSessionDownloadTask {
+    @preconcurrency public override func downloadTask(with request: URLRequest, completionHandler: @escaping @Sendable (URL?, URLResponse?, Error?) -> Void) -> URLSessionDownloadTask {
         let completionGate = ApproovTaskCompletionGate<URL>(handler: completionHandler)
         let task = self.pinnedURLSession.downloadTask(with: request) { url, response, error in
             completionGate.complete(value: url, response: response, error: error)
@@ -186,7 +187,7 @@ public class ApproovURLSession: URLSession {
      *  https://developer.apple.com/documentation/foundation/urlsession/1411598-downloadtask
      *  NOTE: this call is not protected by Approov
      */
-    public override func downloadTask(withResumeData: Data, completionHandler: @escaping (URL?, URLResponse?, Error?) -> Void) -> URLSessionDownloadTask {
+    @preconcurrency public override func downloadTask(withResumeData: Data, completionHandler: @escaping @Sendable (URL?, URLResponse?, Error?) -> Void) -> URLSessionDownloadTask {
         return self.pinnedURLSession.downloadTask(withResumeData: withResumeData, completionHandler: completionHandler)
     }
     
@@ -206,7 +207,7 @@ public class ApproovURLSession: URLSession {
      *  and calls a handler upon completion
      *  https://developer.apple.com/documentation/foundation/urlsession/1411518-uploadtask
      */
-    public override func uploadTask(with request: URLRequest, from: Data?, completionHandler: @escaping (Data?, URLResponse?, Error?) -> Void) -> URLSessionUploadTask {
+    @preconcurrency public override func uploadTask(with request: URLRequest, from: Data?, completionHandler: @escaping @Sendable (Data?, URLResponse?, Error?) -> Void) -> URLSessionUploadTask {
         let completionGate = ApproovTaskCompletionGate<Data>(handler: completionHandler)
         let task = self.pinnedURLSession.uploadTask(with: request, from: from) { data, response, error in
             completionGate.complete(value: data, response: response, error: error)
@@ -230,7 +231,7 @@ public class ApproovURLSession: URLSession {
      *  and calls a handler upon completion
      *  https://developer.apple.com/documentation/foundation/urlsession/1411518-uploadtask
      */
-    public override func uploadTask(with request: URLRequest, fromFile: URL, completionHandler: @escaping (Data?, URLResponse?, Error?) -> Void) -> URLSessionUploadTask {
+    @preconcurrency public override func uploadTask(with request: URLRequest, fromFile: URL, completionHandler: @escaping @Sendable (Data?, URLResponse?, Error?) -> Void) -> URLSessionUploadTask {
         let completionGate = ApproovTaskCompletionGate<Data>(handler: completionHandler)
         let task = self.pinnedURLSession.uploadTask(with: request, fromFile: fromFile) { data, response, error in
             completionGate.complete(value: data, response: response, error: error)
@@ -303,7 +304,7 @@ public class ApproovURLSession: URLSession {
      *  occur on a new TCP connection
      *  https://developer.apple.com/documentation/foundation/urlsession/1411622-flush
      */
-    public override func flush(completionHandler: @escaping () -> Void){
+    @preconcurrency public override func flush(completionHandler: @escaping @Sendable () -> Void){
         self.pinnedURLSession.flush(completionHandler: completionHandler)
     }
     
@@ -311,7 +312,7 @@ public class ApproovURLSession: URLSession {
      *  Asynchronously calls a completion callback with all data, upload, and download tasks in a session
      *  https://developer.apple.com/documentation/foundation/urlsession/1411578-gettaskswithcompletionhandler
      */
-    public override func getTasksWithCompletionHandler(_ completionHandler: @escaping ([URLSessionDataTask], [URLSessionUploadTask], [URLSessionDownloadTask]) -> Void) {
+    @preconcurrency public override func getTasksWithCompletionHandler(_ completionHandler: @escaping @Sendable ([URLSessionDataTask], [URLSessionUploadTask], [URLSessionDownloadTask]) -> Void) {
         self.pinnedURLSession.getTasksWithCompletionHandler(completionHandler)
     }
     
@@ -319,7 +320,7 @@ public class ApproovURLSession: URLSession {
      *  Asynchronously calls a completion callback with all tasks in a session
      *  https://developer.apple.com/documentation/foundation/urlsession/1411618-getalltasks
      */
-    public override func getAllTasks(completionHandler: @escaping ([URLSessionTask]) -> Void) {
+    @preconcurrency public override func getAllTasks(completionHandler: @escaping @Sendable ([URLSessionTask]) -> Void) {
         self.pinnedURLSession.getAllTasks(completionHandler: completionHandler)
     }
     
@@ -336,7 +337,7 @@ public class ApproovURLSession: URLSession {
      *  and ensures that future requests occur on a new socket
      *  https://developer.apple.com/documentation/foundation/urlsession/1411479-reset
      */
-    public override func reset(completionHandler: @escaping () -> Void) {
+    @preconcurrency public override func reset(completionHandler: @escaping @Sendable () -> Void) {
         self.pinnedURLSession.reset(completionHandler: completionHandler)
     }
     
@@ -377,7 +378,7 @@ public class ApproovURLSession: URLSession {
      * Authentication challenges are still subject to Approov pinning, see PinningTaskDelegate.
      */
     @available(iOS 15.0, *)
-    private func performWithApproov<Value>(
+    private func performWithApproov<Value: Sendable>(
         delegate: URLSessionTaskDelegate?,
         makeTask: (URLSession, @escaping @Sendable (Value?, URLResponse?, Error?) -> Void) -> URLSessionTask
     ) async throws -> (Value, URLResponse) {
