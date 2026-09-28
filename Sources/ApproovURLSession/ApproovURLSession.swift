@@ -177,6 +177,7 @@ public class ApproovURLSession: URLSession {
      *  https://developer.apple.com/documentation/foundation/urlsession/1409226-downloadtask
      *  NOTE: this call is not protected by Approov
      */
+    @available(*, deprecated, message: "Not supported by Approov. A resumed download replays a request whose Approov token was embedded in the resume data and has since expired, so no valid token can be presented and none is added. TLS pinning still applies. Start a fresh downloadTask instead.")
     public override func downloadTask(withResumeData: Data) -> URLSessionDownloadTask {
         return self.pinnedURLSession.downloadTask(withResumeData: withResumeData)
     }
@@ -186,6 +187,7 @@ public class ApproovURLSession: URLSession {
      *  https://developer.apple.com/documentation/foundation/urlsession/1411598-downloadtask
      *  NOTE: this call is not protected by Approov
      */
+    @available(*, deprecated, message: "Not supported by Approov. A resumed download replays a request whose Approov token was embedded in the resume data and has since expired, so no valid token can be presented and none is added. TLS pinning still applies. Start a fresh downloadTask instead.")
     public override func downloadTask(withResumeData: Data, completionHandler: @escaping (URL?, URLResponse?, Error?) -> Void) -> URLSessionDownloadTask {
         return self.pinnedURLSession.downloadTask(withResumeData: withResumeData, completionHandler: completionHandler)
     }
@@ -348,7 +350,7 @@ public class ApproovURLSession: URLSession {
      */
     @available(iOS 13.0, *)
     public override func webSocketTask(with: URL) -> URLSessionWebSocketTask {
-        self.pinnedURLSession.webSocketTask(with: with)
+        return webSocketTask(with: URLRequest(url: with))
     }
     
     /**
@@ -357,7 +359,9 @@ public class ApproovURLSession: URLSession {
      */
     @available(iOS 13.0, *)
     public override func webSocketTask(with: URLRequest) -> URLSessionWebSocketTask {
-        self.pinnedURLSession.webSocketTask(with: with)
+        let task = self.pinnedURLSession.webSocketTask(with: with)
+        observe(task)
+        return task
     }
     
     /**
@@ -366,7 +370,9 @@ public class ApproovURLSession: URLSession {
      */
     @available(iOS 13.0, *)
     public override func webSocketTask(with: URL, protocols: [String]) -> URLSessionWebSocketTask {
-        self.pinnedURLSession.webSocketTask(with: with, protocols: protocols)
+        let task = self.pinnedURLSession.webSocketTask(with: with, protocols: protocols)
+        observe(task)
+        return task
     }
     
     /**

@@ -845,6 +845,43 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
                        "the application's own Content-Digest was deleted")
     }
 
+    /// A WebSocket upgrade is attested and pinned like any other request: the task is now observed, so
+    /// the pin check runs. Attestation is connect-time only; nothing re-attests the live socket after.
+    func testWebSocketUpgradeIsPinned() throws {
+        try reinitializeServiceWithTargetHost()
+        MiniSDKAttesterProxyController.setNextPinningDirectiveJSON("{\"operation\": \"getPins\", \"shouldFail\": true}")
+        let recorder = CompletionRecordingDelegate()
+        let session = ApproovURLSession(configuration: .ephemeral, delegate: recorder, delegateQueue: nil)
+        defer { session.invalidateAndCancel() }
+        let wsURL = try XCTUnwrap(URL(string: targetURLString.replacingOccurrences(of: "https://", with: "wss://")))
+        let done = expectation(description: "ws pinned")
+        var failure: Error?
+        recorder.onComplete = { failure = $0; done.fulfill() }
+        session.webSocketTask(with: wsURL).resume()
+        wait(for: [done], timeout: 20)
+        XCTAssertEqual((failure as NSError?)?.code, NSURLErrorCancelled,
+                       "a failing pin check did not stop the WebSocket upgrade: \(String(describing: failure))")
+    }
+
+    /// The 3.5.14 guard must now cover WebSocket tasks too: a task delegate that would answer the
+    /// server-trust challenge is rejected rather than allowed to displace pinning.
+    func testWebSocketTaskDelegateCannotDisplacePinning() throws {
+        try reinitializeServiceWithTargetHost()
+        MiniSDKAttesterProxyController.setNextPinningDirectiveJSON("{\"operation\": \"getPins\", \"shouldFail\": true}")
+        let session = ApproovURLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        let wsURL = try XCTUnwrap(URL(string: targetURLString.replacingOccurrences(of: "https://", with: "wss://")))
+        let done = expectation(description: "ws guard")
+        var failure: Error?
+        let task = session.webSocketTask(with: wsURL)
+        task.delegate = TrustAnyCertificateTaskDelegate()
+        task.resume()
+        task.sendPing { failure = $0; done.fulfill() }
+        wait(for: [done], timeout: 20)
+        XCTAssertEqual((failure as NSError?)?.code, NSURLErrorCancelled,
+                       "a trust-any task delegate got a WebSocket past pinning: \(String(describing: failure))")
+    }
+
     func testInstallMessageSigningMalformedDERFailsOpen() throws {
         let malformedSignatures: [(String, Data)] = [
             ("malformed-der", Data([0x31, 0x00])),
@@ -1794,6 +1831,14 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
 
 /// A task delegate that implements no callbacks.
 private final class EmptyTaskDelegate: NSObject, URLSessionTaskDelegate {}
+
+/// Records task completion, which is the reliable signal for a WebSocket that never opens.
+private final class CompletionRecordingDelegate: NSObject, URLSessionTaskDelegate {
+    var onComplete: ((Error?) -> Void)?
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        onComplete?(error)
+    }
+}
 
 /// CODEX-1: the application's own session delegate, which refuses every server-trust challenge.
 private final class RefusingSessionDelegate: NSObject, URLSessionTaskDelegate {
