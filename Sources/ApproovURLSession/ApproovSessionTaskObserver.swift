@@ -63,16 +63,23 @@ public class ApproovSessionTaskObserver: NSObject {
         let pinningSession: URLSession
         let sessionConfig: URLSessionConfiguration
         let completionHandler: ApproovTaskCompletionHandling?
+        /// When true the task is watched only to reject a delegate that would decide server trust.
+        /// No Approov token is fetched and the request is not mutated. Used for task types the
+        /// request pipeline cannot process, currently WebSockets, whose wss:// URL is rejected by
+        /// the token fetch as a bad url.
+        let guardOnly: Bool
         /// Owning the observation token means observation stops when this registration is
         /// released, with no manual addObserver/removeObserver pairing to get wrong.
         var observation: NSKeyValueObservation?
 
         init(pinningSession: URLSession,
              sessionConfig: URLSessionConfiguration,
-             completionHandler: ApproovTaskCompletionHandling?) {
+             completionHandler: ApproovTaskCompletionHandling?,
+             guardOnly: Bool = false) {
             self.pinningSession = pinningSession
             self.sessionConfig = sessionConfig
             self.completionHandler = completionHandler
+            self.guardOnly = guardOnly
         }
     }
 
@@ -103,12 +110,14 @@ public class ApproovSessionTaskObserver: NSObject {
         task: URLSessionTask,
         pinningSession: URLSession,
         sessionConfig: URLSessionConfiguration,
-        completionHandler: ApproovTaskCompletionHandling? = nil
+        completionHandler: ApproovTaskCompletionHandling? = nil,
+        guardOnly: Bool = false
     ) {
         let registration = TaskRegistration(
             pinningSession: pinningSession,
             sessionConfig: sessionConfig,
-            completionHandler: completionHandler
+            completionHandler: completionHandler,
+            guardOnly: guardOnly
         )
         // Observe with the block-based API: the token is owned by the registration, and the
         // typed change value removes the need to map a raw state number.
@@ -161,6 +170,24 @@ public class ApproovSessionTaskObserver: NSObject {
         }
     }
 
+    /// True when the task carries a delegate, other than our own wrapper, that would be offered the
+    /// server-trust challenge ahead of the session delegate. Only the session-level selector is
+    /// checked: URLSession delivers connection-level challenges, server trust among them, to that
+    /// selector and never to the task-level one, so a delegate implementing only the task-level
+    /// callback cannot override pinning and must keep working for its own challenges.
+    private static func taskDelegateCouldOverridePinning(_ task: URLSessionTask) -> Bool {
+        // task.delegate is iOS 15+. watchOS 9 and the macOS test host already exceed what it needs,
+        // and Approov does not support tvOS, so only the iOS floor is stated.
+        guard #available(iOS 15.0, *) else { return false }
+        // Only meaningful while Approov is enforcing pinning. In empty-config bypass mode there is no
+        // pin check to displace, so the caller's delegate is not overriding anything and rejecting the
+        // task would break an application that simply handles its own authentication.
+        guard ApproovService.isApproovEnabled() else { return false }
+        guard let delegate = task.delegate else { return false }
+        if delegate is PinningTaskDelegate { return false }
+        return delegate.responds(to: #selector(URLSessionDelegate.urlSession(_:didReceive:completionHandler:)))
+    }
+
     /// Handles a state change reported by the per-task observation installed in observe(task:).
     /// The registration is taken off the task first, so this runs at most once per task.
     private func handleStateChange(of task: URLSessionTask, newState: URLSessionTask.State) {
@@ -194,6 +221,36 @@ public class ApproovSessionTaskObserver: NSObject {
         }
 
         task.suspend()
+
+        // A task delegate that implements the session-level challenge callback is offered the
+        // server-trust challenge ahead of the session delegate, so it decides pinning for this
+        // task and PinningURLSessionDelegate never runs. ApproovURLSession owns that decision for
+        // a protected host, so such a task cannot be allowed to proceed. The delegate is settable
+        // only until the task is resumed, and it cannot be replaced now, so the task is rejected
+        // rather than re-wrapped. Reached before the TLS handshake because the task is suspended
+        // above. The async convenience methods are unaffected: they attach a PinningTaskDelegate,
+        // which routes both challenge callbacks through pinning. A delegate implementing only the
+        // task-level callback is left alone, since connection-level challenges are never offered
+        // to it.
+        if ApproovSessionTaskObserver.taskDelegateCouldOverridePinning(task) {
+            if ApproovService.loggingLevel >= .error {
+                os_log(
+                    "ApproovService: Rejecting URLSession task %d: its task delegate implements urlSession(_:didReceive:completionHandler:) and would decide server trust instead of Approov. Pass the delegate to one of the WithApproov methods, or to ApproovURLSession's initializer, so pinning is applied.",
+                    type: .error, task.taskIdentifier
+                )
+            }
+            task.cancel()
+            return
+        }
+
+        // A guard-only task is watched for the delegate check above and nothing else. The request
+        // pipeline cannot process it: fetching a token for a wss:// URL fails with "bad url", and
+        // running it here would cancel every WebSocket. Resume and leave it alone.
+        if registration.guardOnly {
+            task.resume()
+            return
+        }
+
         DispatchQueue.global(qos: .userInitiated).async {
             guard let currentRequest = task.currentRequest else {
                 task.cancel()

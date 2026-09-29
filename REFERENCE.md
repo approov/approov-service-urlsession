@@ -12,6 +12,46 @@ Most methods either throw an `ApproovError` or return an `ApproovUpdateResponse`
 - `rejectionError`: Attestation rejected; includes ARC and rejection reasons if enabled.
 - `permanentError` / `configurationError` / `initializationFailure`: Non-retryable in normal flows.
 
+## Custom authentication-challenge handling
+
+Approov decides server trust for protected hosts, so `ApproovURLSession` owns
+`urlSession(_:didReceive:completionHandler:)`. Every challenge Approov does not decide, client
+certificates for mutual TLS among them, is handed to your delegate.
+
+For shared challenge handling, use the session delegate. Pass it to
+`init(configuration:delegate:delegateQueue:)` and implement the session-level callback:
+
+```swift
+final class MyDelegate: NSObject, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession,
+                    didReceive challenge: URLAuthenticationChallenge,
+                    completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        // Reached for client certificates, HTTP authentication, NTLM and Negotiate.
+        // Server-trust challenges for protected hosts are decided by Approov and never arrive here.
+        completionHandler(.performDefaultHandling, nil)
+    }
+}
+
+let session = ApproovURLSession(configuration: .default, delegate: MyDelegate(), delegateQueue: nil)
+```
+
+The `...WithApproov(delegate:)` methods also support custom challenge handling. Their
+`PinningTaskDelegate` wrapper enforces Approov pinning and forwards other challenges to the supplied delegate.
+For client certificates, that delegate must implement `urlSession(_:didReceive:completionHandler:)`.
+For HTTP authentication, it can implement `urlSession(_:task:didReceive:completionHandler:)`.
+Callbacks that the task delegate does not implement go to the session delegate.
+
+Direct assignment through `task.delegate` does not install this wrapper. While Approov is enabled,
+the guard rejects an observed task whose delegate implements `urlSession(_:didReceive:completionHandler:)`.
+The task completes with `NSURLErrorCancelled` before the TLS handshake. This restriction covers classic
+data, fresh download, upload, and WebSocket tasks. It does not apply to the wrapped delegates supplied
+to `...WithApproov(delegate:)`.
+
+A directly assigned task delegate can handle HTTP authentication through
+`urlSession(_:task:didReceive:completionHandler:)`. This callback does not receive connection-level
+challenges, such as client certificates. The same limitation applies to a session delegate that
+implements only the task-level callback.
+
 ## initialize
 Initializes the SDK with the config obtained using `approov sdk -getConfigString` or
 in the original onboarding email. In the vast majority of integrations, `initialize` should be called **once** during app startup — typically in `application(_:didFinishLaunchingWithOptions:)` or the root view controller. Each successful call resets all service-layer configuration (substitution headers, exclusion URL regexes, binding header, service mutator, `useApproovStatusIfNoToken`) to defaults, so any configuration applied after initialization would be lost on a repeated call.

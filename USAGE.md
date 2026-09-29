@@ -12,6 +12,54 @@ You can initialize the `ApproovService` with an empty configuration string if yo
 
 When initialized this way, the `URLSession` objects returned or updated by the service behave exactly like standard instances. They will not perform token injection, message signing, secure string substitution, or dynamic pinning. You can enable full Approov protection later in the application lifecycle by calling `ApproovService.initialize(config: config)` with a valid configuration string.
 
+## Custom Authentication-Challenge Handling
+
+Approov decides server trust for protected hosts, so `ApproovURLSession` owns
+`urlSession(_:didReceive:completionHandler:)`. Any challenge Approov does not decide, client
+certificates for mutual TLS among them, is passed to your delegate.
+
+For shared challenge handling, put the delegate on the **session** and implement the **session-level** callback:
+
+> ```swift
+> final class MyChallengeDelegate: NSObject, URLSessionTaskDelegate {
+>     func urlSession(_ session: URLSession,
+>                     didReceive challenge: URLAuthenticationChallenge,
+>                     completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+>         guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodClientCertificate else {
+>             return completionHandler(.performDefaultHandling, nil)
+>         }
+>         completionHandler(.useCredential, myClientCertificateCredential)
+>     }
+> }
+>
+> let session = ApproovURLSession(configuration: .default,
+>                                 delegate: MyChallengeDelegate(),
+>                                 delegateQueue: nil)
+> ```
+
+Server-trust challenges for protected hosts never reach this delegate: Approov answers them against
+its dynamic pin set. Client-certificate, HTTP authentication, NTLM and Negotiate challenges do.
+
+The `...WithApproov(delegate:)` methods also support custom challenge handling. They wrap the supplied
+task delegate in `PinningTaskDelegate`, which enforces Approov pinning before it forwards other challenges.
+For client certificates, implement `urlSession(_:didReceive:completionHandler:)` on that delegate.
+For HTTP authentication, implement `urlSession(_:task:didReceive:completionHandler:)`.
+Callbacks that the task delegate does not implement go to the session delegate.
+
+Direct assignment through `task.delegate` has different restrictions:
+
+- While Approov is enabled, an observed task cannot carry a delegate that implements
+  `urlSession(_:didReceive:completionHandler:)`. The guard cancels that task with `NSURLErrorCancelled`
+  before the TLS handshake. This restriction covers classic data, fresh download, upload, and WebSocket
+  tasks. Use `...WithApproov(delegate:)` or the session initializer for this delegate shape.
+- A directly assigned task delegate can implement
+  `urlSession(_:task:didReceive:completionHandler:)` for HTTP authentication. That callback does not
+  receive connection-level challenges, such as client certificates. The same limitation applies to
+  a session delegate that implements only the task-level callback.
+
+Progress and metrics callbacks continue to work on task delegates. For shared authentication handling,
+use the session delegate shown above.
+
 # Approov Service Mutator
 
 The `ApproovServiceMutator` allows you to customize the behavior of the Approov URLSession layer at key points in the request lifecycle. You can override specific methods to tailor the handling of attestations and requests while retaining the default behavior for other cases.
