@@ -12,6 +12,41 @@ Most methods either throw an `ApproovError` or return an `ApproovUpdateResponse`
 - `rejectionError`: Attestation rejected; includes ARC and rejection reasons if enabled.
 - `permanentError` / `configurationError` / `initializationFailure`: Non-retryable in normal flows.
 
+## Custom authentication-challenge handling
+
+Approov decides server trust for protected hosts, so `ApproovURLSession` owns
+`urlSession(_:didReceive:completionHandler:)`. Every challenge Approov does not decide, client
+certificates for mutual TLS among them, is handed to your delegate.
+
+**Put custom challenge handling on the session delegate.** Pass it to
+`init(configuration:delegate:delegateQueue:)` and implement the session-level callback:
+
+```swift
+final class MyDelegate: NSObject, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession,
+                    didReceive challenge: URLAuthenticationChallenge,
+                    completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        // Reached for client certificates, HTTP authentication, NTLM and Negotiate.
+        // Server-trust challenges for protected hosts are decided by Approov and never arrive here.
+        completionHandler(.performDefaultHandling, nil)
+    }
+}
+
+let session = ApproovURLSession(configuration: .default, delegate: MyDelegate(), delegateQueue: nil)
+```
+
+A **task** delegate cannot handle challenges, in either shape:
+
+- A task delegate implementing `urlSession(_:didReceive:completionHandler:)` is rejected and its task
+  cancelled. `URLSession` offers that callback to a task delegate ahead of the session delegate, so
+  allowing it would let the caller decide server trust and displace Approov pinning.
+- A task delegate implementing only `urlSession(_:task:didReceive:completionHandler:)` is permitted and
+  keeps working, but never receives a connection-level challenge, because those are delivered to the
+  session-level selector. Mutual TLS configured this way silently never fires.
+
+The same applies to a session delegate that implements only the task-level callback: use the
+session-level one.
+
 ## initialize
 Initializes the SDK with the config obtained using `approov sdk -getConfigString` or
 in the original onboarding email. In the vast majority of integrations, `initialize` should be called **once** during app startup — typically in `application(_:didFinishLaunchingWithOptions:)` or the root view controller. Each successful call resets all service-layer configuration (substitution headers, exclusion URL regexes, binding header, service mutator, `useApproovStatusIfNoToken`) to defaults, so any configuration applied after initialization would be lost on a repeated call.

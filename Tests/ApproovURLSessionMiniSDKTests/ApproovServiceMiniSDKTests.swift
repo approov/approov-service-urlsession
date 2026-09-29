@@ -2078,6 +2078,23 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
 /// A task delegate that implements no callbacks.
 private final class EmptyTaskDelegate: NSObject, URLSessionTaskDelegate {}
 
+/// The documented shape for custom challenge handling: a SESSION delegate implementing the
+/// session-level callback. Records which challenges it is offered.
+private final class ProbeSender: NSObject, URLAuthenticationChallengeSender {
+    func use(_ credential: URLCredential, for challenge: URLAuthenticationChallenge) {}
+    func continueWithoutCredential(for challenge: URLAuthenticationChallenge) {}
+    func cancel(_ challenge: URLAuthenticationChallenge) {}
+}
+
+private final class SessionLevelChallengeDelegate: NSObject, URLSessionTaskDelegate {
+    var seen: [String] = []
+    func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
+                    completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        seen.append(challenge.protectionSpace.authenticationMethod)
+        completionHandler(.performDefaultHandling, nil)
+    }
+}
+
 /// Conforms to URLSessionDataDelegate but implements only didReceive data, which is legal: every
 /// method on that protocol is optional. The wrapper's forwarding must still complete the response
 /// and cache callbacks on its behalf.
