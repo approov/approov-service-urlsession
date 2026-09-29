@@ -792,7 +792,7 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
 
     /// CODEX-1: Approov disabled, app session delegate refuses, task delegate implements only the
     /// task-level callback. The app's session delegate must still decide, and must still refuse.
-    @available(iOS 15.0, macOS 12.0, watchOS 8.0, tvOS 15.0, *)
+    @available(iOS 15.0, *)
     func testCodex1AppSessionDelegateStillDecidesInBypassMode() async throws {
         try initBypassMode()
         let appSessionDelegate = RefusingSessionDelegate()
@@ -810,7 +810,7 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
     }
 
     /// CODEX-2: Approov disabled. A classic task with a plain session-level auth callback must run.
-    @available(iOS 15.0, macOS 12.0, watchOS 8.0, tvOS 15.0, *)
+    @available(iOS 15.0, *)
     func testCodex2ClassicTaskWorksInBypassMode() throws {
         try initBypassMode()
         let session = ApproovURLSession(configuration: .ephemeral)
@@ -852,7 +852,7 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
     /// because the Approov token fetch rejects a wss:// URL with "bad url". The reply worker does not
     /// speak WebSocket, so the expected outcome is an HTTP-level upgrade failure, which proves TLS
     /// completed and nothing cancelled the task. A cancellation here means the layer broke it.
-    @available(iOS 15.0, macOS 12.0, watchOS 8.0, tvOS 15.0, *)
+    @available(iOS 15.0, *)
     func testWebSocketToAProtectedHostIsNotCancelledByTheLayer() throws {
         try reinitializeServiceWithTargetHost()
         let recorder = CompletionRecordingDelegate()
@@ -873,7 +873,7 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
     /// Pinning still applies to the upgrade, through the session delegate. Verified non-vacuous:
     /// remove the forced pin failure and this test fails, because the positive path above returns
     /// NSURLErrorBadServerResponse rather than a cancellation.
-    @available(iOS 15.0, macOS 12.0, watchOS 8.0, tvOS 15.0, *)
+    @available(iOS 15.0, *)
     func testWebSocketUpgradeIsPinned() throws {
         try reinitializeServiceWithTargetHost()
         MiniSDKAttesterProxyController.setNextPinningDirectiveJSON("{\"operation\": \"getPins\", \"shouldFail\": true}")
@@ -892,7 +892,7 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
 
     /// The guard covers WebSocket tasks: a task delegate that would answer the server-trust challenge
     /// is rejected. Contrast with the positive path, which is not cancelled.
-    @available(iOS 15.0, macOS 12.0, watchOS 8.0, tvOS 15.0, *)
+    @available(iOS 15.0, *)
     func testWebSocketTaskDelegateCannotDisplacePinning() throws {
         try reinitializeServiceWithTargetHost()
         let recorder = CompletionRecordingDelegate()
@@ -915,7 +915,7 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
     /// forwards that callback with delegate.urlSession?(...), which is a no-op when the caller has not
     /// implemented it. The completion handler is then never called and the task never finishes.
     /// Exercised on an upload task, which is the shape that has no completion-handler variant in play.
-    @available(iOS 15.0, macOS 12.0, watchOS 8.0, tvOS 15.0, *)
+    @available(iOS 15.0, *)
     func testPartialDataDelegateDoesNotHangAnUpload() throws {
         try reinitializeServiceWithTargetHost()
         let caller = PartialDataDelegate()
@@ -1040,7 +1040,7 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
     /// body as a parameter or a file, never in request.httpBody, which is the only place the signer
     /// looks. So an upload is signed over its method, target and headers, and the body is not covered.
     /// Contrast with a dataTask carrying the same bytes in httpBody, which is covered.
-    @available(iOS 15.0, macOS 12.0, watchOS 8.0, tvOS 15.0, *)
+    @available(iOS 15.0, *)
     func testNoUploadTaskShapeCarriesABodyDigest() throws {
         try reinitializeServiceWithTargetHost()
         let factory = try ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory()
@@ -1072,7 +1072,7 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
     /// "some error happened" would also be satisfied by a network failure or a pinning rejection and
     /// would not establish the cause. The real error reaches a completion handler where there is one,
     /// and the session delegate's didBecomeInvalidWithError where there is not.
-    @available(iOS 15.0, macOS 12.0, watchOS 8.0, tvOS 15.0, *)
+    @available(iOS 15.0, *)
     func testRequiredBodyDigestFailsEveryUploadShapeClosed() throws {
         let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try Data("{\"upload\":\"file\"}".utf8).write(to: file)
@@ -1131,7 +1131,7 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
     /// With the digest OPTIONAL a streamed upload proceeds through the real API and is signed, but the
     /// signature covers no body. Asserting the signature is present matters as much as asserting the
     /// digest is absent: without it the test would pass on an unsigned upload.
-    @available(iOS 15.0, macOS 12.0, watchOS 8.0, tvOS 15.0, *)
+    @available(iOS 15.0, *)
     func testUploadFromStreamedRequestWithOptionalDigestIsSignedWithoutBodyCoverage() throws {
         try reinitializeServiceWithTargetHost()
         let factory = try ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory()
@@ -1164,7 +1164,7 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
 
     /// uploadTask(with:fromFile:) keeps the body in a file that URLSession reads itself, so the layer
     /// never sees it either. Signed, but again with no body coverage.
-    @available(iOS 15.0, macOS 12.0, watchOS 8.0, tvOS 15.0, *)
+    @available(iOS 15.0, *)
     func testUploadFromFileIsSignedWithoutBodyCoverage() throws {
         try reinitializeServiceWithTargetHost()
         let factory = try ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory()
@@ -1627,7 +1627,7 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
 
     /// Runs an upload task through the real API and reports the error it completed with, so a
     /// fail-closed outcome can be asserted at the task level rather than on the request processor.
-    @available(iOS 15.0, macOS 12.0, watchOS 8.0, tvOS 15.0, *)
+    @available(iOS 15.0, *)
     private func uploadTaskFailure(for request: URLRequest, fromFile file: URL? = nil, from data: Data? = nil, streamed: Bool = false) -> Error? {
         let expectation = self.expectation(description: "upload failure")
         var failure: Error?
@@ -1862,7 +1862,7 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
     /// was supplied, from the inherited `configuration`. ApproovURLSession never initialises its
     /// URLSession base, so that configuration carried none of the caller's headers, timeouts,
     /// cookie storage or cache. Each method must send the request with the session's configuration.
-    @available(iOS 15.0, macOS 12.0, watchOS 8.0, tvOS 15.0, *)
+    @available(iOS 15.0, *)
     func testAsyncMethodsWithDelegateUseTheSessionConfiguration() async throws {
         try reinitializeServiceWithTargetHost()
         let marker = "async-delegate-config-marker"
@@ -1911,7 +1911,7 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
     /// A delegate passed to an async convenience method must be released once the request
     /// completes. Previously the per-call URLSession was never invalidated, and a URLSession
     /// retains its delegate until it is, so every such call leaked the session and the delegate.
-    @available(iOS 15.0, macOS 12.0, watchOS 8.0, tvOS 15.0, *)
+    @available(iOS 15.0, *)
     func testAsyncMethodWithDelegateReleasesTheDelegate() async throws {
         let session = ApproovURLSession(configuration: .ephemeral)
         defer { session.invalidateAndCancel() }
@@ -1935,7 +1935,7 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
     /// whenever the task delegate implements urlSession(_:didReceive:completionHandler:). A delegate
     /// passed to an async convenience method must still be subject to Approov pinning: this one
     /// accepts any certificate, and the request must still fail on a pin mismatch.
-    @available(iOS 15.0, macOS 12.0, watchOS 8.0, tvOS 15.0, *)
+    @available(iOS 15.0, *)
     func testAsyncMethodWithDelegateStillEnforcesPinning() async throws {
         try reinitializeServiceWithTargetHost()
         MiniSDKAttesterProxyController.setNextPinningDirectiveJSON("{\"operation\": \"getPins\", \"shouldFail\": true}")
@@ -1957,7 +1957,7 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
     /// task methods hand back a task whose delegate the caller can still set, so the task must be
     /// rejected rather than allowed to run unpinned. Without the guard this request returns 200 with
     /// the pin check forced to fail.
-    @available(iOS 15.0, macOS 12.0, watchOS 8.0, tvOS 15.0, *)
+    @available(iOS 15.0, *)
     func testClassicTaskWithSessionLevelChallengeDelegateIsRejected() throws {
         try reinitializeServiceWithTargetHost()
         MiniSDKAttesterProxyController.setNextPinningDirectiveJSON("{\"operation\": \"getPins\", \"shouldFail\": true}")
@@ -1982,7 +1982,7 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
 
     /// The guard must not reject a delegate that only implements the task-level challenge callback:
     /// it cannot see a server-trust challenge, and rejecting it would break mutual TLS callers.
-    @available(iOS 15.0, macOS 12.0, watchOS 8.0, tvOS 15.0, *)
+    @available(iOS 15.0, *)
     func testClassicTaskWithTaskLevelOnlyChallengeDelegateStillRuns() throws {
         try reinitializeServiceWithTargetHost()
         let session = ApproovURLSession(configuration: .ephemeral)
@@ -2008,7 +2008,7 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
     /// Callbacks the task delegate does not implement are delivered to the delegate the session
     /// was created with, as they are for URLSession.data(for:delegate:). Previously the per-call
     /// session replaced the session delegate entirely.
-    @available(iOS 15.0, macOS 12.0, watchOS 8.0, tvOS 15.0, *)
+    @available(iOS 15.0, *)
     func testAsyncMethodWithDelegateFallsBackToTheSessionDelegate() async throws {
         let sessionDelegate = MetricsRecordingDelegate()
         let sessionMetrics = expectation(description: "session delegate received metrics")
@@ -2023,7 +2023,7 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
 
     /// Callbacks the task delegate does implement are delivered to it rather than to the
     /// session delegate.
-    @available(iOS 15.0, macOS 12.0, watchOS 8.0, tvOS 15.0, *)
+    @available(iOS 15.0, *)
     func testAsyncMethodWithDelegateDeliversCallbacksToTheTaskDelegate() async throws {
         let sessionDelegate = MetricsRecordingDelegate()
         let sessionMetrics = expectation(description: "session delegate received metrics")
@@ -2061,7 +2061,7 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
     /// URLSession deletes a download's temporary file when the task's completion handler returns, so the async
     /// download methods must hand the caller a file it owns, as URLSession.download(for:) does. URLSession.shared
     /// is the control: if the control ever fails, the test is wrong rather than the library.
-    @available(iOS 15.0, macOS 12.0, watchOS 8.0, tvOS 15.0, *)
+    @available(iOS 15.0, *)
     func testAsyncDownloadMethodsHandTheFileToTheCaller() async throws {
         try reinitializeServiceWithTargetHost()
         let session = ApproovURLSession(configuration: .ephemeral)

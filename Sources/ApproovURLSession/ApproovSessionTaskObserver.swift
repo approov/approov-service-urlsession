@@ -176,7 +176,9 @@ public class ApproovSessionTaskObserver: NSObject {
     /// selector and never to the task-level one, so a delegate implementing only the task-level
     /// callback cannot override pinning and must keep working for its own challenges.
     private static func taskDelegateCouldOverridePinning(_ task: URLSessionTask) -> Bool {
-        guard #available(iOS 15.0, macOS 12.0, watchOS 8.0, tvOS 15.0, *) else { return false }
+        // task.delegate is iOS 15+. watchOS 9 and the macOS test host already exceed what it needs,
+        // and Approov does not support tvOS, so only the iOS floor is stated.
+        guard #available(iOS 15.0, *) else { return false }
         // Only meaningful while Approov is enforcing pinning. In empty-config bypass mode there is no
         // pin check to displace, so the caller's delegate is not overriding anything and rejecting the
         // task would break an application that simply handles its own authentication.
