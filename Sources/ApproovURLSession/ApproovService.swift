@@ -920,28 +920,33 @@ public class ApproovService {
     }
 
     /**
-     * Host component only gets resolved if the string includes the protocol used. This is not always the case
-     * when making requests so a convenience method is needed.
+     * Resolves the host of a URL, which Foundation only populates when the string carries a scheme.
+     * Callers sometimes pass a bare host name, so that case is handled by parsing it with a scheme
+     * added.
+     *
+     * Matching on an "https" prefix was wrong for every other scheme: "http://example.com" and
+     * "wss://example.com" both took the bare-name branch and were rewritten to
+     * "https://http://example.com", whose host is not the real one, so the host came back empty or
+     * wrong. A non-empty host is now required at each step, because Foundation returns an empty
+     * string rather than nil for some malformed inputs and an empty host is not a resolution.
+     *
+     * Used for logging only. The token fetch is driven from the full URL string, so this does not
+     * decide whether a host is protected.
      *
      * @param url is the URL being handled
-     * @return String of the host name
+     * @return the host name, or an empty string when none can be resolved
      */
-    private static func hostnameFromURL(url: URL) -> String {
-        if url.absoluteString.starts(with: "https") {
-            if let host = url.host {
-                // if the URL has a host then return it
-                return host
-            }
-            return ""
-        } else {
-            let fullHost = "https://" + url.absoluteString
-            let newURL = URL(string: fullHost)
-            if let host = newURL?.host {
-                return host
-            } else {
-                return ""
-            }
+    // internal rather than private so the resolution can be tested directly. Not part of the public API.
+    static func hostnameFromURL(url: URL) -> String {
+        // Already a complete URL: use its host as it stands.
+        if url.scheme != nil, let host = url.host, !host.isEmpty {
+            return host
         }
+        // No scheme, so treat the string as a bare host name, which needs one before it will parse.
+        if let host = URL(string: "https://" + url.absoluteString)?.host, !host.isEmpty {
+            return host
+        }
+        return ""
     }
 
     private static func applyMutatorError(_ error: Error,

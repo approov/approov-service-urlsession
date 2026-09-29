@@ -924,6 +924,26 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
         wait(for: [done], timeout: 8)
     }
 
+    /// Host resolution must work for any scheme, not just https, and must never return an empty host
+    /// for a URL that has one. Matching on an "https" prefix sent every other scheme down the
+    /// bare-host-name branch, which rewrote "http://example.com" to "https://http://example.com".
+    func testHostResolutionAcrossSchemes() throws {
+        let cases: [(String, String)] = [
+            ("https://example.com/path?q=1", "example.com"),
+            ("https://example.com:8443/path", "example.com"),
+            ("http://example.com/path", "example.com"),
+            ("wss://example.com", "example.com"),
+            ("ws://example.com", "example.com"),
+            ("example.com", "example.com"),
+            ("example.com/path", "example.com"),
+        ]
+        for (input, expected) in cases {
+            let url = try XCTUnwrap(URL(string: input), "could not build a URL from \(input)")
+            XCTAssertEqual(ApproovService.hostnameFromURL(url: url), expected,
+                           "\(input) resolved to the wrong host")
+        }
+    }
+
     func testInstallMessageSigningMalformedDERFailsOpen() throws {
         let malformedSignatures: [(String, Data)] = [
             ("malformed-der", Data([0x31, 0x00])),
