@@ -10,7 +10,6 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 
 - While Approov is enabled, directly assigned task delegates with `urlSession(_:didReceive:completionHandler:)` now cause cancellation on classic data, fresh download, upload, and WebSocket tasks. Use `...WithApproov(delegate:)` or the session initializer instead.
 - Applications that supply signing headers can see changes: generated values replace existing values, and signing failures remove signature-related headers, including `Content-Digest`.
-- Resumed-download APIs remain available but now emit deprecation warnings, which can affect builds that treat warnings as errors.
 
 ### Fixed
 - Pinning can no longer be removed from a request by assigning a task delegate to a task obtained from one of the classic task factory methods (`dataTask`, `downloadTask`, `uploadTask`). `URLSession` prefers a task delegate's implementation of `urlSession(_:didReceive:completionHandler:)` over the session delegate's, and `URLSessionTask.delegate` is settable until the task is resumed, so a delegate answering the server-trust challenge could bypass Approov's pin check entirely. Such a task is now rejected before the TLS handshake. The six async convenience methods, which wrap a supplied delegate in `PinningTaskDelegate`, were already protected.
