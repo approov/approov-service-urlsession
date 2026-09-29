@@ -6,6 +6,12 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 
 ## [3.5.14] - 2026-09-28
 
+### Compatibility edge cases
+
+- While Approov is enabled, directly assigned task delegates with `urlSession(_:didReceive:completionHandler:)` now cause cancellation on classic data, fresh download, upload, and WebSocket tasks. Use `...WithApproov(delegate:)` or the session initializer instead.
+- Applications that supply signing headers can see changes: generated values replace existing values, and signing failures remove signature-related headers, including `Content-Digest`.
+- Resumed-download APIs remain available but now emit deprecation warnings, which can affect builds that treat warnings as errors.
+
 ### Fixed
 - Pinning can no longer be removed from a request by assigning a task delegate to a task obtained from one of the classic task factory methods (`dataTask`, `downloadTask`, `uploadTask`). `URLSession` prefers a task delegate's implementation of `urlSession(_:didReceive:completionHandler:)` over the session delegate's, and `URLSessionTask.delegate` is settable until the task is resumed, so a delegate answering the server-trust challenge could bypass Approov's pin check entirely. Such a task is now rejected before the TLS handshake. The six async convenience methods, which wrap a supplied delegate in `PinningTaskDelegate`, were already protected.
 - WebSocket tasks are now covered by the pinning guard. `webSocketTask(with:)` and its overloads previously returned an unobserved task, so a caller-supplied task delegate could displace the pin check on the upgrade exactly as it could on a data task. Attestation of WebSockets remains unimplemented: no Approov token is added to the upgrade request, and nothing re-attests a connection once it is open, so the guarantee for a WebSocket is TLS pinning of the upgrade and nothing more.
