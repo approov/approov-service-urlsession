@@ -18,7 +18,7 @@ Approov decides server trust for protected hosts, so `ApproovURLSession` owns
 `urlSession(_:didReceive:completionHandler:)`. Any challenge Approov does not decide, client
 certificates for mutual TLS among them, is passed to your delegate.
 
-Put that delegate on the **session**, and implement the **session-level** callback:
+For shared challenge handling, put the delegate on the **session** and implement the **session-level** callback:
 
 > ```swift
 > final class MyChallengeDelegate: NSObject, URLSessionTaskDelegate {
@@ -40,20 +40,25 @@ Put that delegate on the **session**, and implement the **session-level** callba
 Server-trust challenges for protected hosts never reach this delegate: Approov answers them against
 its dynamic pin set. Client-certificate, HTTP authentication, NTLM and Negotiate challenges do.
 
-A delegate passed to one of the `...WithApproov(delegate:)` methods is a **task** delegate, and a task
-delegate cannot handle challenges. Three shapes do not work, and none of them reports an error:
+The `...WithApproov(delegate:)` methods also support custom challenge handling. They wrap the supplied
+task delegate in `PinningTaskDelegate`, which enforces Approov pinning before it forwards other challenges.
+For client certificates, implement `urlSession(_:didReceive:completionHandler:)` on that delegate.
+For HTTP authentication, implement `urlSession(_:task:didReceive:completionHandler:)`.
+Callbacks that the task delegate does not implement go to the session delegate.
 
-- A task delegate implementing `urlSession(_:didReceive:completionHandler:)`. The task is cancelled
-  with `NSURLErrorCancelled`. `URLSession` offers that callback to a task delegate ahead of the session
-  delegate, so permitting it would let the delegate decide server trust and bypass Approov pinning.
-- A task delegate implementing only `urlSession(_:task:didReceive:completionHandler:)`. The task runs
-  normally, but the callback never fires for a client certificate, because connection-level challenges
-  are delivered to the session-level selector. Mutual TLS set up this way silently never happens.
-- A **session** delegate implementing only `urlSession(_:task:didReceive:completionHandler:)`. Same
-  silent outcome, for the same reason.
+Direct assignment through `task.delegate` has different restrictions:
 
-If you already pass a task delegate for other callbacks, such as progress or metrics, that continues
-to work. Move only the challenge handling to the session delegate.
+- While Approov is enabled, an observed task cannot carry a delegate that implements
+  `urlSession(_:didReceive:completionHandler:)`. The guard cancels that task with `NSURLErrorCancelled`
+  before the TLS handshake. This restriction covers classic data, fresh download, upload, and WebSocket
+  tasks. Use `...WithApproov(delegate:)` or the session initializer for this delegate shape.
+- A directly assigned task delegate can implement
+  `urlSession(_:task:didReceive:completionHandler:)` for HTTP authentication. That callback does not
+  receive connection-level challenges, such as client certificates. The same limitation applies to
+  a session delegate that implements only the task-level callback.
+
+Progress and metrics callbacks continue to work on task delegates. For shared authentication handling,
+use the session delegate shown above.
 
 # Approov Service Mutator
 

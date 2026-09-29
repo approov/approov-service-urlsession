@@ -1952,6 +1952,49 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
         }
     }
 
+    /// Async methods wrap challenge delegates, so the classic-task guard must permit them.
+    /// This positive path complements the forced pin-mismatch test above.
+    @available(iOS 15.0, *)
+    func testAsyncMethodWithSessionLevelChallengeDelegateStillRuns() async throws {
+        try reinitializeServiceWithTargetHost()
+        let session = ApproovURLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        let url = try XCTUnwrap(URL(string: targetURLString))
+        let delegate = SessionLevelChallengeDelegate()
+
+        let (_, response) = try await session.dataWithApproov(from: url, delegate: delegate)
+
+        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+        XCTAssertTrue(delegate.seen.isEmpty, "Approov must decide server trust before the caller")
+    }
+
+    /// A wrapped async delegate can answer a client-certificate challenge through its session-level
+    /// callback. A synthetic challenge isolates forwarding from certificate and server configuration.
+    @available(iOS 15.0, *)
+    func testAsyncTaskDelegateForwardsClientCertificateChallenge() throws {
+        let caller = SessionLevelChallengeDelegate()
+        let wrapper = PinningTaskDelegate(wrapping: caller)
+        let session = URLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        let host = try XCTUnwrap(URL(string: targetURLString)?.host)
+        let space = URLProtectionSpace(host: host, port: 443, protocol: "https", realm: nil,
+                                       authenticationMethod: NSURLAuthenticationMethodClientCertificate)
+        let challenge = URLAuthenticationChallenge(protectionSpace: space, proposedCredential: nil,
+                                                    previousFailureCount: 0, failureResponse: nil,
+                                                    error: nil, sender: ProbeSender())
+        XCTAssertTrue(wrapper.responds(to: #selector(URLSessionDelegate.urlSession(_:didReceive:completionHandler:))))
+        var completions = 0
+
+        wrapper.urlSession(session, didReceive: challenge) { disposition, credential in
+            completions += 1
+            XCTAssertEqual(disposition, .performDefaultHandling)
+            XCTAssertNil(credential)
+        }
+
+        XCTAssertEqual(caller.seen, [NSURLAuthenticationMethodClientCertificate])
+        XCTAssertEqual(completions, 1)
+    }
+
     /// A task delegate implementing the session-level challenge callback is offered the server-trust
     /// challenge before the session delegate, so it would decide pinning for that task. The classic
     /// task methods hand back a task whose delegate the caller can still set, so the task must be
@@ -2117,14 +2160,14 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
 /// A task delegate that implements no callbacks.
 private final class EmptyTaskDelegate: NSObject, URLSessionTaskDelegate {}
 
-/// The documented shape for custom challenge handling: a SESSION delegate implementing the
-/// session-level callback. Records which challenges it is offered.
+/// Sender for synthetic authentication challenges.
 private final class ProbeSender: NSObject, URLAuthenticationChallengeSender {
     func use(_ credential: URLCredential, for challenge: URLAuthenticationChallenge) {}
     func continueWithoutCredential(for challenge: URLAuthenticationChallenge) {}
     func cancel(_ challenge: URLAuthenticationChallenge) {}
 }
 
+/// Records challenges through the session-level callback, on a session or a wrapped async task.
 private final class SessionLevelChallengeDelegate: NSObject, URLSessionTaskDelegate {
     var seen: [String] = []
     func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
