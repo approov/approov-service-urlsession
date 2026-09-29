@@ -1100,6 +1100,39 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
         }
     }
 
+    /// With the digest OPTIONAL a streamed upload proceeds through the real API and is signed, but the
+    /// signature covers no body. Asserting the signature is present matters as much as asserting the
+    /// digest is absent: without it the test would pass on an unsigned upload.
+    func testUploadFromStreamedRequestWithOptionalDigestIsSignedWithoutBodyCoverage() throws {
+        try reinitializeServiceWithTargetHost()
+        let factory = try ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory()
+            .setUseInstallMessageSigning()
+            .setBodyDigestConfig(ApproovDefaultMessageSigning.DIGEST_SHA256, required: false)
+        ApproovService.setServiceMutator(ApproovDefaultMessageSigning().setDefaultFactory(factory))
+
+        var request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBodyStream = InputStream(data: Data("{\"upload\":\"stream\"}".utf8))
+
+        let recorder = CompletionRecordingDelegate()
+        let session = ApproovURLSession(configuration: .ephemeral, delegate: recorder, delegateQueue: nil)
+        defer { session.invalidateAndCancel() }
+        let done = expectation(description: "streamed upload")
+        var failure: Error?
+        recorder.onComplete = { failure = $0; done.fulfill() }
+        let task = session.uploadTask(withStreamedRequest: request)
+        task.resume()
+        wait(for: [done], timeout: 15)
+
+        XCTAssertNil(failure, "the streamed upload failed with an optional digest: \(String(describing: failure))")
+        let sent = task.currentRequest
+        XCTAssertNotNil(sent?.value(forHTTPHeaderField: "Signature"), "the streamed upload was not signed")
+        XCTAssertNotNil(sent?.value(forHTTPHeaderField: "Signature-Input"), "no Signature-Input on the streamed upload")
+        XCTAssertNil(sent?.value(forHTTPHeaderField: "Content-Digest"),
+                     "a Content-Digest appeared for a body that cannot be read")
+    }
+
     /// uploadTask(with:fromFile:) keeps the body in a file that URLSession reads itself, so the layer
     /// never sees it either. Signed, but again with no body coverage.
     func testUploadFromFileIsSignedWithoutBodyCoverage() throws {
@@ -1119,6 +1152,10 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
         let reply = uploadNetworkReply(for: request, fromFile: file)
 
         XCTAssertNotNil(getHeader(from: reply, key: "Approov-Token"), "the file upload carried no token")
+        // Without this the test would pass on an unsigned upload, so it would not establish that the
+        // upload is signed while its body is uncovered, which is the whole point of it.
+        XCTAssertNotNil(getHeader(from: reply, key: "Signature"), "the file upload was not signed")
+        XCTAssertNotNil(getHeader(from: reply, key: "Signature-Input"), "the file upload carried no Signature-Input")
         XCTAssertNil(getHeader(from: reply, key: "Content-Digest"),
                      "a Content-Digest appeared for a body held in a file")
     }
