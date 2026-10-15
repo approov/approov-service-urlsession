@@ -4,6 +4,22 @@ All notable changes to this package will be documented in this file.
 
 The format is based on Keep a Changelog and this project adheres to Semantic Versioning.
 
+## [3.5.14] - 2026-09-28
+
+### Compatibility edge cases
+
+- While Approov is enabled, directly assigned task delegates with `urlSession(_:didReceive:completionHandler:)` now cause cancellation on classic data, fresh download, upload, and WebSocket tasks. Use `...WithApproov(delegate:)` or the session initializer instead.
+- Applications that supply signing headers can see changes: generated values replace existing values, and signing failures remove signature-related headers, including `Content-Digest`.
+
+### Fixed
+- Pinning can no longer be removed from a request by assigning a task delegate to a task obtained from one of the classic task factory methods (`dataTask`, `downloadTask`, `uploadTask`). `URLSession` prefers a task delegate's implementation of `urlSession(_:didReceive:completionHandler:)` over the session delegate's, and `URLSessionTask.delegate` is settable until the task is resumed, so a delegate answering the server-trust challenge could bypass Approov's pin check entirely. Such a task is now rejected before the TLS handshake. The six async convenience methods, which wrap a supplied delegate in `PinningTaskDelegate`, were already protected.
+- WebSocket tasks are now covered by the pinning guard. `webSocketTask(with:)` and its overloads previously returned an unobserved task, so a caller-supplied task delegate could displace the pin check on the upgrade exactly as it could on a data task. Attestation of WebSockets remains unimplemented: no Approov token is added to the upgrade request, and nothing re-attests a connection once it is open, so the guarantee for a WebSocket is TLS pinning of the upgrade and nothing more.
+- `downloadTask(withResumeData:)` and its completion-handler overload are deprecated and not supported with Approov: resume data carries the original request, including its expired Approov token. Start a new download instead.
+- Host resolution no longer depends on a URL starting with `https`. `hostnameFromURL` matched that prefix and sent every other scheme down its bare-host-name branch, which prepends `https://`, so `http://example.com` and `wss://example.com` resolved to the host `http` and `wss` respectively rather than `example.com`. A non-empty host is now required at each step. This value is used for logging only, so the effect was mis-scoped log lines rather than a protection decision.
+- Documented custom authentication-challenge handling for session delegates, wrapped delegates supplied to `...WithApproov(delegate:)`, and directly assigned task delegates. The async wrappers enforce pinning and forward other challenges. While Approov is enabled, the guard rejects directly assigned delegates with a session-level challenge callback on observed tasks. Task-level callbacks support HTTP authentication but do not receive connection-level challenges, such as client certificates. See REFERENCE.md.
+- A caller delegate that implements only some of its optional callbacks no longer hangs a task. `PinningURLSessionDelegate` forwarded six completion-handler callbacks with `delegate.urlSession?(...)`, an optional Objective-C call that is a no-op when the delegate does not implement that method, so the completion handler was never invoked and the task never finished. `URLSessionDataDelegate` and `URLSessionTaskDelegate` declare every method optional, so a delegate implementing any subset is legal and was enough to hang an upload indefinitely. Reproduced with a delegate implementing only `urlSession(_:dataTask:didReceive:)`. Each forward now checks `responds(to:)` first and always answers the handler; `needNewBodyStream` and `needNewBodyStreamFrom` had no fallback at all, so they hung even with no delegate set. Present since the delegate was introduced.
+- Message signing no longer appends to the `Signature`, `Signature-Input` and `Content-Digest` headers, which produced two dictionary members in one header when a request was processed twice and was rejected by RFC 9421 and RFC 9530 verifiers. Stale signing headers are also stripped on every fail-open path, so a fail-open no longer transmits a signature that does not authenticate the token and body sent with it (#61).
+
 ## [3.5.13] - 2026-09-25
 
 ### Fixed
@@ -30,7 +46,7 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 - The runtime Approov user-property now reports the service-layer version (`approov-service-urlsession/<version>`); previously a bare, version-less string was reported.
 
 ### Fixed
-- Message signing now conforms to the cross-layer fail-open policy (core-project-approov#564). An ES256 ASN.1/DER decode failure and a `Signature`/`Signature-Input` serialization failure now log at error level and proceed **unsigned** instead of aborting the request, matching the existing install/account/base64 fail-open paths. The ES256 ASN.1/DER decoder is now bounds-checked so a malformed or truncated signature throws (and fails open) rather than risking an out-of-bounds trap. Only a required body digest that cannot be generated and an unsupported signing algorithm still fail closed.
+- Message signing now conforms to the cross-layer fail-open policy. An ES256 ASN.1/DER decode failure and a `Signature`/`Signature-Input` serialization failure now log at error level and proceed **unsigned** instead of aborting the request, matching the existing install/account/base64 fail-open paths. The ES256 ASN.1/DER decoder is now bounds-checked so a malformed or truncated signature throws (and fails open) rather than risking an out-of-bounds trap. Only a required body digest that cannot be generated and an unsupported signing algorithm still fail closed.
 
 ## [3.5.10] - 2026-06-08
 
