@@ -46,6 +46,28 @@ public class SFV {
         return string
     }
 
+    // Method to serialize a dictionary of several byte sequence members, in order
+    static func serializeDictionary(entries: [(String, Data)]) throws -> String? {
+        var serializer = StructuredFieldValueSerializer()
+        var dictionary: OrderedMap<String, ItemOrInnerList> = [:]
+        for (key, data) in entries {
+            dictionary[key] = ItemOrInnerList.item(Item(bareItem: RFC9651BareItem.undecodedByteSequence(data.base64EncodedString()), parameters: [:]))
+        }
+        let serialized = try serializer.writeDictionaryFieldValue(dictionary)
+        return String(data: Data(serialized), encoding: .utf8)
+    }
+
+    // Method to serialize a dictionary of several inner list members, in order
+    static func serializeDictionary(entries: [(String, InnerList)]) throws -> String? {
+        var serializer = StructuredFieldValueSerializer()
+        var dictionary: OrderedMap<String, ItemOrInnerList> = [:]
+        for (key, innerList) in entries {
+            dictionary[key] = ItemOrInnerList.innerList(innerList)
+        }
+        let serialized = try serializer.writeDictionaryFieldValue(dictionary)
+        return String(data: Data(serialized), encoding: .utf8)
+    }
+
     // Method to serialize dictionary entry of key: sigParams of type String: InnerList
     static func serializeDictionary(key: String, innerList: InnerList) throws -> String? {
         var serializer = StructuredFieldValueSerializer()

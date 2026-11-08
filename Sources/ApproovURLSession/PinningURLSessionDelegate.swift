@@ -176,14 +176,14 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
         do {
             if let serverTrust = try shouldAcceptAuthenticationChallenge(challenge: challenge) {
                 // the pinning check succeeded
+                PinningURLSessionDelegate.recordVerdict(host: challenge.protectionSpace.host, refused: false)
                 completionHandler(.useCredential, URLCredential.init(trust: serverTrust))
                 return
             }
         } catch {
-            if ApproovService.loggingLevel >= .error {
-                os_log("ApproovService: urlSession error %@", type: .error, error.localizedDescription)
-            }
+            ApproovService.log(.error, "ApproovService: urlSession error \(error.localizedDescription)")
         }
+        PinningURLSessionDelegate.recordVerdict(host: challenge.protectionSpace.host, refused: true)
         completionHandler(.cancelAuthenticationChallenge, nil)
     }
     
@@ -250,14 +250,14 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
         do {
             if let serverTrust = try shouldAcceptAuthenticationChallenge(challenge: challenge) {
                 // the pinning check succeeded
+                PinningURLSessionDelegate.recordVerdict(host: challenge.protectionSpace.host, refused: false)
                 completionHandler(.useCredential, URLCredential.init(trust: serverTrust))
                 return
             }
         } catch {
-            if ApproovService.loggingLevel >= .error {
-                os_log("ApproovService: urlSession error %@", type: .error, error.localizedDescription)
-            }
+            ApproovService.log(.error, "ApproovService: urlSession error \(error.localizedDescription)")
         }
+        PinningURLSessionDelegate.recordVerdict(host: challenge.protectionSpace.host, refused: true)
         completionHandler(.cancelAuthenticationChallenge, nil)
     }
     
@@ -266,8 +266,10 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
      *  https://developer.apple.com/documentation/foundation/urlsessiontaskdelegate/1411610-urlsession
      */
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        // a task the layer failed reports the error it was failed with, not its cancellation
+        let delivered = ApproovSessionTaskObserver.takeFailure(for: task) ?? PinningURLSessionDelegate.pinningError(replacing: error)
         if let delegate = optionalURLDelegate as? URLSessionTaskDelegate {
-            delegate.urlSession?(session, task: task, didCompleteWithError: error)
+            delegate.urlSession?(session, task: task, didCompleteWithError: delivered)
         }
     }
     
@@ -276,10 +278,38 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
      *  https://developer.apple.com/documentation/foundation/urlsessiontaskdelegate/1411626-urlsession
      */
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
-        if let delegate = optionalURLDelegate as? URLSessionTaskDelegate {
-            delegate.urlSession?(session, task: task, willPerformHTTPRedirection: response, newRequest: request, completionHandler: completionHandler)
+        // what the layer added to the attempt that was redirected is stripped before anyone sees the
+        // follow-up, which is then protected as a brand-new request for its target; an attempt the layer
+        // did not protect is followed as it is
+        let record = ApproovService.protectionRecord(of: task.currentRequest) ?? ApproovService.protectionRecord(of: request)
+        let followUp = record.map { ApproovService.stripProtection(request, record: $0) } ?? request
+        let protect: (URLRequest?) -> Void = { next in
+            guard let next, record != nil, ApproovService.isApproovEnabled() else {
+                completionHandler(next)
+                return
+            }
+            // the token fetch may take a while, so it is not made on the delegate queue
+            DispatchQueue.global(qos: .userInitiated).async {
+                let update = ApproovService.updateRequestWithApproov(request: next, sessionConfig: session.configuration,
+                                                                     mutator: ApproovSessionTaskObserver.mutator(for: task))
+                switch update.decision {
+                case .ShouldProceed:
+                    completionHandler(update.request)
+                case .ShouldIgnore:
+                    completionHandler(next)
+                default:
+                    // the redirect fails the request, which reports the error rather than its cancellation
+                    ApproovSessionTaskObserver.recordFailure(update.error ?? URLError(.unknown), on: task)
+                    completionHandler(nil)
+                    task.cancel()
+                }
+            }
+        }
+        if let delegate = optionalURLDelegate as? URLSessionTaskDelegate,
+           delegate.responds(to: #selector(URLSessionTaskDelegate.urlSession(_:task:willPerformHTTPRedirection:newRequest:completionHandler:))) {
+            delegate.urlSession?(session, task: task, willPerformHTTPRedirection: response, newRequest: followUp, completionHandler: protect)
         } else {
-            completionHandler(request)
+            protect(followUp)
         }
     }
     
@@ -288,8 +318,13 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
      *  https://developer.apple.com/documentation/foundation/urlsessiontaskdelegate/1410001-urlsession
      */
     func urlSession(_ session: URLSession, task: URLSessionTask, needNewBodyStream completionHandler: @escaping (InputStream?) -> Void) {
-        if let delegate = optionalURLDelegate as? URLSessionTaskDelegate {
+        if let delegate = optionalURLDelegate as? URLSessionTaskDelegate,
+           delegate.responds(to: #selector(URLSessionTaskDelegate.urlSession(_:task:needNewBodyStream:))) {
             delegate.urlSession?(session, task: task, needNewBodyStream: completionHandler)
+        } else {
+            // No delegate implementation, so there is no replacement stream to offer. The handler
+            // must still be called or the task never finishes.
+            completionHandler(nil)
         }
     }
     
@@ -309,7 +344,8 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
      */
     @available(iOS 11.0, *)
     func urlSession(_ session: URLSession, task: URLSessionTask, willBeginDelayedRequest request: URLRequest, completionHandler: @escaping (URLSession.DelayedRequestDisposition, URLRequest?) -> Void) {
-        if let delegate = optionalURLDelegate as? URLSessionTaskDelegate {
+        if let delegate = optionalURLDelegate as? URLSessionTaskDelegate,
+           delegate.responds(to: #selector(URLSessionTaskDelegate.urlSession(_:task:willBeginDelayedRequest:completionHandler:))) {
             delegate.urlSession?(session, task:task, willBeginDelayedRequest: request, completionHandler: completionHandler)
         } else {
             completionHandler(URLSession.DelayedRequestDisposition.continueLoading, request)
@@ -365,8 +401,12 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
      */
     @available(iOS 17.0, macOS 14.0, watchOS 10.0, *)
     func urlSession(_ session: URLSession, task: URLSessionTask, needNewBodyStreamFrom offset: Int64, completionHandler: @escaping @Sendable (InputStream?) -> Void) {
-        if let delegate = optionalURLDelegate as? URLSessionTaskDelegate {
+        if let delegate = optionalURLDelegate as? URLSessionTaskDelegate,
+           delegate.responds(to: #selector(URLSessionTaskDelegate.urlSession(_:task:needNewBodyStreamFrom:completionHandler:))) {
             delegate.urlSession?(session, task: task, needNewBodyStreamFrom: offset, completionHandler: completionHandler)
+        } else {
+            // As above: no implementation means no stream to offer, but the handler must be called.
+            completionHandler(nil)
         }
     }
     
@@ -385,7 +425,8 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
      */
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse, completionHandler: @escaping (URLSession.ResponseDisposition) -> Void)
     {
-        if let delegate = optionalURLDelegate as? URLSessionDataDelegate {
+        if let delegate = optionalURLDelegate as? URLSessionDataDelegate,
+           delegate.responds(to: #selector(URLSessionDataDelegate.urlSession(_:dataTask:didReceive:completionHandler:))) {
             delegate.urlSession?(session, dataTask: dataTask, didReceive: response, completionHandler: completionHandler)
         } else {
             completionHandler(URLSession.ResponseDisposition.allow)
@@ -427,10 +468,11 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
      *  https://developer.apple.com/documentation/foundation/urlsessiondatadelegate/1411612-urlsession
      */
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, willCacheResponse proposedResponse: CachedURLResponse, completionHandler: @escaping (CachedURLResponse?) -> Void) {
-        if let delegate = optionalURLDelegate as? URLSessionDataDelegate {
+        if let delegate = optionalURLDelegate as? URLSessionDataDelegate,
+           delegate.responds(to: #selector(URLSessionDataDelegate.urlSession(_:dataTask:willCacheResponse:completionHandler:))) {
             delegate.urlSession?(session, dataTask: dataTask, willCacheResponse: proposedResponse, completionHandler: completionHandler)
         } else {
-                completionHandler(proposedResponse)
+            completionHandler(proposedResponse)
         }
     }
     
@@ -589,41 +631,37 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
             }
         }
         
-        // get the dynamic pins from Approov
-        guard let approovPins = Approov.getPins("public-key-sha256") else {
-            if ApproovService.loggingLevel >= .info {
-                os_log("ApproovService: pin verification no Approov pins", type: .info)
-            }
-            return serverTrust
-        }
-        
-        // get the pins for the host
-        var pinsForHost: [String]
+        // get the dynamic pins from Approov; once initialized the SDK always has them, so pins that
+        // cannot be read fail the connection closed
         let host = challenge.protectionSpace.host
-        if let pins = approovPins[host] {
-            // the host pinning is managed by Approov
-            pinsForHost = pins
-            if pinsForHost.count == 0 {
-                // there are no pins set for the host so use managed trust roots if available
-                if approovPins["*"] == nil {
-                    // there are no managed trust roots so the host is truly unpinned
-                    if ApproovService.loggingLevel >= .info {
-                        os_log("ApproovService: pin verification %@ no pins", type: .info, host)
-                    }
-                    return serverTrust
-                } else {
-                    // use the managed trust roots for pinning
-                    pinsForHost = approovPins["*"]!
-                }
-            }
-        } else {
-            // host is not pinned
-            if ApproovService.loggingLevel >= .info {
-                os_log("ApproovService: pin verification %@ unpinned", type: .info, host)
-            }
+        guard let approovPins = Approov.getPins("public-key-sha256") else {
+            ApproovService.log(.error, "ApproovService: pin verification: pins unavailable for \(host)")
+            return nil
+        }
+
+        // the pins for the host, looked up without regard to case or a trailing dot; a host that is not
+        // listed is not pinned
+        let wanted = ApproovService.normalisedHost(host)
+        var listed = false
+        var pinsForHost: [String] = []
+        for (key, pins) in approovPins where key != "*" && ApproovService.normalisedHost(key) == wanted {
+            listed = true
+            pinsForHost.append(contentsOf: pins)
+        }
+        if !listed {
+            ApproovService.log(.debug, "ApproovService: pin verification \(host) unpinned")
             return serverTrust
         }
-        
+        if pinsForHost.isEmpty {
+            // no pins of its own, so the Managed Trust Roots apply, and with none of those either the
+            // connection relies on OS trust
+            pinsForHost = approovPins["*"] ?? []
+            if pinsForHost.isEmpty {
+                PinningURLSessionDelegate.warnOfOSTrust(host: wanted, pins: approovPins)
+                return serverTrust
+            }
+        }
+
         // iterate over the certificate chain
         let certCountInChain = SecTrustGetCertificateCount(serverTrust);
         var indexCurrentCert = 0;
@@ -645,17 +683,13 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
                 // see if we have a match on a pin for this certificate in the chain
                 for pin in pinsForHost {
                     if publicKeyHashBase64 == pin {
-                        if ApproovService.loggingLevel >= .debug {
-                            os_log("ApproovService: matched pin %@ for %@ from %d pins", type: .debug, pin, host, pinsForHost.count)
-                        }
+                        ApproovService.log(.debug, "ApproovService: matched pin \(pin) for \(host) from \(pinsForHost.count) pins")
                         return serverTrust
                     }
                 }
             }
             else {
-                if ApproovService.loggingLevel >= .info {
-                    os_log("ApproovService: skipping unsupported certificate type", type: .info)
-                }
+                ApproovService.log(.info, "ApproovService: skipping unsupported certificate type")
             }
             
             // move to the next certificate in the chain
@@ -663,9 +697,116 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
         }
         
         // we return nil if no match in current set of pins from Approov SDK and certificate chain seen during the TLS handshake
-        if ApproovService.loggingLevel >= .error {
-            os_log("ApproovService: pin verification failed for %@ with no match for %d pins", type: .error, host, pinsForHost.count)
-        }
+        ApproovService.log(.error, "ApproovService: pin verification failed for \(host) with no match for \(pinsForHost.count) pins")
         return nil
+    }
+
+    // MARK: URLSessionWebSocketDelegate
+
+    /**
+     *  Tells the delegate that the WebSocket task successfully negotiated the handshake with the endpoint
+     *  https://developer.apple.com/documentation/foundation/urlsessionwebsocketdelegate/3197570-urlsession
+     */
+    @available(iOS 13.0, macOS 10.15, watchOS 6.0, *)
+    @objc(URLSession:webSocketTask:didOpenWithProtocol:)
+    func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol protocol: String?) {
+        if let delegate = optionalURLDelegate as? URLSessionWebSocketDelegate {
+            delegate.urlSession?(session, webSocketTask: webSocketTask, didOpenWithProtocol: `protocol`)
+        }
+    }
+
+    /**
+     *  Tells the delegate that the WebSocket task received a close frame from the server endpoint
+     *  https://developer.apple.com/documentation/foundation/urlsessionwebsocketdelegate/3197569-urlsession
+     */
+    @available(iOS 13.0, macOS 10.15, watchOS 6.0, *)
+    @objc(URLSession:webSocketTask:didCloseWithCode:reason:)
+    func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask,
+                    didCloseWith closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
+        if let delegate = optionalURLDelegate as? URLSessionWebSocketDelegate {
+            delegate.urlSession?(session, webSocketTask: webSocketTask, didCloseWith: closeCode, reason: reason)
+        }
+    }
+
+    // the verdicts of the pin check by normalised host, and the hosts warned of OS trust for the current
+    // pin set, guarded by verdictLock
+    private static let verdictLock = NSLock()
+    private static var refusedHosts: Set<String> = []
+    private static var osTrustWarnings: Set<String> = []
+    private static var osTrustPins: [String: [String]] = [:]
+
+    /**
+     * Records whether the last connection the pin check decided for a host was refused, so that the
+     * cancellation of a task to that host can be reported as an untrusted certificate.
+     *
+     * @param host is the host of the connection
+     * @param refused is true if the connection was refused
+     */
+    static func recordVerdict(host: String, refused: Bool) {
+        let normalised = ApproovService.normalisedHost(host)
+        verdictLock.lock()
+        defer { verdictLock.unlock() }
+        if refused {
+            refusedHosts.insert(normalised)
+        } else {
+            refusedHosts.remove(normalised)
+        }
+    }
+
+    // logs once per host and pin set that a listed host with no pins and no Managed Trust Roots relies on
+    // OS trust, naming the host and never a pin
+    private static func warnOfOSTrust(host: String, pins: [String: [String]]) {
+        verdictLock.lock()
+        if osTrustPins != pins {
+            osTrustPins = pins
+            osTrustWarnings.removeAll()
+        }
+        let first = osTrustWarnings.insert(host).inserted
+        verdictLock.unlock()
+        if first {
+            ApproovService.log(.warning, "ApproovService: pin verification \(host) has no pins and no Managed Trust Roots, so its connections rely on OS trust")
+        }
+    }
+
+    /**
+     * Restates the cancellation of a task whose connection the pin check refused as
+     * NSURLErrorServerCertificateUntrusted, so the app does not read it as its own cancellation. The
+     * cancellation is kept as the underlying error, and any other error passes through unchanged.
+     *
+     * @param error is the error the task completed with
+     * @return the error to report to the app
+     */
+    static func pinningError(replacing error: Error?) -> Error? {
+        guard let cancelled = error as NSError?, cancelled.domain == NSURLErrorDomain,
+              cancelled.code == NSURLErrorCancelled else {
+            return error
+        }
+        let failingURL = (cancelled.userInfo[NSURLErrorFailingURLErrorKey] as? URL)
+            ?? (cancelled.userInfo[NSURLErrorFailingURLStringErrorKey] as? String).flatMap { URL(string: $0) }
+        guard let host = failingURL?.host else {
+            return error
+        }
+        verdictLock.lock()
+        let refused = refusedHosts.contains(ApproovService.normalisedHost(host))
+        verdictLock.unlock()
+        guard refused else {
+            return error
+        }
+        var info: [String: Any] = [NSLocalizedDescriptionKey: "Approov pinning: certificate not trusted for \(host)",
+                                   NSUnderlyingErrorKey: cancelled]
+        if let failingURL {
+            info[NSURLErrorFailingURLErrorKey] = failingURL
+            info[NSURLErrorFailingURLStringErrorKey] = failingURL.absoluteString
+        }
+        return NSError(domain: NSURLErrorDomain, code: NSURLErrorServerCertificateUntrusted, userInfo: info)
+    }
+
+    // forgets the verdicts and warnings, for tests
+    static func resetForTesting() {
+        verdictLock.lock()
+        refusedHosts.removeAll()
+        osTrustWarnings.removeAll()
+        osTrustPins = [:]
+        verdictLock.unlock()
     }
 }

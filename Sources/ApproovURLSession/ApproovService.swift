@@ -97,9 +97,6 @@ public class ApproovService {
     // the dispatch queue to manage serial access to other ApproovService state
     private static let stateQueue = DispatchQueue(label: "ApproovService.state", qos: .userInitiated)
 
-    // if we should proceed on network fail
-    private static var proceedOnNetworkFail = false
-
     // binding header name
     private static var bindingHeader = ""
 
@@ -115,7 +112,7 @@ public class ApproovService {
     // The mutator instance used to control ApproovService behavior at key points in the flow.
     // Unless set using the ApproovService.setServiceMutator() method, the default
     // behaviour defined in the default implementation of ApproovServiceMutator will be used.
-    private static var serviceMutator: ApproovServiceMutator = ApproovServiceMutatorDefault.shared
+    private static var serviceMutator: ApproovServiceMutator = ApproovCloseFailureMutator.instance
 
     // dedicated queue for thread-safe access to the logging level (separate from stateQueue to
     // avoid nested sync deadlocks when logging is checked inside stateQueue-protected methods)
@@ -128,6 +125,36 @@ public class ApproovService {
         set { loggingQueue.sync { _loggingLevel = newValue } }
     }
 
+    // receives every line the layer writes, with its level, for tests
+    private static var _logSink: ((ApproovLogLevel, String) -> Void)?
+    static var logSink: ((ApproovLogLevel, String) -> Void)? {
+        get { loggingQueue.sync { _logSink } }
+        set { loggingQueue.sync { _logSink = newValue } }
+    }
+
+    /**
+     * Writes one line of the layer's log, if the logging level allows its level. Every line the layer
+     * writes goes through here, so OFF silences the layer completely.
+     *
+     * @param level is the severity of the line
+     * @param message is the line, built only if it is written
+     */
+    static func log(_ level: ApproovLogLevel, _ message: @autoclosure () -> String) {
+        guard level != .off, loggingLevel >= level else {
+            return
+        }
+        let line = message()
+        logSink?(level, line)
+        let type: OSLogType
+        switch level {
+        case .error: type = .error
+        case .info: type = .info
+        case .debug: type = .debug
+        default: type = .default
+        }
+        os_log("%{public}@", type: type, line)
+    }
+
     // map of headers that should have their values substituted for secure strings, mapped to their
     // required prefixes
     private static var substitutionHeaders: Dictionary<String, String> = Dictionary()
@@ -138,50 +165,34 @@ public class ApproovService {
     // map of URL regexs that should be excluded from any Approov protection, mapped to the compiled Pattern
     private static var exclusionURLRegexs: Dictionary<String, NSRegularExpression> = Dictionary()
 
-    // Cached failure result from the last Approov token fetch that returned a failure status.
-    // Protected by failureCacheQueue for thread-safe access. This avoids redundant ~1s SDK calls
-    // when the platform is in a sustained failure state (e.g. no network, MITM detected).
-    private static let failureCacheQueue = DispatchQueue(label: "ApproovService.failureCache", qos: .userInitiated)
-    private static var cachedFailureResult: ApproovTokenFetchResult? = nil
-    private static var cachedFailureTime: TimeInterval? = nil
-    private static var failureCacheTTL: TimeInterval = 0.5 // seconds
-    private static var failureCacheMissGroup: DispatchGroup? = nil
+    // the ARC of the most recent fetch the layer made, from the request path or a direct method,
+    // protected by lastARCQueue
+    private static let lastARCQueue = DispatchQueue(label: "ApproovService.lastARC", qos: .userInitiated)
+    private static var lastARC = ""
 
 
     
     /**
-     * Gets the last ARC (Attestation Response Code) code. 
+     * Gets the Attestation Response Code (ARC) from the most recent token, secure string or custom JWT
+     * fetch made by this layer, either for a request or by a direct method. It performs no fetch of its
+     * own, so it can be read after a rejected request to correlate with your backend API. An empty
+     * string is returned if no fetch has been made since initialization, if the last fetch carried no
+     * ARC, or if ARC is not enabled for the account.
      *
-     * @return String of the last ARC or empty string if there was none
+     * @return the ARC of the most recent fetch, or an empty string
      */
     public static func getLastARC() -> String {
-        if !isApproovEnabled() {
-            if loggingLevel >= .error {
-                os_log("ApproovService: getLastARC: SDK not initialized", type: .error)
-            }
-            return ""
-        }
-        // We have to get the current config and obtain one protected API endpoint at least
-        // get the dynamic pins from Approov
-        guard let approovPins = Approov.getPins("public-key-sha256") else {
-            if loggingLevel >= .error {
-                os_log("ApproovService: no host pinning information available", type: .error)
-            }
-            return ""
-        }
-        // The approovPins contains a map of hostnames to pin strings. We need to skip the '*' entry (Managed Trust Roots),
-        // and use another hostname if available.
-        if let hostname = approovPins.keys.first(where: { $0 != "*" }) {
-            let result = Approov.fetchTokenAndWait(hostname)
-            // Check if a token was fetched successfully and return its arc code
-            if result.token.count > 0 {
-                return result.arc
-            }
-        }
-        if loggingLevel >= .info {
-            os_log("ApproovService: ARC code unavailable", type: .info)
-        }
-        return ""
+        return lastARCQueue.sync { lastARC }
+    }
+
+    /**
+     * Records the ARC of a fetch result as the most recent one. An empty ARC clears the previous
+     * value, as the ARC belongs to the last fetch.
+     *
+     * @param result is the fetch result
+     */
+    private static func recordLastARC(_ result: ApproovTokenFetchResult) {
+        lastARCQueue.sync { lastARC = result.arc }
     }
 
     /**
@@ -201,9 +212,7 @@ public class ApproovService {
             // If we are already initialized with a valid config, ignore any subsequent
             // empty config initialization
             if isApproovEnabledInternal && config.isEmpty {
-                if loggingLevel >= .info {
-                    os_log("ApproovService already initialized with a valid config; ignoring empty configuration", type: .info)
-                }
+                log(.info, "ApproovService already initialized with a valid config; ignoring empty configuration")
                 return
             }
 
@@ -219,18 +228,14 @@ public class ApproovService {
                     //                         false return on Android; log and continue.
                     // Any other error       → genuine failure → re-throw.
                     try Approov.initialize(config, updateConfig: "auto", comment: comment)
-                    if loggingLevel >= .info {
-                        os_log("ApproovService: Approov SDK initialized", type: .info)
-                    }
+                    log(.info, "ApproovService: Approov SDK initialized")
                 } catch let error {
                     // If the error is due to the SDK being initialized already, we ignore it otherwise we throw.
                     // This is an ObjC/Swift interop artifact: ObjC BOOL return of NO without an NSError
                     // is bridged as Foundation._GenericObjCError with code 0.
                     let nsError = error as NSError
                     if nsError.code == 0, nsError.domain == "Foundation._GenericObjCError" {
-                        if loggingLevel >= .info {
-                            os_log("ApproovService: Approov SDK already initialized", type: .info)
-                        }
+                        log(.info, "ApproovService: Approov SDK already initialized")
                     } else {
                         // service-layer state NOT modified — prior operating mode preserved
                         throw ApproovError.initializationFailure(message: "Error initializing Approov SDK: \(nsError.localizedDescription)")
@@ -241,26 +246,22 @@ public class ApproovService {
             serviceIsInitialized = false
             configString = config
             stateQueue.sync {
-                proceedOnNetworkFail = false
                 bindingHeader = ""
                 approovTokenHeader = "Approov-Token"
                 approovTokenPrefix = ""
                 approovTraceIDHeader = "Approov-TraceID"
-                serviceMutator = ApproovServiceMutatorDefault.shared
+                serviceMutator = ApproovCloseFailureMutator.instance
                 substitutionHeaders = Dictionary()
                 substitutionQueryParams = Set()
                 exclusionURLRegexs = Dictionary()
                 useApproovStatusIfNoToken = false
             }
-            failureCacheQueue.sync {
-                cachedFailureResult = nil
-                cachedFailureTime = nil
-            }
+            lastARCQueue.sync { lastARC = "" }
             serviceIsInitialized = true
             if !config.isEmpty {
                 // Must match the top CHANGELOG entry (in lock-step with Package.swift releaseTAG
                 // and the podspec s.version); bump all three in a PR before tagging a release.
-                Approov.setUserProperty("approov-service-urlsession/3.5.13")
+                Approov.setUserProperty("approov-service-urlsession/3.7.0")
             }
         }
     }
@@ -298,37 +299,23 @@ public class ApproovService {
     }
 
     /**
-     * Sets a flag indicating if the network interceptor should proceed anyway if it is
-     * not possible to obtain an Approov token due to a networking failure. If this is set
-     * then your backend API can receive calls without the expected Approov token header
-     * being added, or without header/query parameter substitutions being made. Note that
-     * this should be used with caution because it may allow a connection to be established
-     * before any dynamic pins have been received via Approov, thus potentially opening the
-     * channel to a MitM.
+     * Indicates whether the service layer has been initialized and processes requests. This is
+     * true in bypass mode too. It is the same as isInitialized().
      *
-     * @param proceed is true if Approov networking fails should allow continuation
+     * @return true if the service layer has been initialized, false otherwise
      */
-    @available(*, deprecated, message: "No longer used internally. Use setServiceMutator to customize network failure behavior.")
-    public static func setProceedOnNetworkFailure(proceed: Bool) {
-        stateQueue.sync {
-            proceedOnNetworkFail = proceed
-            if loggingLevel >= .info {
-                os_log("ApproovService: setProceedOnNetworkFailure %d", type: .info, proceed)
-            }
-        }
+    public static func isApproovServiceEnabled() -> Bool {
+        return isInitialized()
     }
 
     /**
-     * Gets a flag indicating if the network interceptor should proceed anyway if it is
-     * not possible to obtain an Approov token due to a networking failure.
+     * Indicates whether Approov protection is enabled, false in bypass mode or before
+     * initialization. It is the same as isApproovEnabled().
      *
-     * @return true if Approov networking fails should allow continuation, false otherwise
+     * @return true if Approov protection is enabled, false otherwise
      */
-    @available(*, deprecated, message: "No longer used internally. Use setServiceMutator to customize network failure behavior.")
-    public static func getProceedOnNetworkFailure() -> Bool {
-        return stateQueue.sync {
-            return proceedOnNetworkFail
-        }
+    public static func isApproovProtectionEnabled() -> Bool {
+        return isApproovEnabled()
     }
 
     /**
@@ -343,16 +330,12 @@ public class ApproovService {
      */
     public static func setDevKey(devKey: String) {
         if !isApproovEnabled() {
-            if loggingLevel >= .error {
-                os_log("ApproovService: setDevKey: SDK not initialized", type: .error)
-            }
+            log(.error, "ApproovService: setDevKey: SDK not initialized")
             return
         }
         stateQueue.sync {
             Approov.setDevKey(devKey)
-            if loggingLevel >= .debug {
-                os_log("ApproovService: setDevKey")
-            }
+            log(.debug, "ApproovService: setDevKey")
         }
     }
 
@@ -362,15 +345,13 @@ public class ApproovService {
      * "Approov-Token" with no prefix.
      *
      * @param header is the header to place the Approov token on
-     * @param prefix is any prefix String for the Approov token header
+     * @param prefix is any prefix String for the Approov token header, or nil for no prefix
      */
-    public static func setApproovHeader(header: String, prefix: String) {
+    public static func setTokenHeader(header: String, prefix: String?) {
         stateQueue.sync {
             approovTokenHeader = header
-            approovTokenPrefix = prefix
-            if loggingLevel >= .debug {
-                os_log("ApproovService: setApproovHeader: %@ %@", type: .debug, header, prefix)
-            }
+            approovTokenPrefix = prefix ?? ""
+            log(.debug, "ApproovService: setTokenHeader: \(header) \(prefix ?? "")")
         }
     }
 
@@ -379,9 +360,20 @@ public class ApproovService {
      *
      * @return the name of the header used for the Approov token
      */
-    public static func getApproovTokenHeader() -> String {
+    public static func getTokenHeader() -> String {
         return stateQueue.sync {
             return approovTokenHeader
+        }
+    }
+
+    /**
+     * Gets the prefix added before the Approov token in its header.
+     *
+     * @return the prefix, or the empty string for none
+     */
+    public static func getTokenPrefix() -> String {
+        return stateQueue.sync {
+            return approovTokenPrefix
         }
     }
 
@@ -391,12 +383,10 @@ public class ApproovService {
      *
      * @param header is the header to place the Approov TraceID on, or nil to disable it
      */
-    public static func setApproovTraceIDHeader(header: String?) {
+    public static func setTraceIDHeader(header: String?) {
         stateQueue.sync {
             approovTraceIDHeader = header
-            if loggingLevel >= .debug {
-                os_log("ApproovService: setApproovTraceIDHeader: %@", type: .debug, header ?? "nil")
-            }
+            log(.debug, "ApproovService: setTraceIDHeader: \(header ?? "nil")")
         }
     }
 
@@ -405,10 +395,42 @@ public class ApproovService {
      *
      * @return the name of the header used for the Approov TraceID, or nil if disabled
      */
-    public static func getApproovTraceIDHeader() -> String? {
+    public static func getTraceIDHeader() -> String? {
         return stateQueue.sync {
             return approovTraceIDHeader
         }
+    }
+
+    /**
+     * Sets the Approov token header and prefix.
+     */
+    @available(*, deprecated, renamed: "setTokenHeader(header:prefix:)")
+    public static func setApproovHeader(header: String, prefix: String) {
+        setTokenHeader(header: header, prefix: prefix)
+    }
+
+    /**
+     * Gets the Approov token header.
+     */
+    @available(*, deprecated, renamed: "getTokenHeader()")
+    public static func getApproovTokenHeader() -> String {
+        return getTokenHeader()
+    }
+
+    /**
+     * Sets the Approov TraceID header, nil to disable it.
+     */
+    @available(*, deprecated, renamed: "setTraceIDHeader(header:)")
+    public static func setApproovTraceIDHeader(header: String?) {
+        setTraceIDHeader(header: header)
+    }
+
+    /**
+     * Gets the Approov TraceID header, nil if disabled.
+     */
+    @available(*, deprecated, renamed: "getTraceIDHeader()")
+    public static func getApproovTraceIDHeader() -> String? {
+        return getTraceIDHeader()
     }
 
     /**
@@ -423,9 +445,7 @@ public class ApproovService {
     public static func setBindingHeader(header: String) {
         stateQueue.sync {
             bindingHeader = header
-            if loggingLevel >= .debug {
-                os_log("ApproovService: setBindingHeader: %@", type: .debug, header)
-            }
+            log(.debug, "ApproovService: setBindingHeader: \(header)")
         }
     }
 
@@ -443,9 +463,19 @@ public class ApproovService {
     public static func setUseApproovStatusIfNoToken(shouldUse: Bool) {
         stateQueue.sync {
             useApproovStatusIfNoToken = shouldUse
-            if loggingLevel >= .debug {
-                os_log("ApproovService: setUseApproovStatusIfNoToken: %@", type: .debug, String(shouldUse))
-            }
+            log(.debug, "ApproovService: setUseApproovStatusIfNoToken: \(String(shouldUse))")
+        }
+    }
+
+    /**
+     * Gets whether the Approov fetch status is used as the token header value when no token was
+     * obtained.
+     *
+     * @return true if the status is used, false (the default) for an empty token
+     */
+    public static func getUseApproovStatusIfNoToken() -> Bool {
+        return stateQueue.sync {
+            return useApproovStatusIfNoToken
         }
     }
 
@@ -459,9 +489,7 @@ public class ApproovService {
      */
     public static func setLoggingLevel(_ level: ApproovLogLevel) {
         loggingLevel = level
-        if level >= .info {
-            os_log("ApproovService: logging level set to %d", type: .info, level.rawValue)
-        }
+        log(.info, "ApproovService: logging level set to \(level.rawValue)")
     }
 
     /**
@@ -477,21 +505,11 @@ public class ApproovService {
      *              Passing nil to this method will reinstate the default behavior.
      */
     public static func setServiceMutator(_ mutator: ApproovServiceMutator?) {
-        let appliedMutator = mutator ?? ApproovServiceMutatorDefault.shared
-        if loggingLevel >= .debug {
-            os_log("Applied ApproovServiceMutator: %@", type: .debug, String(describing: appliedMutator))
-        }
+        let appliedMutator = mutator ?? ApproovCloseFailureMutator.instance
+        log(.debug, "Applied ApproovServiceMutator: \(String(describing: appliedMutator))")
         stateQueue.sync {
             serviceMutator = appliedMutator
         }
-    }
-
-    /**
-     * @deprecated Use setServiceMutator instead.
-     */
-    @available(*, deprecated, message: "Use setServiceMutator instead.")
-    public static func setApproovInterceptorExtensions(_ callbacks: ApproovInterceptorExtensions?) {
-        setServiceMutator(callbacks)
     }
 
     /**
@@ -503,17 +521,6 @@ public class ApproovService {
         return stateQueue.sync {
             return serviceMutator
         }
-    }
-
-    /**
-     * Gets the interceptor extensions callback handlers.
-     *
-     * @return the interceptor extensions callback handlers or nil if none set
-     * @deprecated Use getServiceMutator instead.
-     */
-    @available(*, deprecated, message: "Use getServiceMutator instead.")
-    public static func getApproovInterceptorExtensions() -> ApproovInterceptorExtensions? {
-        return getServiceMutator() as? ApproovInterceptorExtensions
     }
 
     /**
@@ -530,14 +537,10 @@ public class ApproovService {
         stateQueue.sync {
             if prefix == nil {
                 substitutionHeaders[header] = ""
-                if loggingLevel >= .debug {
-                    os_log("ApproovService: addSubstitutionHeader: %@", type: .debug, header)
-                }
+                log(.debug, "ApproovService: addSubstitutionHeader: \(header)")
             } else {
                 substitutionHeaders[header] = prefix
-                if loggingLevel >= .debug {
-                    os_log("ApproovService: addSubstitutionHeader: %@ %@", type: .debug, header, prefix!)
-                }
+                log(.debug, "ApproovService: addSubstitutionHeader: \(header) \(prefix!)")
             }
         }
     }
@@ -552,9 +555,7 @@ public class ApproovService {
             if substitutionHeaders[header] != nil {
                 substitutionHeaders.removeValue(forKey: header)
             }
-            if loggingLevel >= .debug {
-                os_log("ApproovService: removeSubstitutionHeader: %@", type: .debug, header)
-            }
+            log(.debug, "ApproovService: removeSubstitutionHeader: \(header)")
         }
     }
 
@@ -580,9 +581,7 @@ public class ApproovService {
     public static func addSubstitutionQueryParam(key: String) {
         stateQueue.sync {
             substitutionQueryParams.insert(key)
-            if loggingLevel >= .debug {
-                os_log("ApproovService: addSubstitutionQueryParam: %@", type: .debug, key)
-            }
+            log(.debug, "ApproovService: addSubstitutionQueryParam: \(key)")
         }
     }
 
@@ -594,9 +593,7 @@ public class ApproovService {
     public static func removeSubstitutionQueryParam(key: String) {
         stateQueue.sync {
             substitutionQueryParams.remove(key)
-            if loggingLevel >= .debug {
-                os_log("ApproovService: removeSubstitutionQueryParam: %@", type: .debug, key)
-            }
+            log(.debug, "ApproovService: removeSubstitutionQueryParam: \(key)")
         }
     }
 
@@ -630,13 +627,9 @@ public class ApproovService {
             do {
                 let regex = try NSRegularExpression(pattern: urlRegex, options: [])
                 exclusionURLRegexs[urlRegex] = regex
-                if loggingLevel >= .debug {
-                    os_log("ApproovService: addExclusionURLRegex: %@", type: .debug, urlRegex)
-                }
+                log(.debug, "ApproovService: addExclusionURLRegex: \(urlRegex)")
             } catch {
-                if loggingLevel >= .debug {
-                    os_log("ApproovService: addExclusionURLRegex: %@ error: %@", type: .debug, urlRegex, error.localizedDescription)
-                }
+                log(.error, "ApproovService: addExclusionURLRegex: \(urlRegex) error: \(error.localizedDescription)")
             }
         }
     }
@@ -650,9 +643,7 @@ public class ApproovService {
         stateQueue.sync {
             if exclusionURLRegexs[urlRegex] != nil {
                 exclusionURLRegexs.removeValue(forKey: urlRegex)
-                if loggingLevel >= .debug {
-                    os_log("ApproovService: removeExclusionURLRegex: %@", type: .debug, urlRegex)
-                }
+                log(.debug, "ApproovService: removeExclusionURLRegex: \(urlRegex)")
             }
         }
     }
@@ -665,19 +656,6 @@ public class ApproovService {
     public static func getExclusionURLRegexs() -> Dictionary<String, NSRegularExpression> {
         return stateQueue.sync {
             return exclusionURLRegexs
-        }
-    }
-
-    /**
-     * Allows an Approov fetch operation to be performed as early as possible.
-     * 
-     * Note: This method is obsolete and is now a no-op. The underlying Approov 
-     * SDK manages prefetching automatically.
-     */
-    @available(*, deprecated, message: "This method is obsolete and is now a no-op. The underlying Approov SDK manages prefetching automatically.")
-    public static func prefetch() {
-        if loggingLevel >= .warning {
-            os_log("ApproovService: prefetch is no longer used and does nothing.")
         }
     }
 
@@ -695,21 +673,16 @@ public class ApproovService {
      */
     public static func precheck() throws {
         if !isApproovEnabled() {
-            if loggingLevel >= .error {
-                os_log("ApproovService: precheck: SDK not initialized", type: .error)
-            }
+            log(.error, "ApproovService: precheck: SDK not initialized")
             throw ApproovError.permanentError(message: "precheck: SDK not initialized")
         }
         // try to fetch a non-existent secure string in order to check for a rejection
         let approovResults = Approov.fetchSecureStringAndWait("precheck-dummy-key", nil)
+        recordLastARC(approovResults)
         if approovResults.status == ApproovTokenFetchStatus.unknownKey {
-            if loggingLevel >= .debug {
-                os_log("ApproovService: precheck: success", type: .debug)
-            }
+            log(.debug, "ApproovService: precheck: success")
         } else {
-            if loggingLevel >= .debug {
-                os_log("ApproovService: precheck: %@", type: .debug, Approov.string(from: approovResults.status))
-            }
+            log(.debug, "ApproovService: precheck: \(statusName(approovResults.status))")
         }
 
         // process the returned Approov status using decision maker
@@ -725,16 +698,12 @@ public class ApproovService {
      */
     public static func getDeviceID() -> String? {
         if !isApproovEnabled() {
-            if loggingLevel >= .error {
-                os_log("ApproovService: getDeviceID: SDK not initialized", type: .error)
-            }
+            log(.error, "ApproovService: getDeviceID: SDK not initialized")
             return nil
         }
         let deviceID = Approov.getDeviceID()
         if (deviceID != nil) {
-            if loggingLevel >= .debug {
-                os_log("ApproovService: getDeviceID %@", type: .debug, deviceID!)
-            }
+            log(.debug, "ApproovService: getDeviceID \(deviceID!)")
         }
         return deviceID
     }
@@ -750,15 +719,28 @@ public class ApproovService {
      */
     public static func setDataHashInToken(data: String) {
         if !isApproovEnabled() {
-            if loggingLevel >= .error {
-                os_log("ApproovService: setDataHashInToken: SDK not initialized", type: .error)
-            }
+            log(.error, "ApproovService: setDataHashInToken: SDK not initialized")
             return
         }
-        if loggingLevel >= .debug {
-            os_log("ApproovService: setDataHashInToken", type: .debug)
-        }
+        log(.debug, "ApproovService: setDataHashInToken")
         Approov.setDataHashInToken(data)
+    }
+
+    /**
+     * Sets the install attributes for this app installation, a signed JWT that is sent with future
+     * Approov token fetches and appears in later tokens. The server accepts them only if they are
+     * signed, within their expiry and bound to this device ID.
+     *
+     * @param attrs is the signed JWT holding the new install attributes
+     * @throws ApproovError if Approov protection is not enabled
+     */
+    public static func setInstallAttributes(_ attrs: String) throws {
+        if !isApproovEnabled() {
+            log(.error, "ApproovService: setInstallAttributes: SDK not initialized")
+            throw ApproovError.permanentError(message: "setInstallAttributes: SDK not initialized")
+        }
+        log(.debug, "ApproovService: setInstallAttributes")
+        Approov.setInstallAttrsInToken(attrs)
     }
 
     /**
@@ -776,16 +758,13 @@ public class ApproovService {
      */
     public static func fetchToken(url: String) throws -> String {
         if !isApproovEnabled() {
-            if loggingLevel >= .error {
-                os_log("ApproovService: fetchToken: SDK not initialized", type: .error)
-            }
+            log(.error, "ApproovService: fetchToken: SDK not initialized")
             throw ApproovError.permanentError(message: "fetchToken: SDK not initialized")
         }
         // fetch the Approov token
         let result: ApproovTokenFetchResult = Approov.fetchTokenAndWait(url)
-        if loggingLevel >= .debug {
-            os_log("ApproovService: fetchToken: %@", type: .debug, Approov.string(from: result.status))
-        }
+        recordLastARC(result)
+        log(.debug, "ApproovService: fetchToken: \(statusName(result.status))")
 
         // process the status
         try getServiceMutator().handleFetchTokenResult(result)
@@ -803,8 +782,192 @@ public class ApproovService {
      */
     @available(*, deprecated, message: "Use getAccountMessageSignature or getInstallMessageSignature instead.")
     public static func getMessageSignature(message: String) -> String? {
+        let firstCall: Bool = loggingQueue.sync {
+            defer { messageSignatureWarned = true }
+            return !messageSignatureWarned
+        }
+        if firstCall {
+            log(.warning, "ApproovService: getMessageSignature is deprecated, use getAccountMessageSignature")
+        }
         return getAccountMessageSignature(message: message)
     }
+
+    /**
+     * Gets the name of a token fetch status, as the Android SDK names it, for the token header,
+     * error messages and logs. The iOS SDK gives prose rather than the name, so the layer holds the
+     * names. A status this table does not know keeps the SDK's own text.
+     *
+     * @param status is the token fetch status
+     * @return the status name, such as "NO_NETWORK"
+     */
+    static func statusName(_ status: ApproovTokenFetchStatus) -> String {
+        switch status {
+        case .success: return "SUCCESS"
+        case .noNetwork: return "NO_NETWORK"
+        case .mitmDetected: return "MITM_DETECTED"
+        case .poorNetwork: return "POOR_NETWORK"
+        case .noApproovService: return "NO_APPROOV_SERVICE"
+        case .badURL: return "BAD_URL"
+        case .unknownURL: return "UNKNOWN_URL"
+        case .unprotectedURL: return "UNPROTECTED_URL"
+        case .notInitialized: return "NOT_INITIALIZED"
+        case .rejected: return "REJECTED"
+        case .disabled: return "DISABLED"
+        case .unknownKey: return "UNKNOWN_KEY"
+        case .badKey: return "BAD_KEY"
+        case .badPayload: return "BAD_PAYLOAD"
+        case .internalError: return "INTERNAL_ERROR"
+        @unknown default: return Approov.string(from: status)
+        }
+    }
+
+    /**
+     * Gets the current time corrected to the Approov servers' clock, in milliseconds since the epoch.
+     * Message signatures take their created and expires times from it. With an Approov SDK that does not
+     * provide this time, it is the device clock.
+     *
+     * @return the current time in milliseconds, adjusted to the Approov servers' clock
+     * @throws ApproovError if Approov protection is not enabled
+     */
+    public static func getServerAdjustedCurrentTimeMS() throws -> Int64 {
+        if !isApproovEnabled() {
+            log(.error, "ApproovService: getServerAdjustedCurrentTimeMS: SDK not initialized")
+            throw ApproovError.permanentError(message: "getServerAdjustedCurrentTimeMS: SDK not initialized")
+        }
+        return serverAdjustedTimeMS()
+    }
+
+    // whether the device clock warning has been written in this process, protected by loggingQueue
+    private static var deviceClockWarned = false
+
+    /**
+     * Gets the current time from the Approov SDK, corrected to the Approov servers' clock. An SDK that
+     * does not provide it gives the device clock, with one warning.
+     *
+     * @return the current time in milliseconds since the epoch
+     */
+    static func serverAdjustedTimeMS() -> Int64 {
+        let selector = NSSelectorFromString("getServerAdjustedCurrentTimeMS")
+        let sdk: AnyObject = Approov.self
+        if sdk.responds(to: selector), let implementation = sdk.method(for: selector) {
+            typealias ServerAdjustedTime = @convention(c) (AnyObject, Selector) -> Int64
+            let time = unsafeBitCast(implementation, to: ServerAdjustedTime.self)(sdk, selector)
+            if time > 0 {
+                return time
+            }
+        }
+        let firstUse: Bool = loggingQueue.sync {
+            defer { deviceClockWarned = true }
+            return !deviceClockWarned
+        }
+        if firstUse {
+            log(.warning, "ApproovService: the Approov servers' time is unavailable, using the device clock")
+        }
+        return Int64(Date().timeIntervalSince1970 * 1000)
+    }
+
+    // the request property holding what the layer changed on a request, which never holds a value the
+    // layer installed, only its digest
+    private static let protectionKey = "io.approov.service.urlsession.protection"
+
+    // a digest of a header value as the network stack keeps it, trimmed of surrounding whitespace
+    private static func headerDigest(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespaces)
+        return ApproovDefaultMessageSigning.sha256(data: Data(trimmed.utf8)).base64EncodedString()
+    }
+
+    // a copy of a request with the protection record set, or removed when it is nil
+    private static func settingProtection(_ record: [String: Any]?, on request: URLRequest) -> URLRequest {
+        guard let mutable = (request as NSURLRequest).mutableCopy() as? NSMutableURLRequest else {
+            return request
+        }
+        if let record {
+            URLProtocol.setProperty(record, forKey: protectionKey, in: mutable)
+        } else {
+            URLProtocol.removeProperty(forKey: protectionKey, in: mutable)
+        }
+        return mutable as URLRequest
+    }
+
+    /**
+     * Gets the record of what the layer changed on a request it protected.
+     *
+     * @param request is the request
+     * @return the record, or nil if the layer did not protect the request
+     */
+    static func protectionRecord(of request: URLRequest?) -> [String: Any]? {
+        guard let request else {
+            return nil
+        }
+        return URLProtocol.property(forKey: protectionKey, in: request) as? [String: Any]
+    }
+
+    /**
+     * Records on the protected request what the layer changed from the app's request: each header it
+     * added or changed, with the app's own value and a digest of the installed one, and the URL before and
+     * after query substitution.
+     *
+     * @param original is the request as the app made it
+     * @param protected is the request the layer protected
+     * @return the protected request carrying the record
+     */
+    private static func recordingProtection(of original: URLRequest, in protected: URLRequest) -> URLRequest {
+        let before = original.allHTTPHeaderFields ?? [:]
+        var headers: [[String: Any]] = []
+        for (name, value) in protected.allHTTPHeaderFields ?? [:] {
+            let appValue = before.first { $0.key.caseInsensitiveCompare(name) == .orderedSame }?.value
+            if appValue == value {
+                continue
+            }
+            var entry: [String: Any] = ["name": name, "installed": headerDigest(value)]
+            if let appValue {
+                entry["app"] = appValue
+            }
+            headers.append(entry)
+        }
+        var record: [String: Any] = ["headers": headers]
+        if let originalURL = original.url, let protectedURL = protected.url, originalURL != protectedURL {
+            record["originalURL"] = originalURL.absoluteString
+            record["protectedURL"] = protectedURL.absoluteString
+        }
+        if headers.isEmpty && record["protectedURL"] == nil {
+            return protected
+        }
+        return settingProtection(record, on: protected)
+    }
+
+    /**
+     * Strips what the layer added to a request it protected. A header still holding the value the layer
+     * installed is restored to the app's own value, or removed if the app had none, while a header the app
+     * changed since is kept. A substituted query is restored to the app's placeholder only if the URL is
+     * still the one the protection was applied to; any other URL is left exactly as it is.
+     *
+     * @param request is the request, which may be a later attempt of a protected request
+     * @param record is the record of the protection, by default the one the request carries
+     * @return the request without the layer's protection
+     */
+    static func stripProtection(_ request: URLRequest, record: [String: Any]? = nil) -> URLRequest {
+        guard let record = record ?? protectionRecord(of: request) else {
+            return request
+        }
+        var stripped = request
+        for entry in record["headers"] as? [[String: Any]] ?? [] {
+            guard let name = entry["name"] as? String, let installed = entry["installed"] as? String,
+                  let current = stripped.value(forHTTPHeaderField: name), headerDigest(current) == installed else {
+                continue
+            }
+            stripped.setValue(entry["app"] as? String, forHTTPHeaderField: name)
+        }
+        if let protectedURL = record["protectedURL"] as? String, stripped.url?.absoluteString == protectedURL,
+           let originalURL = (record["originalURL"] as? String).flatMap({ URL(string: $0) }) {
+            stripped.url = originalURL
+        }
+        return settingProtection(nil, on: stripped)
+    }
+
+    // whether the getMessageSignature deprecation warning has been written in this process,
+    // protected by loggingQueue
+    private static var messageSignatureWarned = false
 
     /**
      * Gets the signature for the given message using the account-specific signing key.
@@ -815,14 +978,10 @@ public class ApproovService {
      */
     public static func getAccountMessageSignature(message: String) -> String? {
         if !isApproovEnabled() {
-            if loggingLevel >= .error {
-                os_log("ApproovService: getAccountMessageSignature: SDK not initialized", type: .error)
-            }
+            log(.error, "ApproovService: getAccountMessageSignature: SDK not initialized")
             return nil
         }
-        if loggingLevel >= .debug {
-            os_log("ApproovService: getAccountMessageSignature", type: .debug)
-        }
+        log(.debug, "ApproovService: getAccountMessageSignature")
         return Approov.getMessageSignature(message)
     }
 
@@ -835,14 +994,10 @@ public class ApproovService {
      */
     public static func getInstallMessageSignature(message: String) -> String? {
         if !isApproovEnabled() {
-            if loggingLevel >= .error {
-                os_log("ApproovService: getInstallMessageSignature: SDK not initialized", type: .error)
-            }
+            log(.error, "ApproovService: getInstallMessageSignature: SDK not initialized")
             return nil
         }
-        if loggingLevel >= .debug {
-            os_log("ApproovService: getInstallMessageSignature", type: .debug)
-        }
+        log(.debug, "ApproovService: getInstallMessageSignature")
         return Approov.getInstallMessageSignature(message)
     }
 
@@ -866,9 +1021,7 @@ public class ApproovService {
      */
     public static func fetchSecureString(key: String, newDef: String?) throws -> String? {
         if !isApproovEnabled() {
-            if loggingLevel >= .error {
-                os_log("ApproovService: fetchSecureString: SDK not initialized", type: .error)
-            }
+            log(.error, "ApproovService: fetchSecureString: SDK not initialized")
             throw ApproovError.permanentError(message: "fetchSecureString: SDK not initialized")
         }
         // determine the type of operation as the values themselves cannot be logged
@@ -879,9 +1032,8 @@ public class ApproovService {
 
         // try and fetch the secure string
         let approovResult = Approov.fetchSecureStringAndWait(key, newDef)
-        if loggingLevel >= .info {
-            os_log("ApproovService: fetchSecureString: %@: %@", type: .info, type, Approov.string(from: approovResult.status))
-        }
+        recordLastARC(approovResult)
+        log(.info, "ApproovService: fetchSecureString: \(type): \(statusName(approovResult.status))")
 
         // process the returned Approov status using decision maker
         try getServiceMutator().handleFetchSecureStringResult(approovResult, operation: type, key: key)
@@ -903,16 +1055,13 @@ public class ApproovService {
      */
     public static func fetchCustomJWT(payload: String) throws -> String? {
         if !isApproovEnabled() {
-            if loggingLevel >= .error {
-                os_log("ApproovService: fetchCustomJWT: SDK not initialized", type: .error)
-            }
+            log(.error, "ApproovService: fetchCustomJWT: SDK not initialized")
             throw ApproovError.permanentError(message: "fetchCustomJWT: SDK not initialized")
         }
         // fetch the custom JWT
         let approovResult = Approov.fetchCustomJWTAndWait(payload)
-        if loggingLevel >= .info {
-            os_log("ApproovService: fetchCustomJWT: %@", type: .info, Approov.string(from: approovResult.status))
-        }
+        recordLastARC(approovResult)
+        log(.info, "ApproovService: fetchCustomJWT: \(statusName(approovResult.status))")
 
         // process the returned Approov status using decision maker
         try getServiceMutator().handleFetchCustomJWTResult(approovResult)
@@ -920,138 +1069,45 @@ public class ApproovService {
     }
 
     /**
-     * Host component only gets resolved if the string includes the protocol used. This is not always the case
-     * when making requests so a convenience method is needed.
+     * Resolves the host of a URL, which Foundation only populates when the string carries a scheme.
+     * Callers sometimes pass a bare host name, so that case is handled by parsing it with a scheme
+     * added.
+     *
+     * Matching on an "https" prefix was wrong for every other scheme: "http://example.com" and
+     * "wss://example.com" both took the bare-name branch and were rewritten to
+     * "https://http://example.com", whose host is not the real one, so the host came back empty or
+     * wrong. A non-empty host is now required at each step, because Foundation returns an empty
+     * string rather than nil for some malformed inputs and an empty host is not a resolution.
+     *
+     * Used for logging only. The token fetch is driven from the full URL string, so this does not
+     * decide whether a host is protected.
      *
      * @param url is the URL being handled
-     * @return String of the host name
+     * @return the host name, or an empty string when none can be resolved
      */
-    private static func hostnameFromURL(url: URL) -> String {
-        if url.absoluteString.starts(with: "https") {
-            if let host = url.host {
-                // if the URL has a host then return it
-                return host
-            }
-            return ""
-        } else {
-            let fullHost = "https://" + url.absoluteString
-            let newURL = URL(string: fullHost)
-            if let host = newURL?.host {
-                return host
-            } else {
-                return ""
-            }
+    // internal rather than private so the resolution can be tested directly. Not part of the public API.
+    static func hostnameFromURL(url: URL) -> String {
+        // Already a complete URL: use its host as it stands.
+        if url.scheme != nil, let host = url.host, !host.isEmpty {
+            return host
         }
+        // No scheme, so treat the string as a bare host name, which needs one before it will parse.
+        if let host = URL(string: "https://" + url.absoluteString)?.host, !host.isEmpty {
+            return host
+        }
+        return ""
     }
 
+    // maps an error from a hook call into the decision: a standard decision keeps its ApproovError, with a
+    // retry for a network failure, while any other error is already a URLError and fails the request
     private static func applyMutatorError(_ error: Error,
                                           response: inout ApproovUpdateResponse,
                                           context: String) {
-        // Map mutator errors into user-facing decisions (retry for network errors, fail otherwise).
-        if let approovError = error as? ApproovError {
-            response.error = approovError
-            switch approovError {
-            case .networkingError:
-                response.decision = .ShouldRetry
-            default:
-                response.decision = .ShouldFail
-            }
+        response.error = error
+        if case .networkingError? = error as? ApproovError {
+            response.decision = .ShouldRetry
         } else {
-            response.error = ApproovError.permanentError(message: "\(context): \(error.localizedDescription)")
             response.decision = .ShouldFail
-        }
-    }
-
-    /// Returns a cached failure result if one exists and hasn't expired.
-    /// Returns nil if no cache exists or it has expired (caller should fetch from SDK).
-    private static func getCachedFailure() -> ApproovTokenFetchResult? {
-        return failureCacheQueue.sync {
-            return getCachedFailureLocked()
-        }
-    }
-
-    private static func getCachedFailureLocked() -> ApproovTokenFetchResult? {
-        guard let result = cachedFailureResult,
-              let time = cachedFailureTime else {
-            return nil
-        }
-        if (ProcessInfo.processInfo.systemUptime - time) < failureCacheTTL {
-            os_log("ApproovService: using cached failure: %@", type: .debug, Approov.string(from: result.status))
-            return result
-        }
-        // Cache expired - clear and allow a fresh SDK call
-        os_log("ApproovService: failure cache expired", type: .debug)
-        cachedFailureResult = nil
-        cachedFailureTime = nil
-        return nil
-    }
-
-    private static func fetchTokenWithFailureCache(url: String) -> ApproovTokenFetchResult {
-        var missGroupToWaitFor: DispatchGroup?
-        var ownedMissGroup: DispatchGroup?
-
-        if let cachedResult = failureCacheQueue.sync(execute: { () -> ApproovTokenFetchResult? in
-            if let result = getCachedFailureLocked() {
-                return result
-            }
-            if let missGroup = failureCacheMissGroup {
-                missGroupToWaitFor = missGroup
-            } else {
-                let missGroup = DispatchGroup()
-                missGroup.enter()
-                failureCacheMissGroup = missGroup
-                ownedMissGroup = missGroup
-            }
-            return nil
-        }) {
-            return cachedResult
-        }
-
-        if let missGroupToWaitFor {
-            missGroupToWaitFor.wait()
-            if let cachedResult = getCachedFailure() {
-                return cachedResult
-            }
-            let result = Approov.fetchTokenAndWait(url)
-            cacheFailureIfNeeded(result)
-            return result
-        }
-
-        let result = Approov.fetchTokenAndWait(url)
-        failureCacheQueue.sync {
-            cacheFailureIfNeededLocked(result)
-            failureCacheMissGroup = nil
-            ownedMissGroup?.leave()
-        }
-        return result
-    }
-
-    private static func cacheFailureIfNeededLocked(_ result: ApproovTokenFetchResult) {
-        let status = result.status
-        switch status {
-        case .noNetwork, .poorNetwork, .mitmDetected, .noApproovService:
-            cachedFailureResult = result
-            cachedFailureTime = ProcessInfo.processInfo.systemUptime
-            os_log("ApproovService: caching failure: %@", type: .debug, Approov.string(from: status))
-        default:
-            // Success and other statuses are never cached
-            break
-        }
-    }
-
-    /// Caches a failure result. Only failure statuses are cached; success is never cached.
-    private static func cacheFailureIfNeeded(_ result: ApproovTokenFetchResult) {
-        failureCacheQueue.sync {
-            cacheFailureIfNeededLocked(result)
-        }
-    }
-
-    /// Sets the cache time-to-live for failure results (e.g. MITM_DETECTED).
-    ///
-    /// - Parameter ttl: The time to live in seconds.
-    public static func setFailureCacheTTL(ttl: TimeInterval) {
-        failureCacheQueue.sync {
-            failureCacheTTL = ttl
         }
     }
 
@@ -1064,26 +1120,32 @@ public class ApproovService {
      * @return ApproovUpdateResponse providing an updated request, plus any error and status
      */
     public static func updateRequestWithApproov(request: URLRequest, sessionConfig: URLSessionConfiguration?) -> ApproovUpdateResponse {
+        return updateRequestWithApproov(request: request, sessionConfig: sessionConfig, mutator: nil)
+    }
+
+    /**
+     * Updates a request with Approov as the public form does, deciding it with the given mutator, the one
+     * the request started with, or with the current one if it is nil.
+     */
+    static func updateRequestWithApproov(request: URLRequest, sessionConfig: URLSessionConfiguration?,
+                                         mutator: ApproovServiceMutator?) -> ApproovUpdateResponse {
+        // a request the layer already protected, sent again, is first put back as the app wrote it, so
+        // that a substituted secret is never looked up as a key and nothing is added twice
+        let request = stripProtection(request)
         var changes = ApproovRequestMutations()
         guard let url = request.url else {
-            if loggingLevel >= .info {
-                os_log("ApproovService: no url provided", type: .info)
-            }
+            log(.info, "ApproovService: no url provided")
             return ApproovUpdateResponse(request: request, decision: .ShouldIgnore, sdkMessage: "", error: nil)
         }
         if !isApproovEnabled() {
-            if loggingLevel >= .info {
-                os_log("ApproovService: Approov unavailable, forwarding: %@", type: .info, url.absoluteString)
-            }
+            log(.debug, "ApproovService: Approov unavailable, forwarding: \(url.host ?? "")")
             return ApproovUpdateResponse(request: request, decision: .ShouldIgnore, sdkMessage: "", error: nil)
         }
 
-        let mutator = getServiceMutator()
+        let mutator = mutator ?? getServiceMutator()
         do {
-            if try !mutator.handleInterceptorShouldProcessRequest(request) {
-                if loggingLevel >= .info {
-                    os_log("ApproovService: excluded, forwarding: %@", type: .info, url.absoluteString)
-                }
+            if try !ApproovRequestPathError.callHook("handleInterceptorShouldProcessRequest", { try mutator.handleInterceptorShouldProcessRequest(request) }) {
+                log(.debug, "ApproovService: excluded, forwarding: \(url.host ?? "")")
                 return ApproovUpdateResponse(request: request, decision: .ShouldIgnore, sdkMessage: "", error: nil)
             }
         } catch {
@@ -1124,178 +1186,317 @@ public class ApproovService {
 
         // Fetch an Approov token, coalescing concurrent cache misses so a sustained
         // platform failure is cached before the same launch burst makes redundant SDK calls.
-        let approovResult = fetchTokenWithFailureCache(url: url.absoluteString)
+        let approovResult = Approov.fetchTokenAndWait(url.absoluteString)
+        recordLastARC(approovResult)
         let hostname = hostnameFromURL(url: url)
-        if loggingLevel >= .info {
-            os_log("ApproovService: updateRequest %@: %@", type: .info, hostname, approovResult.loggableToken())
-        }
+        log(.debug, "ApproovService: updateRequest \(hostname): \(approovResult.loggableToken())")
         // log if a configuration update is received and call fetchConfig to clear the update state
         if approovResult.isConfigChanged {
             Approov.fetchConfig()
-            if loggingLevel >= .info {
-                os_log("ApproovService: dynamic configuration update received")
-            }
+            log(.info, "ApproovService: dynamic configuration update received")
         }
-
         response.sdkMessage = Approov.string(from: approovResult.status)
 
-        var hasChanges = false
-        var setTokenHeaderKey: String?
-        var setTokenHeaderValue: String?
-        var setTraceIDHeaderKey: String?
-        var setTraceIDHeaderValue: String?
+        // a protected channel, which may carry secrets, is a token-protected API (SUCCESS) or a
+        // secrets-only API (UNPROTECTED_URL) reached over https; any status but these and UNKNOWN_URL is a
+        // failure status, which says nothing about the host, so there the pin set decides
+        let status = approovResult.status
+        let isHTTPS = url.scheme?.lowercased() == "https"
+        let isFailure = status != .success && status != .unprotectedURL && status != .unknownURL
+        let isProtectedChannel = isHTTPS && (status == .success || status == .unprotectedURL)
 
-        do {
-            let shouldAddToken = try mutator.handleInterceptorFetchTokenResult(approovResult, url: url.absoluteString)
-            response.decision = .ShouldProceed
-            if !shouldAddToken {
+        // a failure for a host that is not listed goes out untouched: a standard decision is ignored, and
+        // only the app's own throw aborts it
+        if isFailure && !isListedHost(url.host) {
+            do {
+                _ = try ApproovRequestPathError.callHookIgnoringStandardDecisions("handleInterceptorFetchTokenResult") {
+                    try mutator.handleInterceptorFetchTokenResult(approovResult, url: url.absoluteString)
+                }
+            } catch {
+                applyMutatorError(error, response: &response, context: "Approov token fetch")
                 return response
+            }
+            warnOfPlaceholdersLeft(in: request, url: url, headers: allHeaders, isHTTPS: isHTTPS, status: status)
+            response.decision = .ShouldProceed
+            return response
+        }
+
+        let shouldAddToken: Bool
+        do {
+            shouldAddToken = try ApproovRequestPathError.callHook("handleInterceptorFetchTokenResult") {
+                try mutator.handleInterceptorFetchTokenResult(approovResult, url: url.absoluteString)
             }
         } catch {
             applyMutatorError(error, response: &response, context: "Approov token fetch")
             return response
         }
-
-        let tokenHeader = stateQueue.sync {
-            return approovTokenHeader
+        response.decision = .ShouldProceed
+        if !isProtectedChannel {
+            warnOfPlaceholdersLeft(in: request, url: url, headers: allHeaders, isHTTPS: isHTTPS, status: status)
         }
-        let tokenPrefix = stateQueue.sync {
-            return approovTokenPrefix
-        }
-        hasChanges = true
-        setTokenHeaderKey = tokenHeader
-        if approovResult.token.isEmpty && (stateQueue.sync { useApproovStatusIfNoToken }) {
-            setTokenHeaderValue = tokenPrefix + response.sdkMessage
-        } else {
-            setTokenHeaderValue = tokenPrefix + approovResult.token
-        }
-        let traceID = approovResult.traceID
-        if let traceHeader = stateQueue.sync(execute: { approovTraceIDHeader }),
-           !traceHeader.isEmpty,
-           !traceID.isEmpty {
-            hasChanges = true
-            setTraceIDHeaderKey = traceHeader
-            setTraceIDHeaderValue = traceID
+        if !shouldAddToken && !isProtectedChannel {
+            // nothing to add: a host not added to Approov, or a request the mutator sends without headers
+            return response
         }
 
-        // we now deal with any headers substitutions, which may require further fetches but these
-        // should be using cached results
-        var setSubstitutionHeaders: [String: String] = [:]
-        let subsHeadersCopy = getSubstitutionHeaders()
-        for (header, prefix) in subsHeadersCopy {
-            if let value = allHeaders[header] {
-                // check if the request contains the header we want to replace
-                if ((value.hasPrefix(prefix)) && (value.count > prefix.count)) {
-                    let index = prefix.index(prefix.startIndex, offsetBy: prefix.count)
-                    let approovResults = Approov.fetchSecureStringAndWait(String(value.suffix(from:index)), nil)
-                    if loggingLevel >= .info {
-                        os_log("ApproovService: Substituting header: %@, %@", type: .info, header, Approov.string(from: approovResults.status))
-                    }
-
-                    do {
-                        if try mutator.handleInterceptorHeaderSubstitutionResult(approovResults, header: header) {
-                            if let secureStringResult = approovResults.secureString {
-                                hasChanges = true
-                                setSubstitutionHeaders[header] = prefix + secureStringResult
-                            } else {
-                                response.decision = .ShouldFail
-                                response.error = ApproovError.permanentError(message: "Header substitution: key lookup error")
-                                return response
-                            }
-                        }
-                    } catch {
-                        applyMutatorError(error, response: &response, context: "Header substitution for \(header)")
-                        return response
-                    }
+        // the token and trace headers, holding an empty token or the status name after a failure status
+        if shouldAddToken && status != .unknownURL && status != .unprotectedURL {
+            let (tokenHeader, tokenPrefix, useStatus, traceHeader) = stateQueue.sync {
+                (approovTokenHeader, approovTokenPrefix, useApproovStatusIfNoToken, approovTraceIDHeader)
+            }
+            let token = (approovResult.token.isEmpty && useStatus) ? statusName(status) : approovResult.token
+            guard isHeaderCarriable(tokenPrefix) else {
+                response.decision = .ShouldFail
+                response.error = ApproovRequestPathError.configuration("Approov header \(tokenHeader): invalid character in the token prefix")
+                return response
+            }
+            guard isHeaderCarriable(token) else {
+                response.decision = .ShouldFail
+                response.error = ApproovRequestPathError.sdkValue("token", header: tokenHeader)
+                return response
+            }
+            response.request.setValue(tokenPrefix + token, forHTTPHeaderField: tokenHeader)
+            changes.setTokenHeaderKey(tokenHeader)
+            let traceID = approovResult.traceID
+            if let traceHeader, !traceHeader.isEmpty, !traceID.isEmpty {
+                guard isHeaderCarriable(traceID) else {
+                    response.decision = .ShouldFail
+                    response.error = ApproovRequestPathError.sdkValue("trace ID", header: traceHeader)
+                    return response
                 }
+                response.request.setValue(traceID, forHTTPHeaderField: traceHeader)
+                changes.setTraceIDHeaderKey(traceHeader)
             }
         }
 
-        // we now deal with any query parameter substitutions, which may require further fetches but these
-        // should be using cached results
-        var updateURL: URL?
-        var queryKeys: [String] = []
-        let subsQueryParamsCopy = getSubstitutionQueryParams()
-        var updateURLString = url.absoluteString
-        for entry in subsQueryParamsCopy {
-            let urlStringRange = NSRange(updateURLString.startIndex..<updateURLString.endIndex, in: updateURLString)
-            let regex = try! NSRegularExpression(pattern: #"[\\?&]"# + entry + #"=([^&;]+)"#, options: [])
-            let matches: [NSTextCheckingResult] = regex.matches(in: updateURLString, options: [], range: urlStringRange)
-            for match: NSTextCheckingResult in matches {
-                // we skip the range at index 0 as this is the match (e.g. ?Api-Key=api_key_placeholder) for the whole
-                // regex, but we only want to replace the query parameter value part (e.g. api_key_placeholder)
-                for rangeIndex in 1..<match.numberOfRanges {
-                    // we have found an occurrence of the query parameter to be replaced so we look up the existing
-                    // value as a key for a secure string
-                    let matchRange = match.range(at: rangeIndex)
-                    if let substringRange = Range(matchRange, in: updateURLString) {
-                        let queryValue = String(updateURLString[substringRange])
-                        let approovResults = Approov.fetchSecureStringAndWait(String(queryValue), nil)
-                        if loggingLevel >= .info {
-                            os_log("ApproovService: Attempting query parameter substitution: %@, %@", entry,
-                                Approov.string(from: approovResults.status))
-                        }
-
-                        do {
-                            if try mutator.handleInterceptorQueryParamSubstitutionResult(approovResults, queryKey: entry) {
-                                if let secureStringResult = approovResults.secureString {
-                                    hasChanges = true
-                                    queryKeys.append(entry)
-                                    updateURLString.replaceSubrange(Range(matchRange, in: updateURLString)!, with: secureStringResult)
-                                    updateURL = URL(string: updateURLString)
-                                    if updateURL == nil {
-                                        response.decision = .ShouldFail
-                                        response.error = ApproovError.permanentError(
-                                            message: "Query parameter substitution for \(entry): malformed URL \(updateURLString)")
-                                        return response
-                                    }
-                                }
-                            }
-                        } catch {
-                            applyMutatorError(error, response: &response, context: "Query parameter substitution for \(entry)")
-                            return response
-                        }
-                    }
-                }
-            }
-        }
-
-        // apply all the changes to the request
-        if (hasChanges) {
-            if let tokenHeaderKey = setTokenHeaderKey,
-               let tokenHeaderValue = setTokenHeaderValue {
-                response.request.setValue(tokenHeaderValue, forHTTPHeaderField: tokenHeaderKey)
-                changes.setTokenHeaderKey(tokenHeaderKey)
-            }
-            if let traceIDHeaderKey = setTraceIDHeaderKey,
-               let traceIDHeaderValue = setTraceIDHeaderValue {
-                response.request.setValue(traceIDHeaderValue, forHTTPHeaderField: traceIDHeaderKey)
-                changes.setTraceIDHeaderKey(traceIDHeaderKey)
-            }
-            if (!setSubstitutionHeaders.isEmpty) {
-                for (header, value) in setSubstitutionHeaders {
-                    response.request.setValue(value, forHTTPHeaderField: header)
-                }
-                changes.setSubstitutionHeaderKeys(Array(setSubstitutionHeaders.keys))
-            }
-            if let updateURLString = updateURL?.absoluteString,
-               let originalURLString = request.url?.absoluteString {
-                if (originalURLString != updateURLString) {
-                    response.request.url = updateURL
-                    changes.setSubstitutionQueryParamResults(originalURL: originalURLString, substitutionQueryParamKeys: queryKeys)
-                }
+        // secure strings only on a protected channel, every placeholder ending as its value, its status
+        // name, or as the app wrote it when the value cannot be carried or the mutator declined it
+        if isProtectedChannel {
+            do {
+                try substituteHeaders(&response.request, headers: allHeaders, mutator: mutator, changes: changes)
+                try substituteQueryParams(&response.request, mutator: mutator, changes: changes)
+            } catch {
+                applyMutatorError(error, response: &response, context: "Secure string substitution")
+                return response
             }
         }
 
         // call the processed request callback
         do {
-            response.request = try mutator.handleInterceptorProcessedRequest(response.request, changes: changes)
+            response.request = try ApproovRequestPathError.callHook("handleInterceptorProcessedRequest") { try mutator.handleInterceptorProcessedRequest(response.request, changes: changes) }
         } catch {
             applyMutatorError(error, response: &response, context: "Interceptor processed request")
             return response
         }
 
+        response.request = recordingProtection(of: request, in: response.request)
         return response
+    }
+
+    /**
+     * Determines whether a host is listed, a key of the SDK pin set other than the Managed Trust Roots
+     * key "*", compared without regard to case or a trailing dot. While the pins cannot be read, or the
+     * pin set is empty, no host is listed.
+     *
+     * @param host is the request host
+     * @return true if the host is listed, false otherwise
+     */
+    static func isListedHost(_ host: String?) -> Bool {
+        guard let host = host, let pins = Approov.getPins("public-key-sha256") else {
+            return false
+        }
+        let wanted = normalisedHost(host)
+        return pins.keys.contains { $0 != "*" && normalisedHost($0) == wanted }
+    }
+
+    // a host as pins are looked up: lower case, with no trailing dot
+    static func normalisedHost(_ host: String) -> String {
+        var normalised = host.lowercased()
+        if normalised.hasSuffix(".") {
+            normalised.removeLast()
+        }
+        return normalised
+    }
+
+    // true if a header can carry the value unchanged: tab and printable ASCII only
+    static func isHeaderCarriable(_ value: String) -> Bool {
+        return value.unicodeScalars.allSatisfy { $0 == "\t" || ($0.value >= 0x20 && $0.value <= 0x7E) }
+    }
+
+    /**
+     * Logs a warning for each substitution header or query parameter a request carries that will go out
+     * as the app wrote it because the request is not https or its token fetch returned BAD_URL. The field
+     * is named, never its value.
+     */
+    private static func warnOfPlaceholdersLeft(in request: URLRequest, url: URL, headers: [String: String],
+                                               isHTTPS: Bool, status: ApproovTokenFetchStatus) {
+        guard !isHTTPS || status == .badURL else {
+            return
+        }
+        let reason = isHTTPS ? "BAD_URL" : "not https"
+        for (header, _) in getSubstitutionHeaders() where headerValue(header, in: headers) != nil {
+            log(.warning, "ApproovService: secure string header \(header) not substituted: \(reason)")
+        }
+        let present = Set(queryOccurrences(in: url.absoluteString).map { $0.name })
+        for key in getSubstitutionQueryParams() where present.contains(key) {
+            log(.warning, "ApproovService: secure string query parameter \(key) not substituted: \(reason)")
+        }
+    }
+
+    // a header value from the request and session headers, matched without regard to case
+    private static func headerValue(_ header: String, in headers: [String: String]) -> String? {
+        if let value = headers[header] {
+            return value
+        }
+        return headers.first { $0.key.caseInsensitiveCompare(header) == .orderedSame }?.value
+    }
+
+    /**
+     * Substitutes the secure strings named by the substitution headers of a request on a protected
+     * channel. A SUCCESS the mutator accepts replaces the placeholder if a header can carry the value,
+     * otherwise the placeholder stays with a warning; a SUCCESS the mutator declines leaves it; any other
+     * status replaces it with the status name after the prefix.
+     */
+    private static func substituteHeaders(_ request: inout URLRequest, headers: [String: String],
+                                          mutator: ApproovServiceMutator,
+                                          changes: ApproovRequestMutations) throws {
+        var substituted: [String] = []
+        for (header, prefix) in getSubstitutionHeaders() {
+            guard let value = headerValue(header, in: headers), value.hasPrefix(prefix), value.count > prefix.count else {
+                continue
+            }
+            let key = String(value.dropFirst(prefix.count))
+            let result = Approov.fetchSecureStringAndWait(key, nil)
+            recordLastARC(result)
+            log(.debug, "ApproovService: header substitution: \(header), \(statusName(result.status)), ARC: \(result.arc)")
+            let accepted = try ApproovRequestPathError.callHook("handleInterceptorHeaderSubstitutionResult") {
+                try mutator.handleInterceptorHeaderSubstitutionResult(result, header: header)
+            }
+            if result.status == .success {
+                guard accepted, let secret = result.secureString else {
+                    continue
+                }
+                if isHeaderCarriable(secret) {
+                    request.setValue(prefix + secret, forHTTPHeaderField: header)
+                    substituted.append(header)
+                } else {
+                    log(.warning, "ApproovService: secure string header \(header) not substituted: the value cannot be carried in a header")
+                }
+            } else {
+                request.setValue(prefix + statusName(result.status), forHTTPHeaderField: header)
+            }
+        }
+        if !substituted.isEmpty {
+            changes.setSubstitutionHeaderKeys(substituted)
+        }
+    }
+
+    // an occurrence of a query parameter: its name and the range of its value in the URL string, both
+    // as they are written in the URL
+    struct QueryOccurrence {
+        let name: String
+        let value: Range<String.Index>
+    }
+
+    /**
+     * Finds every query parameter in a URL string as it is written, without decoding or re-encoding it.
+     *
+     * @param urlString is the URL string
+     * @return the occurrences in order
+     */
+    static func queryOccurrences(in urlString: String) -> [QueryOccurrence] {
+        guard let queryStart = urlString.firstIndex(of: "?") else {
+            return []
+        }
+        let queryEnd = urlString[queryStart...].firstIndex(of: "#") ?? urlString.endIndex
+        var occurrences: [QueryOccurrence] = []
+        var fieldStart = urlString.index(after: queryStart)
+        while fieldStart <= queryEnd {
+            let fieldEnd = urlString[fieldStart..<queryEnd].firstIndex(of: "&") ?? queryEnd
+            if let equals = urlString[fieldStart..<fieldEnd].firstIndex(of: "=") {
+                let name = String(urlString[fieldStart..<equals])
+                occurrences.append(QueryOccurrence(name: name, value: urlString.index(after: equals)..<fieldEnd))
+            }
+            if fieldEnd == queryEnd {
+                break
+            }
+            fieldStart = urlString.index(after: fieldEnd)
+        }
+        return occurrences
+    }
+
+    // the value of the query occurrence at a position, as written, if the URL still has the same
+    // occurrences with the same name there
+    private static func readBack(of name: String, at position: Int, count: Int, in urlString: String) -> String? {
+        let found = queryOccurrences(in: urlString)
+        guard found.count == count, found[position].name == name else {
+            return nil
+        }
+        return String(urlString[found[position].value])
+    }
+
+    /**
+     * Substitutes the secure strings named by every occurrence of each substitution query parameter of a
+     * request on a protected channel, each with its own outcome as for headers. A value is used only if
+     * the URL carries it unchanged: the candidate URL must parse and give the value back, as written or
+     * percent-decoded, in the same place. The key is matched as a literal string, and nothing else in
+     * the URL is changed.
+     */
+    private static func substituteQueryParams(_ request: inout URLRequest, mutator: ApproovServiceMutator,
+                                              changes: ApproovRequestMutations) throws {
+        guard let original = request.url?.absoluteString else {
+            return
+        }
+        let keys = getSubstitutionQueryParams()
+        var urlString = original
+        var substituted: [String] = []
+        var index = 0
+        while true {
+            let occurrences = queryOccurrences(in: urlString)
+            guard index < occurrences.count else {
+                break
+            }
+            let occurrence = occurrences[index]
+            index += 1
+            guard keys.contains(occurrence.name) else {
+                continue
+            }
+            let written = String(urlString[occurrence.value])
+            guard !written.isEmpty else {
+                continue
+            }
+            let result = Approov.fetchSecureStringAndWait(written.removingPercentEncoding ?? written, nil)
+            recordLastARC(result)
+            log(.debug, "ApproovService: query parameter substitution: \(occurrence.name), \(statusName(result.status)), ARC: \(result.arc)")
+            let accepted = try ApproovRequestPathError.callHook("handleInterceptorQueryParamSubstitutionResult") {
+                try mutator.handleInterceptorQueryParamSubstitutionResult(result, queryKey: occurrence.name)
+            }
+            let replacement: String
+            if result.status == .success {
+                guard accepted, let secret = result.secureString else {
+                    continue
+                }
+                replacement = secret
+            } else {
+                replacement = statusName(result.status)
+            }
+            var candidate = urlString
+            candidate.replaceSubrange(occurrence.value, with: replacement)
+            guard let carried = URL(string: candidate)?.absoluteString,
+                  readBack(of: occurrence.name, at: index - 1, count: occurrences.count, in: carried)
+                    .map({ $0 == replacement || $0.removingPercentEncoding == replacement }) == true else {
+                log(.warning, "ApproovService: secure string query parameter \(occurrence.name) not substituted: the value cannot be carried in the URL")
+                continue
+            }
+            urlString = carried
+            if result.status == .success {
+                substituted.append(occurrence.name)
+            }
+        }
+        if urlString != original, let url = URL(string: urlString) {
+            request.url = url
+            changes.setSubstitutionQueryParamResults(originalURL: original, substitutionQueryParamKeys: substituted)
+        }
     }
 
     /**
@@ -1323,9 +1524,11 @@ public class ApproovService {
      * @param request the original URLRequest to be protected
      * @param sessionConfig optional URLSessionConfiguration whose httpAdditionalHeaders are consulted for token binding and header substitution lookups (these headers are not merged into the returned request)
      * @return the URLRequest with Approov token and substitutions applied (message signing included when configured)
-     * @throws ApproovError if the request should not proceed. Non-`ApproovError` throws from custom
-     *         mutators are wrapped as `ApproovError.permanentError` by the service layer, so callers
-     *         can always catch `ApproovError` specifically.
+     * @throws Error if the request should not proceed: an `ApproovError` for a decision of the standard
+     *         mutators (`ApproovError.networkingError` for a network failure the user may retry), the
+     *         `URLError` a custom mutator threw to abort the request, or a `URLError` for any other
+     *         failure of a mutator hook (the original as its underlying error) or a configuration error
+     *         such as a required body digest that cannot be generated
      *
      * Note: In bypass mode (service layer initialized with an empty config string,
      * isApproovEnabled() == false), this method returns the original request unchanged without
@@ -1349,22 +1552,19 @@ public class ApproovService {
     }
 
     static func resetForTesting() {
-        failureCacheQueue.sync {
-            cachedFailureResult = nil
-            cachedFailureTime = nil
-            failureCacheMissGroup = nil
-        }
+        PinningURLSessionDelegate.resetForTesting()
+        lastARCQueue.sync { lastARC = "" }
+        loggingQueue.sync { messageSignatureWarned = false }
         initializerQueue.sync {
             serviceIsInitialized = false
             configString = nil
         }
         stateQueue.sync {
-            proceedOnNetworkFail = false
             bindingHeader = ""
             approovTokenHeader = "Approov-Token"
             approovTokenPrefix = ""
             approovTraceIDHeader = "Approov-TraceID"
-            serviceMutator = ApproovServiceMutatorDefault.shared
+            serviceMutator = ApproovCloseFailureMutator.instance
             substitutionHeaders = Dictionary()
             substitutionQueryParams = Set()
             exclusionURLRegexs = Dictionary()
