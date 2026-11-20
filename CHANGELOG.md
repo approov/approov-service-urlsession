@@ -40,6 +40,7 @@ Entries marked **Breaking** need a source change.
 - `prefetch()`, `setProceedOnNetworkFailure(proceed:)` and `getProceedOnNetworkFailure()`, which had no effect, and `setFailureCacheTTL(ttl:)`. Failed token fetches are no longer cached.
 
 ### Fixed
+- Requests made through `ApproovURLSession` are no longer sent without an Approov token when an instance wraps the session's tasks through a proxy. The proxy does not report the task's state changes, which are reported only on the wrapped task, so the observation registered on the proxy never fired. The wrapped task is now observed, and a wrapped task that cannot be unwrapped is cancelled with an error instead of being sent.
 - A request sent again from `task.currentRequest` is protected afresh and its secret is never used as a key.
 - Query parameter substitution no longer crashes on some key names, substitutes every occurrence, and keeps the placeholder when the URL cannot carry the value.
 - One failed request no longer cancels the session's other tasks or tells your delegate the session became invalid. A task without a completion handler reports the real error.

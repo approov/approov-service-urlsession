@@ -15,6 +15,7 @@
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 import Foundation
+import ObjectiveC
 import os.log
 
 /// Type-erased access to a completion gate, used when Approov rejects a request
@@ -162,6 +163,22 @@ public class ApproovSessionTaskObserver: NSObject {
         completionHandler: ApproovTaskCompletionHandling? = nil,
         guardOnly: Bool = false
     ) {
+        // An instance that wraps a URLSessionTask through a proxy does not report the task's state
+        // changes; they are reported only on the wrapped task. An observation registered through
+        // the proxy would never fire and the request would be sent without an Approov token.
+        // Observe the wrapped task, and cancel with an error any wrapped task that cannot be
+        // unwrapped.
+        guard let observedTask = ApproovSessionTaskObserver.observableTask(for: task) else {
+            let message = "ApproovService: cannot protect a request through \(NSStringFromClass(object_getClass(task)!)): "
+                + "it does not expose the URLSessionTask it wraps, so the task is cancelled"
+            ApproovService.log(.error, message)
+            completionHandler?.complete(with: ApproovError.permanentError(message: message))
+            task.cancel()
+            return
+        }
+        if observedTask !== task {
+            ApproovService.log(.info, "ApproovService: observing \(NSStringFromClass(object_getClass(task)!)) through the task it wraps, \(NSStringFromClass(object_getClass(observedTask)!))")
+        }
         let registration = TaskRegistration(
             pinningSession: pinningSession,
             sessionConfig: sessionConfig,
@@ -173,12 +190,12 @@ public class ApproovSessionTaskObserver: NSObject {
         // Read the state from the task rather than from the change: URLSessionTask.state is an
         // NS_ENUM that does not bridge into NSKeyValueObservedChange, so change.newValue is
         // always nil here (verified on this toolchain).
-        registration.observation = task.observe(\.state, options: [.new]) { [weak self] observedTask, _ in
-            self?.handleStateChange(of: observedTask, newState: observedTask.state)
+        registration.observation = observedTask.observe(\.state, options: [.new]) { [weak self] changedTask, _ in
+            self?.handleStateChange(of: changedTask, newState: changedTask.state)
         }
         registrationsQueue.sync {
             objc_setAssociatedObject(
-                task,
+                observedTask,
                 &ApproovSessionTaskObserver.registrationKey,
                 registration,
                 .OBJC_ASSOCIATION_RETAIN
@@ -187,9 +204,9 @@ public class ApproovSessionTaskObserver: NSObject {
         if ApproovSessionTaskObserver.taskLinesEnabled {
             logMessage(
                 line: String(#line),
-                taskId: task.taskIdentifier,
+                taskId: observedTask.taskIdentifier,
                 property: "registration",
-                value: String(describing: ObjectIdentifier(task))
+                value: String(describing: ObjectIdentifier(observedTask))
             )
         }
     }
@@ -197,10 +214,51 @@ public class ApproovSessionTaskObserver: NSObject {
     /// Testing hook: reports whether a task still carries a registration, and which session
     /// configuration it carries. Used to assert that registrations live and die with their task.
     func registeredSessionConfig(for task: URLSessionTask) -> URLSessionConfiguration? {
-        registrationsQueue.sync {
+        let observedTask = ApproovSessionTaskObserver.observableTask(for: task) ?? task
+        return registrationsQueue.sync {
             (objc_getAssociatedObject(
-                task, &ApproovSessionTaskObserver.registrationKey) as? TaskRegistration)?.sessionConfig
+                observedTask, &ApproovSessionTaskObserver.registrationKey) as? TaskRegistration)?.sessionConfig
         }
+    }
+
+    /// The object whose state changes are reported for this task: the task itself when it is a
+    /// genuine NSURLSessionTask, the task it wraps when it is a forwarding wrapper that exposes
+    /// it, or nil when it is neither. The class is read with the runtime, not with isKind(of:),
+    /// because a proxy forwards isKind(of:) and claims to be a URLSessionTask.
+    static func observableTask(for task: URLSessionTask) -> URLSessionTask? {
+        if isGenuineTask(task) {
+            return task
+        }
+        guard let wrapperClass = object_getClass(task) else {
+            return nil
+        }
+        for accessor in ["wrappedTask", "wrappedObject"] {
+            let selector = NSSelectorFromString(accessor)
+            guard class_respondsToSelector(wrapperClass, selector),
+                  let wrapped = task.perform(selector)?.takeUnretainedValue() as AnyObject?,
+                  isGenuineTask(wrapped) else {
+                continue
+            }
+            return (wrapped as! URLSessionTask)
+        }
+        return nil
+    }
+
+    private static let sessionTaskClass: AnyClass? = NSClassFromString("NSURLSessionTask")
+
+    /// True when the object's runtime class descends from NSURLSessionTask.
+    private static func isGenuineTask(_ object: AnyObject) -> Bool {
+        guard let taskClass = sessionTaskClass else {
+            return false
+        }
+        var current: AnyClass? = object_getClass(object)
+        while let cls = current {
+            if cls == taskClass {
+                return true
+            }
+            current = class_getSuperclass(cls)
+        }
+        return false
     }
 
     /// Atomically takes the registration off the task. Returns nil if another thread got
