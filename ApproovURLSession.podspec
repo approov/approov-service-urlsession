@@ -15,13 +15,13 @@ Pod::Spec.new do |s|
   s.module_name = 'ApproovURLSessionPackage'
 
   # Supported platforms
-  s.ios.deployment_target = '11.0'
+  s.ios.deployment_target = '12.0'
   s.watchos.deployment_target = '9.0'
 
   # Specify the source code paths for the combined target
   s.source_files = "Sources/ApproovURLSession/**/*.{swift,h}"
   # Dependency on the Approov SDK
-  s.dependency 'approov-ios-sdk', '~> 3.5.3'
+  s.dependency 'approov-ios-sdk', '~> 3.7.0'
    # Add dependency on swift-http-structured-headers
   s.dependency 'swift-http-structured-headers', '~> 1.4.0'
   s.frameworks = 'Approov'

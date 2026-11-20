@@ -6,19 +6,19 @@ import PackageDescription
 // in a PR; the "Release Current Main Branch" CI job (release.yml) then tags main at this version.
 let releaseTAG = "3.7.0"
 // SDK package version (used for both iOS and watchOS)
-let sdkVersion: Version = "3.5.3"
+let sdkVersion: Version = "3.7.0"
 let useMiniSDK = ProcessInfo.processInfo.environment["APPROOV_USE_MINI_SDK"] == "1"
 let miniSDKPath = ProcessInfo.processInfo.environment["APPROOV_MINI_SDK_PATH"] ?? "../core-service-layers-testing/mini-sdk-3.7.0/ios"
 
 let approovPackageName = useMiniSDK ? "mini-sdk-ios" : "approov-ios-sdk"
 let packagePlatforms: [SupportedPlatform] = useMiniSDK
     ? [
-        .iOS(.v11),
+        .iOS(.v12),
         .watchOS(.v9),
         .macOS(.v13),
     ]
     : [
-        .iOS(.v11),
+        .iOS(.v12),
         .watchOS(.v9),
     ]
 var packageDependencies: [Package.Dependency] = [

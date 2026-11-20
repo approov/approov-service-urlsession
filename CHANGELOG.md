@@ -9,6 +9,7 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 Entries marked **Breaking** need a source change.
 
 ### Changed
+- Uses Approov iOS SDK 3.7.0, which requires iOS 12.0 or later; the minimum iOS version is now 12.0.
 - **Breaking:** A mutator hook that throws anything other than a `URLError` fails the request with a `URLError` (`.unknown`) naming the hook, with your error as its underlying error. A `URLError` you throw reaches your app unchanged. The standard decisions still throw `ApproovError`. Catch `Error` around `signRequest`.
 - **Breaking:** A required body digest that cannot be generated, or an unsupported signature algorithm, fails the request with a `URLError` instead of `ApproovError.permanentError`.
 - A failed secure string fetch no longer fails the request. The status name replaces the placeholder, such as `Api-Key: REJECTED`, so a backend that checks the value must expect it. See [secure strings](ADVANCED.md#secure-strings).
