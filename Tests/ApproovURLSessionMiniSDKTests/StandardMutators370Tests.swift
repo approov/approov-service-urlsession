@@ -62,6 +62,14 @@ final class StandardMutators370Tests: XCTestCase {
         XCTAssertEqual(String(describing: ApproovCloseFailureMutator.DEFAULT), "ApproovServiceMutator.CLOSE_FAILURE")
     }
 
+    func testTheDocumentedFormsCompile() {
+        // the forms the deprecation message, CHANGELOG and ADVANCED give
+        ApproovService.setServiceMutator(.DEFAULT)
+        XCTAssertEqual(String(describing: ApproovService.getServiceMutator()), "ApproovServiceMutator.CLOSE_FAILURE")
+        ApproovService.setServiceMutator(.CLOSE_FAILURE)
+        XCTAssertEqual(String(describing: ApproovService.getServiceMutator()), "ApproovServiceMutator.CLOSE_FAILURE")
+    }
+
     func testCloseFailureProceedsOnNoApproovServiceWithAnEmptyToken() {
         let response = send(tokenStatus: "NO_APPROOV_SERVICE")
         XCTAssertEqual(response.decision, .ShouldProceed)

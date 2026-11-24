@@ -12,19 +12,21 @@ Entries marked **Breaking** need a source change.
 - Uses Approov iOS SDK 3.7.0, which requires iOS 12.0 or later; the minimum iOS version is now 12.0.
 - **Breaking:** A mutator hook that throws anything other than a `URLError` fails the request with a `URLError` (`.unknown`) naming the hook, with your error as its underlying error. A `URLError` you throw reaches your app unchanged. The standard decisions still throw `ApproovError`. Catch `Error` around `signRequest`.
 - **Breaking:** A required body digest that cannot be generated, or an unsupported signature algorithm, fails the request with a `URLError` instead of `ApproovError.permanentError`.
-- A failed secure string fetch no longer fails the request. The status name replaces the placeholder, such as `Api-Key: REJECTED`, so a backend that checks the value must expect it. See [secure strings](ADVANCED.md#secure-strings).
+- A failed secure string fetch no longer fails the request. The status name replaces the placeholder, such as `Api-Key: REJECTED`, so a backend that checks the value must expect it. A value that is not a secure string key (`UNKNOWN_KEY`) is left as your app wrote it, as in 3.5.x. See [secure strings](ADVANCED.md#secure-strings).
 - A failed token fetch only affects requests to your Approov API domains, the hosts in your pin set. Requests to other hosts are sent unchanged.
 - `NO_APPROOV_SERVICE` sends the request with an empty token header and the trace header.
 - With `setUseApproovStatusIfNoToken(true)` the token header holds the status name, such as `NO_NETWORK`, and network failures proceed instead of failing.
 - APIs added with `approov api -add <domain> -noApproovToken` get their secure strings.
-- A connection that fails the certificate check fails with `NSURLErrorServerCertificateUntrusted` instead of `NSURLErrorCancelled`.
+- A connection that fails the certificate check fails with `NSURLErrorServerCertificateUntrusted` instead of `NSURLErrorCancelled`. The Combine publisher from `dataTaskPublisherWithApproov` still reports `NSURLErrorCancelled`.
 - Pins are matched to a host regardless of case. A domain with no pins and no Managed Trust Roots connects on OS trust with a warning. Pins that cannot be read refuse the connection.
 - Every log line follows `setLoggingLevel`, and the loggable token is logged at `DEBUG` only.
-- Each redirect is protected afresh for its target: a token is fetched for the target URL and secure strings are substituted only from your own placeholders. See [redirects](ADVANCED.md#redirects).
+- Each redirect is protected afresh for its target: a token is fetched for the target URL and secure strings are substituted only from your own placeholders. This includes a redirect decided by a delegate passed to a `WithApproov` method. See [redirects](ADVANCED.md#redirects).
+- **Breaking:** While Approov is enabled, a task whose own `task.delegate` implements the redirect callback is cancelled before it connects, as one that implements `urlSession(_:didReceive:completionHandler:)` already is. Pass that delegate to the session initializer or to a `WithApproov` method instead.
+- A redirect that your mutator refuses reports your error to a completion handler or an async caller, not `NSURLErrorCancelled` or the redirect response.
 - WebSockets are not supported. See [WebSockets](ADVANCED.md#websockets).
 
 ### Added
-- `ApproovServiceMutator.CLOSE_FAILURE`, the default, which keeps the 3.5.x decisions, and `ALWAYS_PROCEED`, which never aborts a request. See [what happens by default](ADVANCED.md#what-happens-by-default).
+- The standard mutators `.CLOSE_FAILURE`, the default, which keeps the 3.5.x decisions, and `.ALWAYS_PROCEED`, which never aborts a request. Install one with `ApproovService.setServiceMutator(.ALWAYS_PROCEED)`. See [what happens by default](ADVANCED.md#what-happens-by-default).
 - The names shared by all Approov packages: `setTokenHeader(header:prefix:)`, `getTokenHeader()`, `getTokenPrefix()`, `setTraceIDHeader(header:)`, `getTraceIDHeader()`, `getUseApproovStatusIfNoToken()`, `isApproovServiceEnabled()`, `isApproovProtectionEnabled()` and `setInstallAttributes(_:)`.
 - `ApproovService.getServerAdjustedCurrentTimeMS()`, the current time corrected to the Approov servers' clock where the Approov SDK provides it, otherwise the device clock. Message signatures take their `created` and `expires` times from it.
 - `SignatureParametersFactory.setUseInstallAndAccountMessageSigning()` adds the account signature to the install signature. See [message signing](ADVANCED.md#message-signing).
@@ -32,7 +34,7 @@ Entries marked **Breaking** need a source change.
 
 ### Deprecated
 - `setApproovHeader`, `getApproovTokenHeader`, `setApproovTraceIDHeader` and `getApproovTraceIDHeader`. Use the shared names above.
-- `ApproovServiceMutatorDefault`. Use `ApproovServiceMutator.DEFAULT`.
+- `ApproovServiceMutatorDefault`. Use `.DEFAULT`, as in `ApproovService.setServiceMutator(.DEFAULT)`.
 - `ApproovSessionTaskObserver.enableLogging`. Use `ApproovService.setLoggingLevel(.debug)`.
 
 ### Removed

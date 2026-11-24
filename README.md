@@ -113,7 +113,7 @@ The connection is checked against the certificate keys configured for the domain
 
 A domain you added with `-noApproovToken` gets a checked connection and its secure strings, but no Approov headers. Requests to any other domain are sent unchanged.
 
-If a secure string cannot be fetched, its placeholder is replaced by the fetch status name, so a header becomes, for example, `Api-Key: REJECTED` or `Api-Key: UNKNOWN_KEY`, and a required prefix stays in front of the status. This lets your backend see why the secret is missing.
+If a secure string cannot be fetched, its placeholder is replaced by the fetch status name, so a header becomes, for example, `Api-Key: REJECTED`, and a required prefix stays in front of the status. This lets your backend see why the secret is missing. A value that is not a secure string key (`UNKNOWN_KEY`) is left as your app wrote it.
 
 ### When the app cannot get a token
 

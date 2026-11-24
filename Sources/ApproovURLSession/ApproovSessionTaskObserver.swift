@@ -118,6 +118,24 @@ public class ApproovSessionTaskObserver: NSObject {
         return (objc_getAssociatedObject(task, &mutatorKey) as? MutatorBox)?.mutator
     }
 
+    /// Key for the associated object holding a task's completion gate, for a task created with a completion
+    /// handler or by an async method.
+    private static var completionKey: UInt8 = 0
+
+    /**
+     * Fails a task that the layer stops after it started, such as on a redirect the mutator refuses. The
+     * error is kept for the delegate's didCompleteWithError, and a completion handler or async caller gets
+     * it now, ahead of the cancellation or redirect response that ends the task.
+     *
+     * @param task is the task
+     * @param error is the error the task fails with
+     */
+    static func fail(_ task: URLSessionTask, with error: Error) {
+        recordFailure(error, on: task)
+        let observedTask = observableTask(for: task) ?? task
+        (objc_getAssociatedObject(observedTask, &completionKey) as? ApproovTaskCompletionHandling)?.complete(with: error)
+    }
+
     static func recordFailure(_ error: Error, on task: URLSessionTask) {
         objc_setAssociatedObject(task, &failureKey, error as NSError, .OBJC_ASSOCIATION_RETAIN)
     }
@@ -201,6 +219,11 @@ public class ApproovSessionTaskObserver: NSObject {
                 .OBJC_ASSOCIATION_RETAIN
             )
         }
+        if let completionHandler {
+            // kept for the task's lifetime, as the registration is taken off at the first resume
+            objc_setAssociatedObject(observedTask, &ApproovSessionTaskObserver.completionKey, completionHandler,
+                                     .OBJC_ASSOCIATION_RETAIN)
+        }
         if ApproovSessionTaskObserver.taskLinesEnabled {
             logMessage(
                 line: String(#line),
@@ -278,7 +301,7 @@ public class ApproovSessionTaskObserver: NSObject {
     }
 
     /// True when the task carries a delegate, other than our own wrapper, that would be offered the
-    /// server-trust challenge ahead of the session delegate. Only the session-level selector is
+    /// server-trust challenge or a redirect ahead of the session delegate. Only the session-level selector is
     /// checked: URLSession delivers connection-level challenges, server trust among them, to that
     /// selector and never to the task-level one, so a delegate implementing only the task-level
     /// callback cannot override pinning and must keep working for its own challenges.
@@ -292,7 +315,9 @@ public class ApproovSessionTaskObserver: NSObject {
         guard ApproovService.isApproovEnabled() else { return false }
         guard let delegate = task.delegate else { return false }
         if delegate is PinningTaskDelegate { return false }
+        // a delegate that decides redirects would see, and could send on, what the layer added to the request
         return delegate.responds(to: #selector(URLSessionDelegate.urlSession(_:didReceive:completionHandler:)))
+            || delegate.responds(to: #selector(URLSessionTaskDelegate.urlSession(_:task:willPerformHTTPRedirection:newRequest:completionHandler:)))
     }
 
     /// Handles a state change reported by the per-task observation installed in observe(task:).
@@ -338,7 +363,7 @@ public class ApproovSessionTaskObserver: NSObject {
         // task-level callback is left alone, since connection-level challenges are never offered
         // to it.
         if ApproovSessionTaskObserver.taskDelegateCouldOverridePinning(task) {
-            ApproovService.log(.error, "ApproovService: Rejecting URLSession task \(task.taskIdentifier): its task delegate implements urlSession(_:didReceive:completionHandler:) and would decide server trust instead of Approov. Pass the delegate to one of the WithApproov methods, or to ApproovURLSession's initializer, so pinning is applied.")
+            ApproovService.log(.error, "ApproovService: Rejecting URLSession task \(task.taskIdentifier): its task delegate implements urlSession(_:didReceive:completionHandler:) or the redirect callback, and would decide server trust or redirects instead of Approov. Pass the delegate to one of the WithApproov methods, or to ApproovURLSession's initializer, so Approov protection is applied.")
             task.cancel()
             return
         }

@@ -298,7 +298,7 @@ public extension ApproovServiceMutator where Self == ApproovAlwaysProceedMutator
     }
 }
 
-@available(*, deprecated, message: "Use ApproovServiceMutator.DEFAULT or .CLOSE_FAILURE.")
+@available(*, deprecated, message: "Use .DEFAULT or .CLOSE_FAILURE, for example ApproovService.setServiceMutator(.CLOSE_FAILURE).")
 public struct ApproovServiceMutatorDefault: ApproovServiceMutator, CustomStringConvertible {
     public static let shared = ApproovServiceMutatorDefault()
 

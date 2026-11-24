@@ -162,7 +162,7 @@ try ApproovService.setInstallAttributes("<signed-install-attributes>")
 
 ## addSubstitutionHeader
 
-Names a header whose value, after the required prefix, is a [secure string](ADVANCED.md#secure-strings) key. The package replaces it with the secure string, or with the fetch status name if there is none.
+Names a header whose value, after the required prefix, is a [secure string](ADVANCED.md#secure-strings) key. The package replaces it with the secure string, or with the fetch status name if there is none. A value that is not a secure string key (`UNKNOWN_KEY`) is left as written.
 
 ```swift
 ApproovService.addSubstitutionHeader(header: "Api-Key", prefix: nil)

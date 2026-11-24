@@ -215,4 +215,103 @@ final class Redirect370Tests: XCTestCase {
         let later = try send(URLRequest(url: try XCTUnwrap(URL(string: base + "/later"))))
         XCTAssertEqual(later.headers["x-mutator"], "second")
     }
+
+    // MARK: a redirect the layer refuses, and redirects decided by a task delegate
+
+    // a mutator that fails the request when it is asked to protect the redirect follow-up
+    private final class FailTheFollowUp: ApproovServiceMutator {
+        private let lock = NSLock()
+        private var calls = 0
+
+        func handleInterceptorProcessedRequest(_ request: URLRequest, changes: ApproovRequestMutations) throws -> URLRequest {
+            lock.lock()
+            calls += 1
+            let call = calls
+            lock.unlock()
+            if call > 1 {
+                throw URLError(.userAuthenticationRequired)
+            }
+            return request
+        }
+    }
+
+    // a task delegate that follows every redirect with the request it is given, and records it
+    private final class RedirectFollowingDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+        var seen: URLRequest?
+
+        func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                        newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+            seen = request
+            completionHandler(request)
+        }
+    }
+
+    private func echoHeaders(_ data: Data) throws -> [String: String] {
+        let json = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        return (json["headers"] as? [String: String]) ?? [:]
+    }
+
+    func testARefusedRedirectReportsTheHookErrorToACompletionHandler() throws {
+        ApproovService.setServiceMutator(FailTheFollowUp())
+        let session = ApproovURLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        let done = expectation(description: "request")
+        var failure: Error?
+        var response: URLResponse?
+        session.dataTask(with: try redirect(to: base + "/after-redirect", status: 302)) { _, received, error in
+            response = received
+            failure = error
+            done.fulfill()
+        }.resume()
+        wait(for: [done], timeout: 20)
+        XCTAssertEqual((failure as? URLError)?.code, .userAuthenticationRequired, "got \(String(describing: failure))")
+        XCTAssertNil(response, "the redirect response was delivered as the result")
+    }
+
+    func testARefusedRedirectReportsTheHookErrorToAnAsyncCaller() async throws {
+        ApproovService.setServiceMutator(FailTheFollowUp())
+        let session = ApproovURLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        do {
+            let (_, response) = try await session.dataWithApproov(for: try redirect(to: base + "/after-redirect", status: 302))
+            XCTFail("the refused redirect succeeded with \(response)")
+        } catch {
+            XCTAssertEqual((error as? URLError)?.code, .userAuthenticationRequired, "got \(error)")
+        }
+    }
+
+    func testATaskDelegateThatFollowsARedirectGetsItProtectedAfresh() async throws {
+        let target = "https://\(try host("TESTING_REPLY_URL_UNPROTECTED"))/landing"
+        let session = ApproovURLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        let delegate = RedirectFollowingDelegate()
+        let (data, _) = try await session.dataWithApproov(for: try redirect(to: target, status: 302), delegate: delegate)
+        let headers = try echoHeaders(data)
+        XCTAssertNil(headers["approov-token"])
+        XCTAssertNil(headers["approov-traceid"])
+        XCTAssertNil(headers["signature"])
+        XCTAssertNil(headers["signature-input"])
+        XCTAssertEqual(headers["api-key"], "own-key", "the secret reached a host not added to Approov")
+        XCTAssertNotNil(delegate.seen, "the task delegate was not asked about the redirect")
+        XCTAssertNil(delegate.seen?.value(forHTTPHeaderField: "Approov-Token"), "the delegate saw the token")
+        XCTAssertEqual(delegate.seen?.value(forHTTPHeaderField: "Api-Key"), "own-key", "the delegate saw the secret")
+    }
+
+    func testAClassicTaskWithARedirectDelegateIsRejected() throws {
+        let target = "https://\(try host("TESTING_REPLY_URL_UNPROTECTED"))/landing"
+        let session = ApproovURLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        let delegate = RedirectFollowingDelegate()
+        let done = expectation(description: "request")
+        var failure: Error?
+        let task = session.dataTask(with: try redirect(to: target, status: 302)) { _, _, error in
+            failure = error
+            done.fulfill()
+        }
+        task.delegate = delegate
+        task.resume()
+        wait(for: [done], timeout: 20)
+        XCTAssertNotNil(failure, "a task delegate decided a redirect the layer must protect")
+        XCTAssertNil(delegate.seen, "the request was sent")
+    }
 }

@@ -1354,7 +1354,8 @@ public class ApproovService {
     /**
      * Substitutes the secure strings named by the substitution headers of a request on a protected
      * channel. A SUCCESS the mutator accepts replaces the placeholder if a header can carry the value,
-     * otherwise the placeholder stays with a warning; a SUCCESS the mutator declines leaves it; any other
+     * otherwise the placeholder stays with a warning; a SUCCESS the mutator declines leaves it; UNKNOWN_KEY
+     * leaves the value as the app wrote it, as in 3.5.x, since it is not a secure string key; any other
      * status replaces it with the status name after the prefix.
      */
     private static func substituteHeaders(_ request: inout URLRequest, headers: [String: String],
@@ -1382,6 +1383,8 @@ public class ApproovService {
                 } else {
                     log(.warning, "ApproovService: secure string header \(header) not substituted: the value cannot be carried in a header")
                 }
+            } else if result.status == .unknownKey {
+                // not a secure string key, so the value is the app's own and is left as it is
             } else {
                 request.setValue(prefix + statusName(result.status), forHTTPHeaderField: header)
             }
@@ -1477,6 +1480,9 @@ public class ApproovService {
                     continue
                 }
                 replacement = secret
+            } else if result.status == .unknownKey {
+                // not a secure string key, so the value is the app's own and is left as it is
+                continue
             } else {
                 replacement = statusName(result.status)
             }

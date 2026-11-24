@@ -21,7 +21,7 @@ An API you added with `approov api -add <domain> -noApproovToken` needs no Appro
 
 ## What happens by default
 
-The service mutator decides what happens when the token fetch does not succeed. `ApproovServiceMutator.DEFAULT` is `CLOSE_FAILURE`, which keeps the 3.5.x decisions:
+The service mutator decides what happens when the token fetch does not succeed. The default mutator, `.DEFAULT`, is `.CLOSE_FAILURE`, which keeps the 3.5.x decisions:
 
 | Token fetch status | `CLOSE_FAILURE` | `ALWAYS_PROCEED` |
 |---|---|---|
@@ -38,7 +38,8 @@ A failure only affects your Approov API domains, the hosts in your pin set. A re
 A secure string is fetched for each placeholder on a request to a token-protected or secrets-only API. Neither standard mutator fails a request because of a secure string:
 
 * `SUCCESS` replaces the placeholder with the value.
-* Any other status replaces the placeholder with the status name, after any required prefix, such as `Bearer REJECTED` or `UNKNOWN_KEY` in a query parameter. Your backend sees why the secret is missing.
+* `UNKNOWN_KEY` leaves the value as your app wrote it, because it is not a secure string key.
+* Any other status replaces the placeholder with the status name, after any required prefix, such as `Bearer REJECTED`. Your backend sees why the secret is missing.
 
 ### Values a header or URL cannot carry
 
@@ -148,7 +149,7 @@ WebSockets are not supported. No Approov token or secure string is added to a We
 
 The package answers server trust challenges for your API domains. Every other challenge, such as a client certificate or HTTP authentication, goes to your delegate. For shared handling, give the delegate to the session and implement `urlSession(_:didReceive:completionHandler:)`. A delegate passed to a `WithApproov` method gets the same, after the package's check.
 
-While Approov is enabled, a task whose own `task.delegate` implements `urlSession(_:didReceive:completionHandler:)` is cancelled before it connects, since that delegate would decide server trust instead of the package. Pass that delegate to the session initializer or to a `WithApproov` method instead.
+While Approov is enabled, a task whose own `task.delegate` implements `urlSession(_:didReceive:completionHandler:)` or `urlSession(_:task:willPerformHTTPRedirection:newRequest:completionHandler:)` is cancelled before it connects. That delegate would decide server trust or redirects instead of the package. Pass that delegate to the session initializer or to a `WithApproov` method instead.
 
 ## Service mutators
 

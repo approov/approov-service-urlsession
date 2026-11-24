@@ -173,10 +173,23 @@ final class Classification370Tests: XCTestCase {
         let recorder = Recorder()
         recorder.onChanges = { recorded = $0 }
         ApproovService.setServiceMutator(recorder)
-        let response = update(try request(base + "/a", header: "Authorization", value: "Bearer missing-key"))
+        MiniSDKAttesterProxyController.setNextAttestationDirectiveJSON(
+            "{\"operation\": \"fetchSecureString\", \"response\": {\"status\": \"REJECTED\"}}")
+        let response = update(try request(base + "/a", header: "Authorization", value: "Bearer some-key"))
         XCTAssertEqual(response.decision, .ShouldProceed)
-        XCTAssertEqual(response.request.value(forHTTPHeaderField: "Authorization"), "Bearer UNKNOWN_KEY")
+        XCTAssertEqual(response.request.value(forHTTPHeaderField: "Authorization"), "Bearer REJECTED")
         XCTAssertEqual(recorded, [], "a written status is not a substitution")
+    }
+
+    func testAValueThatIsNotAKeyIsLeftUntouched() throws {
+        // an app that sends its own user token on a header it also uses for a secure string, as in 3.5.x
+        ApproovService.addSubstitutionHeader(header: "Authorization", prefix: "Bearer ")
+        ApproovService.addSubstitutionQueryParam(key: "k")
+        let response = update(try request(base + "/a?k=not-a-key", header: "Authorization",
+                                          value: "Bearer user-session-token"))
+        XCTAssertEqual(response.decision, .ShouldProceed)
+        XCTAssertEqual(response.request.value(forHTTPHeaderField: "Authorization"), "Bearer user-session-token")
+        XCTAssertEqual(response.request.url?.absoluteString, base + "/a?k=not-a-key")
     }
 
     func testAValueAHeaderCannotCarryKeepsThePlaceholder() throws {
@@ -194,15 +207,16 @@ final class Classification370Tests: XCTestCase {
         ApproovService.addSubstitutionQueryParam(key: "k")
         let response = update(try request(base + "/a?z=%2F&k=key1&other=1&k=missing#frag"))
         XCTAssertEqual(response.decision, .ShouldProceed)
-        XCTAssertEqual(response.request.url?.absoluteString, base + "/a?z=%2F&k=s3cret+1&other=1&k=UNKNOWN_KEY#frag")
+        XCTAssertEqual(response.request.url?.absoluteString, base + "/a?z=%2F&k=s3cret+1&other=1&k=missing#frag")
     }
 
     func testAQueryKeyIsALiteralNotAPattern() throws {
+        try define("key-a", "value-a")
         ApproovService.addSubstitutionQueryParam(key: "a(")
         ApproovService.addSubstitutionQueryParam(key: "k.y")
-        let response = update(try request(base + "/a?kxy=keep&a(=missing"))
+        let response = update(try request(base + "/a?kxy=key-a&a(=key-a"))
         XCTAssertEqual(response.decision, .ShouldProceed)
-        XCTAssertEqual(response.request.url?.absoluteString, base + "/a?kxy=keep&a(=UNKNOWN_KEY")
+        XCTAssertEqual(response.request.url?.absoluteString, base + "/a?kxy=key-a&a(=value-a")
     }
 
     func testAValueAQueryCannotCarryKeepsThePlaceholder() throws {

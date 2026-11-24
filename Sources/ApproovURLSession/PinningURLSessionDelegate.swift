@@ -299,7 +299,8 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
                     completionHandler(next)
                 default:
                     // the redirect fails the request, which reports the error rather than its cancellation
-                    ApproovSessionTaskObserver.recordFailure(update.error ?? URLError(.unknown), on: task)
+                    // or the redirect response: a completion handler or async caller gets it first
+                    ApproovSessionTaskObserver.fail(task, with: update.error ?? URLError(.unknown))
                     completionHandler(nil)
                     task.cancel()
                 }
