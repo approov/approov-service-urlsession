@@ -114,7 +114,7 @@ ApproovService.setLoggingLevel(.debug)
 
 ## setServiceMutator
 
-Installs a service mutator, which makes the request decisions. `.CLOSE_FAILURE` is the default and keeps the 3.5.x decisions, `.ALWAYS_PROCEED` never fails a request, and `ApproovDefaultMessageSigning` adds message signing. `nil` reinstates the default. See [service mutators](ADVANCED.md#service-mutators).
+Installs a service mutator, which makes the request decisions. `.CLOSE_FAILURE` is the default and keeps the 3.5.x decisions, `.ALWAYS_PROCEED` never fails a request, and `ApproovDefaultMessageSigning` adds message signing under the decisions you give it. `nil` reinstates the default. See [service mutators](ADVANCED.md#service-mutators).
 
 ```swift
 ApproovService.setServiceMutator(.ALWAYS_PROCEED)
@@ -364,7 +364,12 @@ What the package changed on a request, passed to `handleInterceptorProcessedRequ
 
 ## ApproovDefaultMessageSigning
 
-The message signing mutator. `setDefaultFactory(_:)` sets the factory for every protected host, and `putHostFactory(hostName:factory:)` one for a single host. `generateDefaultSignatureParametersFactory()` returns the default factory. See [message signing](ADVANCED.md#message-signing).
+The message signing mutator. `ApproovDefaultMessageSigning()` makes the `CLOSE_FAILURE` decisions. `ApproovDefaultMessageSigning(decisions:)` makes the decisions of the mutator you give it, a standard one or your own, and signs the request after that mutator's `handleInterceptorProcessedRequest`. `setDefaultFactory(_:)` sets the factory for every protected host, and `putHostFactory(hostName:factory:)` one for a single host. `generateDefaultSignatureParametersFactory()` returns the default factory. See [message signing](ADVANCED.md#message-signing).
+
+```swift
+ApproovService.setServiceMutator(ApproovDefaultMessageSigning(decisions: .ALWAYS_PROCEED).setDefaultFactory(
+    ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory()))
+```
 
 ## SignatureParametersFactory
 

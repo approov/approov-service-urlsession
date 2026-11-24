@@ -4,6 +4,11 @@ All notable changes to this package will be documented in this file.
 
 The format is based on Keep a Changelog and this project adheres to Semantic Versioning.
 
+## [3.7.1] - 2026-11-24
+
+### Added
+- `ApproovDefaultMessageSigning(decisions:)` signs under the decisions of another mutator, for example `ApproovDefaultMessageSigning(decisions: .ALWAYS_PROCEED)`. See [message signing](ADVANCED.md#message-signing).
+
 ## [3.7.0] - 2026-11-03
 
 Entries marked **Breaking** need a source change.

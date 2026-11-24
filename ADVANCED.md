@@ -100,7 +100,7 @@ The signer, `ApproovDefaultMessageSigning`, adds RFC 9421 message signatures to 
 
 Message signing is **off unless you install it**. If you do not need signatures, keep the default and install nothing.
 
-The signer is implemented as a service mutator, so installing another mutator, passing `nil` to `setServiceMutator` or an `initialize` that succeeds removes it. The signer makes the standard decisions, the same as `CLOSE_FAILURE`. If those suit you, give it a default factory and install it right after `initialize`, as in the example. To sign under other decisions, such as `ALWAYS_PROCEED`, combine them with the signer in a mutator of your own, as shown below.
+The signer is a service mutator, so installing another mutator, passing `nil` to `setServiceMutator` or an `initialize` that succeeds removes it. `ApproovDefaultMessageSigning()` makes the standard decisions, the same as `CLOSE_FAILURE`. If those suit you, give it a default factory and install it right after `initialize`, as in the example. To sign under other decisions, such as `ALWAYS_PROCEED`, give them to the signer, as shown below.
 
 ```swift
 ApproovService.setServiceMutator(ApproovDefaultMessageSigning().setDefaultFactory(
@@ -113,33 +113,14 @@ You can add the account signature, `hmac-sha256`, with `setUseInstallAndAccountM
 
 A request to a secrets-only API that the SDK reports as `UNPROTECTED_URL` carries no token header and is not signed. A request to an Approov protected host can go ahead after a failed token fetch. It then still carries the token header, empty or with the status. So the signer signs it too, over that value.
 
-To sign under other decisions, combine them with the signer in a mutator of your own. Your mutator makes its decisions and calls the signer from its `handleInterceptorProcessedRequest`. This mutator makes the `ALWAYS_PROCEED` token decisions and signs:
+To sign under other decisions, give them to the signer with `ApproovDefaultMessageSigning(decisions:)`. This signer makes the `ALWAYS_PROCEED` decisions and signs:
 
 ```swift
-import Approov
-import ApproovURLSessionPackage
-
-final class ProceedAndSign: ApproovServiceMutator {
-    private let signer = ApproovDefaultMessageSigning().setDefaultFactory(
-        ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory())
-
-    func handleInterceptorFetchTokenResult(_ approovResults: ApproovTokenFetchResult, url: String) throws -> Bool {
-        return try ApproovAlwaysProceedMutator.ALWAYS_PROCEED.handleInterceptorFetchTokenResult(approovResults, url: url)
-    }
-
-    func handleInterceptorProcessedRequest(_ request: URLRequest, changes: ApproovRequestMutations) throws -> URLRequest {
-        return try signer.handleInterceptorProcessedRequest(request, changes: changes)
-    }
-}
-
-ApproovService.setServiceMutator(ProceedAndSign())
+ApproovService.setServiceMutator(ApproovDefaultMessageSigning(decisions: .ALWAYS_PROCEED).setDefaultFactory(
+    ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory()))
 ```
 
-When you write such a mutator:
-
-* Keep your `handleInterceptorProcessedRequest` safe to repeat. The package calls it again for each redirect, so the follow-up is signed again for its target. There is no hook to turn this on or off.
-* To change the request before it is signed, make your change first and then call the signer.
-* Let an error from the signer propagate unchanged. A required body digest that cannot be generated then fails the request, as it does when the signer is installed on its own.
+`decisions` takes any mutator, your own included. The package asks that mutator for every decision. An error it throws reaches your app as it does when you install that mutator on its own. The package applies the changes from its `handleInterceptorProcessedRequest` first, and then signs the changed request. On each redirect the package calls that method again and signs the follow-up for its target, so keep the method safe to repeat.
 
 Your backend receives `Signature` and `Signature-Input` headers whose members include `install`, `account` or both. A signature that cannot be produced is logged as an error, such as `ApproovService: install message signature unavailable, leaving it out`.
 
@@ -316,7 +297,7 @@ A service mutator, an `ApproovServiceMutator`, is the object that holds the pack
 
 Write your own mutator when your app needs a decision that the standard ones do not make. Every method has a default, the `CLOSE_FAILURE` decision, so implement only what you need. A mutator of your own that should never abort a request delegates the token decisions to `ApproovAlwaysProceedMutator.ALWAYS_PROCEED`. A mutator you install applies to requests processed after the call.
 
-The package's signer is also a mutator. To sign under decisions of your own, see [Message signing](#message-signing).
+The package's signer is also a mutator. To sign under the decisions of your own mutator, give it to `ApproovDefaultMessageSigning(decisions:)` (see [Message signing](#message-signing)).
 
 The hooks:
 
@@ -325,7 +306,7 @@ The hooks:
 | `handleInterceptorShouldProcessRequest` | whether a request gets Approov processing at all (by default, every request that is not excluded) |
 | `handleInterceptorFetchTokenResult` | given the token fetch result, whether to send the request with its Approov headers, send it without them, or abort it |
 | `handleInterceptorHeaderSubstitutionResult`, `handleInterceptorQueryParamSubstitutionResult` | whether to apply a secure string substitution |
-| `handleInterceptorProcessedRequest` | final changes to the processed request. The signer signs here, so a mutator that calls it makes its own changes first |
+| `handleInterceptorProcessedRequest` | final changes to the processed request. The signer signs here, after the changes of the mutator that makes its decisions |
 | `handlePinningShouldProcessRequest` | whether Approov connection checks (Managed Trust Roots or configured public keys) apply to a request |
 | `handlePrecheckResult`, `handleFetchTokenResult`, `handleFetchSecureStringResult`, `handleFetchCustomJWTResult` | how the direct methods turn a result into an error |
 

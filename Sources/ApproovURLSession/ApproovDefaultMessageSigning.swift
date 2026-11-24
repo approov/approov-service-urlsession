@@ -14,6 +14,7 @@
 // ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH
 // THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+import Approov
 import CommonCrypto
 import RawStructuredFieldValues
 import Foundation
@@ -60,15 +61,86 @@ public class ApproovDefaultMessageSigning: ApproovServiceMutator, CustomStringCo
     private var installMessageSignatureProviderForTesting: ((String) -> String?)?
     private var accountMessageSignatureProviderForTesting: ((String) -> String?)?
 
+    // the mutator that makes the decisions, or nil for the CLOSE_FAILURE decisions of init()
+    private let decisions: ApproovServiceMutator?
+
     /**
      * Initializer
      */
     public init() {
         hostFactories = [:]
+        decisions = nil
+    }
+
+    /**
+     * Creates a signer that makes the decisions of another mutator and signs the requests that mutator
+     * processed. Every decision hook is passed to the given mutator, and the request its
+     * handleInterceptorProcessedRequest returns is then signed, so a change it makes is covered by the
+     * signature. For example, ApproovDefaultMessageSigning(decisions: .ALWAYS_PROCEED) signs a request
+     * that proceeds after a failed token fetch.
+     *
+     * @param decisions is the mutator that makes the decisions, a standard one or your own
+     */
+    public init(decisions: ApproovServiceMutator) {
+        hostFactories = [:]
+        self.decisions = decisions
+    }
+
+    // the mutator that makes the decisions, CLOSE_FAILURE if none was given
+    private var decider: ApproovServiceMutator {
+        return decisions ?? ApproovCloseFailureMutator.instance
     }
 
     public var description: String {
-        return "ApproovDefaultMessageSigning"
+        guard let decisions else {
+            return "ApproovDefaultMessageSigning"
+        }
+        return "ApproovDefaultMessageSigning(\(String(describing: decisions)))"
+    }
+
+    // the decision hooks, each made by the decisions mutator. A standard decision it throws is recorded
+    // for the hook call in progress, so it reaches the app in the same form as when that mutator is
+    // installed on its own.
+
+    public func handlePrecheckResult(_ approovResults: ApproovTokenFetchResult) throws {
+        try decider.handlePrecheckResult(approovResults)
+    }
+
+    public func handleFetchTokenResult(_ approovResults: ApproovTokenFetchResult) throws {
+        try decider.handleFetchTokenResult(approovResults)
+    }
+
+    public func handleFetchSecureStringResult(_ approovResults: ApproovTokenFetchResult,
+                                              operation: String,
+                                              key: String) throws {
+        try decider.handleFetchSecureStringResult(approovResults, operation: operation, key: key)
+    }
+
+    public func handleFetchCustomJWTResult(_ approovResults: ApproovTokenFetchResult) throws {
+        try decider.handleFetchCustomJWTResult(approovResults)
+    }
+
+    public func handleInterceptorShouldProcessRequest(_ request: URLRequest) throws -> Bool {
+        return try decider.handleInterceptorShouldProcessRequest(request)
+    }
+
+    public func handleInterceptorFetchTokenResult(_ approovResults: ApproovTokenFetchResult,
+                                                  url: String) throws -> Bool {
+        return try decider.handleInterceptorFetchTokenResult(approovResults, url: url)
+    }
+
+    public func handleInterceptorHeaderSubstitutionResult(_ approovResults: ApproovTokenFetchResult,
+                                                          header: String) throws -> Bool {
+        return try decider.handleInterceptorHeaderSubstitutionResult(approovResults, header: header)
+    }
+
+    public func handleInterceptorQueryParamSubstitutionResult(_ approovResults: ApproovTokenFetchResult,
+                                                              queryKey: String) throws -> Bool {
+        return try decider.handleInterceptorQueryParamSubstitutionResult(approovResults, queryKey: queryKey)
+    }
+
+    public func handlePinningShouldProcessRequest(_ request: URLRequest) -> Bool {
+        return decider.handlePinningShouldProcessRequest(request)
     }
 
     /**
@@ -139,7 +211,8 @@ public class ApproovDefaultMessageSigning: ApproovServiceMutator, CustomStringCo
     }
 
     /**
-     * Processes a request to add message signature headers.
+     * Processes a request to add message signature headers. The decisions mutator processes the request
+     * first, and the request it returns is signed.
      *
      * - Parameters:
      *   - request: The original HTTP request.
@@ -149,7 +222,7 @@ public class ApproovDefaultMessageSigning: ApproovServiceMutator, CustomStringCo
      */
     public func handleInterceptorProcessedRequest(_ request: URLRequest,
                                                   changes: ApproovRequestMutations) throws -> URLRequest {
-        return try processedRequest(request, changes: changes)
+        return try processedRequest(decider.handleInterceptorProcessedRequest(request, changes: changes), changes: changes)
     }
 
     /**
