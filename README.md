@@ -7,11 +7,26 @@
 ![Message Signing](https://img.shields.io/badge/Message%20Signing-RFC%209421-1f6feb)
 ![Build](https://github.com/approov/approov-service-urlsession/actions/workflows/build_and_test.yml/badge.svg)
 
-This package adds [Approov](https://www.approov.io) to an iOS or watchOS app that uses `URLSession`. Once it is initialized, every request your app makes through an `ApproovURLSession` carries an Approov token, and optionally a message signature, that your backend can check. Your backend then knows each request came from a genuine, unmodified copy of your app.
+This package adds [Approov](https://www.approov.io) to an iOS or watchOS app that uses `URLSession`. After you initialize it, the package adds an Approov token to each request that your app sends to your API domains through an `ApproovURLSession`. The token, a signed JWT, provides proof of attestation. Your backend checks it to decide whether to accept or reject the request. A valid token shows that the request came from a genuine, unmodified copy of your app on a device that passed Approov's checks.
 
-The package also checks the TLS connection to each of your API domains, against the certificate keys you configured for that domain or else the trust roots Approov manages for your account. A connection that does not match is refused.
+The package also checks the TLS connection to each of your API domains. A request goes ahead only if both the operating system and the [Managed Trust Roots](https://docs.approov.io/security-configuration/dynamic-pinning/#managed-trust-roots) configuration in your Approov account trust the connection. [Connection validation](ADVANCED.md#connection-validation) has the details.
 
-You need a trial or paid Approov account. The [Approov documentation](https://approov.io/docs/latest/) shows how to set up your account, register your app and check the integration. This page covers the essentials. Optional features are in [ADVANCED.md](ADVANCED.md), and every method is listed in [REFERENCE.md](REFERENCE.md).
+## BEFORE YOU START
+
+You need:
+
+* an Approov account, trial or paid, and its [account ID](#your-account-id)
+* your API domains [added to Approov](https://docs.approov.io/getting-started/add-api-domains/). The package adds a token only to requests to these domains.
+
+Then follow the steps below. Each step makes the next one possible:
+
+1. [Add the dependency](#adding-the-dependency). This gives your app `ApproovService` and `ApproovURLSession`.
+2. [Initialize](#initializing) `ApproovService` with your account ID. This turns on Approov protection.
+3. [Make your requests](#making-requests) through an `ApproovURLSession`. Your requests to your API domains then carry a token.
+4. [Look in the debug log](ADVANCED.md#diagnostics) to see that each request gets a token.
+5. [Register your app and check tokens on your backend](#next-steps). Until your backend checks the token, your API is not protected.
+
+Optional features are in [ADVANCED.md](ADVANCED.md). Every method is in [REFERENCE.md](REFERENCE.md).
 
 ## ADDING THE DEPENDENCY
 
@@ -45,9 +60,11 @@ pod 'ApproovURLSession', '~> 3.7.0'
 
 The package supports iOS 11 or later and watchOS 9 or later.
 
+Next, [initialize the package](#initializing).
+
 ## INITIALIZING
 
-Initialize `ApproovService` once, when your app starts, with your Approov account ID. Requests made before initialization are sent without Approov protection.
+Initialize `ApproovService` once, when your app starts, with your Approov account ID. Do this before your app sends its first request, for example in `application(_:didFinishLaunchingWithOptions:)`. If your app sends a request through an `ApproovURLSession` before `initialize`, the request goes out without Approov protection.
 
 ```swift
 import ApproovURLSessionPackage
@@ -64,17 +81,17 @@ do {
     os_log("Approov account ID rejected; starting in bypass mode: %@", error.localizedDescription)
     try? ApproovService.initialize(config: "")
 }
-// then configure, after initialize and before the
+// then configure, after initialize (which resets the configuration) and before the
 // app issues protected requests; only the settings your app uses, for example:
 // ApproovService.setTokenHeader(header: "Authorization", prefix: "Bearer ")
 // ApproovService.addSubstitutionHeader(header: "Api-Key", prefix: nil)
 ```
 
-A few notes on this example:
+About this example:
 
-* `initialize` throws if the account ID it receives is incomplete or altered. The `catch` block then starts the package in **bypass mode** by initializing with `""`. In bypass mode requests are sent without Approov protection, but your app still starts.
-* Logging the device ID is optional. Approov identifies an installation only by its device ID, so logging it next to your own user or session ID lets you match the two later.
-* Make your configuration calls (custom headers, message signing, secure strings and so on) after `initialize`, before the app sends protected requests. Each `initialize` resets the configuration to its defaults, so a setting made before it is lost. See [initialize, then configure](ADVANCED.md#initialize-then-configure).
+* `initialize` throws if the account ID is incomplete or changed. The `catch` block then starts the package in **bypass mode**, by initializing with `""`. In bypass mode the package sends requests without Approov protection. You can also use bypass mode as a feature flag: initialize with `""` to start your app without Approov.
+* Logging the installation device ID is optional. Approov identifies an installation only by its device ID. Log it next to your own user or session ID for correlation.
+* Make your configuration calls after `initialize`, before the app sends protected requests. Each `initialize` resets the configuration to its defaults, so the package loses a setting made before it. A setting applies only to requests sent after you make it. See [initialize, then configure](ADVANCED.md#initialize-then-configure).
 
 ### Your account ID
 
@@ -84,9 +101,11 @@ Your account ID is in your onboarding email. You can also get it at any time fro
 approov sdk -getConfigString
 ```
 
-The account ID is the same for every app in your account and is not a secret. You can keep it in your source code or deliver it with your app's configuration. Either way, the whole value must reach the app unchanged, including its punctuation. More in [about the Approov account ID](ADVANCED.md#about-the-approov-account-id).
+The account ID is the same for every app in your account, and it is not a secret. You can keep it in your source code or deliver it with your app's configuration. The whole value must reach the app unchanged, including its punctuation. See [about the Approov account ID](ADVANCED.md#about-the-approov-account-id).
 
-If another part of your app initializes Approov for you, that only sets the account ID. Your app still needs to make its own configuration calls after that `initialize`, because every `initialize` resets them.
+If the account ID is not available when the app starts, initialize with `""` first. Call `initialize` again when you have the account ID. See [bypass initialization](ADVANCED.md#bypass-initialization).
+
+When the package is initialized, [make your requests](#making-requests) through an `ApproovURLSession`.
 
 ## MAKING REQUESTS
 
@@ -100,79 +119,32 @@ let task = session.dataTask(with: URL(string: "https://api.example.com/shapes")!
 task.resume()
 ```
 
-The `async` methods of `URLSession` cannot be overridden, so use their `WithApproov` versions, such as `try await session.dataWithApproov(for: request)`. For a transport that owns its own `URLSession`, call `ApproovService.signRequest(_:)` to get a protected copy of a request. Both are listed in [REFERENCE.md](REFERENCE.md).
+The `async` methods of `URLSession` cannot be overridden, so use their `WithApproov` versions, such as `try await session.dataWithApproov(for: request)`. For a transport that owns its own `URLSession`, call `ApproovService.signRequest(_:)` to get a protected copy of a request. Both are in [REFERENCE.md](REFERENCE.md).
 
-### What gets sent
+## CUSTOMIZING THE BEHAVIOUR
 
-For a domain you have added to Approov, each request carries:
+[ADVANCED.md](ADVANCED.md) explains how the package behaves and how to customize it:
 
-* the `Approov-Token` header, the proof that the app passed attestation
-* the `Approov-TraceID` header, an optional debug value, whenever the SDK gives one
+* [What each request carries](ADVANCED.md#what-each-request-carries), and [what happens when a token fetch fails](ADVANCED.md#what-happens-by-default). By default, a request fails if the device has a network problem. It goes ahead with an empty token header if the app cannot reach the Approov service.
+* [Service mutators](ADVANCED.md#service-mutators), which change those decisions. For example, a mutator can send requests without a valid token. It can also fail a request on chosen errors. Your app then receives the `URLError` that the mutator throws and decides what to do, for example retry or show a message.
+* [Message signing](ADVANCED.md#message-signing), which you install with one call
+* [Header names](ADVANCED.md#header-names), [secure strings](ADVANCED.md#secure-strings), [token binding](ADVANCED.md#token-binding), [excluding URLs](ADVANCED.md#excluding-urls) and [redirects](ADVANCED.md#redirects)
+* [Diagnostics](ADVANCED.md#diagnostics), which show the result of each token fetch in the log
 
-The connection is checked against the certificate keys configured for the domain, or your account's Managed Trust Roots if it has none. If the check fails, the request fails with `NSURLErrorServerCertificateUntrusted`.
-
-A domain you added with `-noApproovToken` gets a checked connection and its secure strings, but no Approov headers. Requests to any other domain are sent unchanged.
-
-If a secure string cannot be fetched, its placeholder is replaced by the fetch status name, so a header becomes, for example, `Api-Key: REJECTED`, and a required prefix stays in front of the status. This lets your backend see why the secret is missing. A value that is not a secure string key (`UNKNOWN_KEY`) is left as your app wrote it.
-
-### When the app cannot get a token
-
-By default the mutator is `CLOSE_FAILURE`:
-
-* If the Approov service cannot be reached (`NO_APPROOV_SERVICE`), the request is sent with an empty `Approov-Token` header.
-* For any other failure the request fails in the app with an `ApproovError`: `networkingError` for a problem the user can retry, such as `NO_NETWORK`, and `rejectionError` or `permanentError` otherwise.
-
-To always send the request and let your backend decide, install `ALWAYS_PROCEED`. A request without a token is then sent with an empty `Approov-Token` header.
-
-```swift
-ApproovService.setServiceMutator(.ALWAYS_PROCEED)  // optional but recommended
-```
-
-To tell your backend why there is no token, turn on `setUseApproovStatusIfNoToken`. The token header then carries the status name, such as `NO_NETWORK`, in place of the empty token. Under `CLOSE_FAILURE` this also lets `NO_NETWORK`, `POOR_NETWORK` and `MITM_DETECTED` go ahead with the status instead of failing. See [sending the status in the token header](ADVANCED.md#sending-the-status-in-the-token-header).
-
-```swift
-ApproovService.setUseApproovStatusIfNoToken(shouldUse: true)
-```
-
-If the token fetch fails for a host that is not one of your Approov API domains, the request is sent unchanged under either mutator. More in [what happens by default](ADVANCED.md#what-happens-by-default).
-
-### Message signing
-
-Message signing is off unless you install it. The signer, `ApproovDefaultMessageSigning`, is a service mutator. Install it after `initialize`:
-
-```swift
-ApproovService.setServiceMutator(ApproovDefaultMessageSigning().setDefaultFactory(
-    ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory()))
-```
-
-Every request that carries the token header is then signed with the install signature. See [message signing](ADVANCED.md#message-signing) to add the account signature or choose what is covered.
-
-## VERIFYING
-
-Run your app and make a request. To see what happened, turn on debug logging with `ApproovService.setLoggingLevel(.debug)` in a debug build. The package never logs a token. At debug level it logs the [loggable form](https://approov.io/docs/latest/approov-usage-documentation/#loggable-tokens) of each result. Its `arc` claim explains why attestation gave that result; [diagnostics](ADVANCED.md#diagnostics) shows how to decode it.
-
-Your account's [live metrics](https://approov.io/docs/latest/approov-usage-documentation/#metrics-graphs) show the same results in aggregate, usually within a minute.
-
-## UPGRADING FROM 3.5.x
-
-Read the [changelog](CHANGELOG.md) for the full list of changes, and test your app and backend together.
-
-### Code changes
-
-* `setApproovInterceptorExtensions`, `prefetch`, `setProceedOnNetworkFailure` and `setFailureCacheTTL` are removed. Use `setServiceMutator`, and `ALWAYS_PROCEED` to go ahead on network failures.
-* A mutator hook that throws something other than a `URLError`, and a message signing configuration error, now fail the request with a `URLError`. Catch `Error` rather than `ApproovError` around `signRequest`.
-
-### What you may notice
-
-* A secure string that cannot be fetched no longer fails the request. The placeholder is replaced by the status name, such as `Api-Key: REJECTED`. If your backend checks the value it receives, it must expect these status values.
-* A failed token fetch only affects requests to your Approov API domains. A request to any other host is sent unchanged instead of failing.
-* A connection refused by the certificate check fails with `NSURLErrorServerCertificateUntrusted` instead of `NSURLErrorCancelled`.
-* A redirect is protected afresh for its target.
+Then continue with the [next steps](#next-steps).
 
 ## NEXT STEPS
 
-1. [Add your API domains](https://docs.approov.io/getting-started/add-api-domains/) to Approov.
-2. [Register your app](https://docs.approov.io/getting-started/add-app-signing-certificates/).
-3. Set up token and signature checks on your backend, following the [Approov documentation](https://approov.io/docs/latest/).
+1. [Register your app](https://docs.approov.io/getting-started/add-app-signing-certificates/), so that your release builds pass attestation.
+2. [Check tokens on your backend](https://docs.approov.io/getting-started/integrate-backend/), and signatures if you installed message signing. This is the step that protects your API.
+3. [Go live](https://docs.approov.io/getting-started/go-live/). Monitor first, then let your backend reject requests without a valid token.
 
-Custom header names, secure strings, token binding, excluding URLs and service mutators are in [ADVANCED.md](ADVANCED.md). Every method is in [REFERENCE.md](REFERENCE.md).
+## UPGRADING FROM 3.5.x
+
+Read the [changelog](CHANGELOG.md) for the full list of changes. Test your app and backend together.
+
+### Code changes
+
+* `setApproovInterceptorExtensions`, `prefetch`, `setProceedOnNetworkFailure` and `setFailureCacheTTL` are removed. Use `setServiceMutator`, and `.ALWAYS_PROCEED` to go ahead on network failures.
+* A mutator hook that throws something other than a `URLError`, and a message signing configuration error, now fail the request with a `URLError`. Catch `Error` rather than `ApproovError` around `signRequest`.
+* A `task.delegate` that you assign directly to a task and that implements the redirect callback now cancels the task. Pass that delegate to the session initializer or to a `WithApproov` method instead.

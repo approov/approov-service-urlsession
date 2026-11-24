@@ -1,6 +1,8 @@
 # Advanced Options
 
-A standard integration needs nothing on this page. It covers the options and details behind the [README](README.md), for when you need them.
+The `approov-service-urlsession` package works through an `ApproovURLSession`. After you call `initialize` with your account ID, the package adds an Approov token to each request to your API domains. The token is a signed JWT that provides proof of attestation, which your backend can check.
+
+A standard integration needs nothing from this document. You add the dependency, initialize, and use an `ApproovURLSession`, as the [README](README.md) shows. The options below change the defaults, for apps with specific needs. You can find every method used in this document in [REFERENCE.md](REFERENCE.md).
 
 ## What each request carries
 
