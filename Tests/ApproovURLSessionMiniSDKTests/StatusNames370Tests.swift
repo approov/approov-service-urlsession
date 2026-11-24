@@ -83,6 +83,25 @@ final class StatusNames370Tests: XCTestCase {
         XCTAssertEqual(response.error?.localizedDescription, "Approov token fetch for \(targetURL.absoluteString): NO_NETWORK")
     }
 
+    func testTheTokenFailureShowsTheURLWithoutUserInfoQueryOrFragment() throws {
+        let host = try XCTUnwrap(targetURL.host)
+        let url = try XCTUnwrap(URL(string: "https://user:password@\(host):8443/v1/items?api_key=query-secret#part"))
+        nextTokenFetch("NO_NETWORK")
+        let network = ApproovService.updateRequestWithApproov(request: URLRequest(url: url), sessionConfig: nil)
+        XCTAssertEqual(network.error?.localizedDescription, "Approov token fetch for https://\(host):8443/v1/items: NO_NETWORK")
+        nextTokenFetch("REJECTED")
+        let rejected = ApproovService.updateRequestWithApproov(request: URLRequest(url: url), sessionConfig: nil)
+        XCTAssertEqual(rejected.error?.localizedDescription, "Approov token fetch for https://\(host):8443/v1/items: REJECTED")
+    }
+
+    func testTheLoggableURLKeepsOnlySchemeHostPortAndPath() {
+        XCTAssertEqual(ApproovService.loggableURL("https://u:p@Example.com:443/a/b?k=v#f"), "https://Example.com/a/b")
+        XCTAssertEqual(ApproovService.loggableURL("http://example.com:8080/a%20b?k=v"), "http://example.com:8080/a%20b")
+        XCTAssertEqual(ApproovService.loggableURL("https://[::1]:8443/p?k=v"), "https://[::1]:8443/p")
+        XCTAssertEqual(ApproovService.loggableURL("ftp://example.com/a?k=v"), "(URL not shown)")
+        XCTAssertEqual(ApproovService.loggableURL("not a url ?k=v"), "(URL not shown)")
+    }
+
     func testADirectMethodFailureNamesTheStatus() {
         nextTokenFetch("POOR_NETWORK")
         XCTAssertThrowsError(try ApproovService.fetchToken(url: targetURL.absoluteString)) { error in

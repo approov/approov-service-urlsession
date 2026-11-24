@@ -100,6 +100,10 @@ public class ApproovService {
     // binding header name
     private static var bindingHeader = ""
 
+    // the lock held while a request sets its token binding value and fetches its token, internal so
+    // that a test can hold it
+    static let bindingLock = NSLock()
+
     // Approov token default header
     private static var approovTokenHeader = "Approov-Token"
 
@@ -904,8 +908,9 @@ public class ApproovService {
 
     /**
      * Records on the protected request what the layer changed from the app's request: each header it
-     * added or changed, with the app's own value and a digest of the installed one, and the URL before and
-     * after query substitution.
+     * added or changed, with the app's own value and a digest of the installed one, the URL before and
+     * after query substitution, and any body set as data, with its method. The body is kept so that a 307
+     * or 308 follow-up, which carries the body as a stream, can be given its body again as data.
      *
      * @param original is the request as the app made it
      * @param protected is the request the layer protected
@@ -933,7 +938,28 @@ public class ApproovService {
         if headers.isEmpty && record["protectedURL"] == nil {
             return protected
         }
+        if let body = original.httpBody {
+            record["body"] = body
+            record["method"] = original.httpMethod ?? "GET"
+        }
         return settingProtection(record, on: protected)
+    }
+
+    /**
+     * Gets the body of a protected attempt for its redirect follow-up, if the follow-up carries the body
+     * as a stream and keeps the method, as a 307 or 308 follow-up does. The stream itself is never read.
+     *
+     * @param record is the record of the attempt that was redirected
+     * @param followUp is the follow-up request
+     * @return the body of the attempt, or nil if the follow-up does not carry it as a stream
+     */
+    static func redirectBody(from record: [String: Any]?, for followUp: URLRequest) -> Data? {
+        guard let record, let body = record["body"] as? Data, let method = record["method"] as? String,
+              followUp.httpBody == nil, followUp.httpBodyStream != nil,
+              (followUp.httpMethod ?? "GET") == method else {
+            return nil
+        }
+        return body
     }
 
     /**
@@ -1098,6 +1124,30 @@ public class ApproovService {
         return ""
     }
 
+    /**
+     * Gets the form of a URL that may be logged or put in an error message: scheme, host, any port that is
+     * not the default for the scheme, and path, without the user info, query or fragment, which may carry
+     * personal data or a secure string. A string that is not an http or https URL is not shown.
+     *
+     * @param url is the URL string
+     * @return the loggable form of the URL
+     */
+    static func loggableURL(_ url: String) -> String {
+        guard var components = URLComponents(string: url),
+              let scheme = components.scheme?.lowercased(), scheme == "https" || scheme == "http",
+              let host = components.host, !host.isEmpty else {
+            return "(URL not shown)"
+        }
+        components.user = nil
+        components.password = nil
+        components.query = nil
+        components.fragment = nil
+        if components.port == (scheme == "https" ? 443 : 80) {
+            components.port = nil
+        }
+        return components.string ?? "(URL not shown)"
+    }
+
     // maps an error from a hook call into the decision: a standard decision keeps its ApproovError, with a
     // retry for a network failure, while any other error is already a URLError and fails the request
     private static func applyMutatorError(_ error: Error,
@@ -1109,6 +1159,26 @@ public class ApproovService {
         } else {
             response.decision = .ShouldFail
         }
+    }
+
+    /**
+     * Fetches the token for a request, bound to the value of the token binding header if the request
+     * carries it. The SDK holds one binding value for the process, so the value is set and the token is
+     * fetched under bindingLock, as otherwise two requests that bind different values can each get a
+     * token bound to the value of the other. Requests without a binding value do not take the lock.
+     *
+     * @param url is the URL to fetch the token for
+     * @param bindingValue is the value of the binding header, or nil if the request does not carry it
+     * @return the token fetch result
+     */
+    private static func fetchToken(for url: URL, bindingValue: String?) -> ApproovTokenFetchResult {
+        guard let bindingValue else {
+            return Approov.fetchTokenAndWait(url.absoluteString)
+        }
+        bindingLock.lock()
+        defer { bindingLock.unlock() }
+        Approov.setDataHashInToken(bindingValue)
+        return Approov.fetchTokenAndWait(url.absoluteString)
     }
 
     /**
@@ -1172,21 +1242,14 @@ public class ApproovService {
             }
         }
 
-        // check if Bind Header is set to a non empty String
+        // the value of the binding header, found without regard to case, if the request carries it
         let bindHeader = stateQueue.sync {
             return bindingHeader
         }
-        if bindHeader != "" {
-            // see if the binding header is present
-            if let value = allHeaders[bindHeader] {
-                // add the binding header value as a data hash to Approov token
-                Approov.setDataHashInToken(value)
-            }
-        }
+        let bindingValue = bindHeader.isEmpty ? nil : headerValue(bindHeader, in: allHeaders)
 
-        // Fetch an Approov token, coalescing concurrent cache misses so a sustained
-        // platform failure is cached before the same launch burst makes redundant SDK calls.
-        let approovResult = Approov.fetchTokenAndWait(url.absoluteString)
+        // fetch the Approov token, bound to the binding value if there is one
+        let approovResult = fetchToken(for: url, bindingValue: bindingValue)
         recordLastARC(approovResult)
         let hostname = hostnameFromURL(url: url)
         log(.debug, "ApproovService: updateRequest \(hostname): \(approovResult.loggableToken())")

@@ -207,10 +207,10 @@ public extension ApproovServiceMutator {
             if ApproovService.getUseApproovStatusIfNoToken() {
                 return true
             }
-            throw ApproovStandardDecisions.made(.networkingError(message: "Approov token fetch for \(url): " +
+            throw ApproovStandardDecisions.made(.networkingError(message: "Approov token fetch for \(ApproovService.loggableURL(url)): " +
                                                                  ApproovService.statusName(status)))
         default:
-            throw ApproovStandardDecisions.made(.permanentError(message: "Approov token fetch for \(url): " +
+            throw ApproovStandardDecisions.made(.permanentError(message: "Approov token fetch for \(ApproovService.loggableURL(url)): " +
                                                                 ApproovService.statusName(status)))
         }
     }

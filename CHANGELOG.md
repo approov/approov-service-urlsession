@@ -49,6 +49,9 @@ Entries marked **Breaking** need a source change.
 - Message signing signs the URL as it is sent: without the fragment, with its percent-encoding, and with a non-default port in `@authority`.
 - `getLastARC()` makes no token fetch of its own.
 - Your session delegate now receives the WebSocket open and close callbacks.
+- Requests in flight at once with different binding header values each get a token bound to their own value. The package matches the binding header name without regard to case.
+- A body redirected with 307 or 308 keeps its `Content-Digest`.
+- The error for a failed token fetch shows the URL without user info, query or fragment.
 
 ## [3.5.14] - 2026-09-28
 

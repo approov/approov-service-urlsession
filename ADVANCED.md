@@ -86,7 +86,7 @@ With `ApproovService.setUseApproovStatusIfNoToken(shouldUse: true)`, a request t
 
 A request that fails reports its error to the completion handler, the `async` caller or your delegate's `urlSession(_:task:didCompleteWithError:)`:
 
-* A `CLOSE_FAILURE` decision fails the request with an `ApproovError`, as in 3.5.x.
+* A `CLOSE_FAILURE` decision fails the request with an `ApproovError`, as in 3.5.x. Its message names the status and the URL without user info, query or fragment, for example `Approov token fetch for https://api.example.com/v1/items: NO_NETWORK`.
 * A `URLError` that your own mutator throws reaches your app unchanged.
 * If your mutator throws any other error, `ApproovError` included, the package wraps it in a `URLError` with code `.unknown`. Its message names the hook, for example `ApproovServiceMutator.handleInterceptorProcessedRequest failed: ...`. Your original error is in its `userInfo` under `NSUnderlyingErrorKey`.
 * A message signing configuration error fails the request with a `URLError`. This is a required body digest that cannot be generated, or an unsupported algorithm from a custom configuration.
@@ -150,7 +150,7 @@ Your backend verifies the signatures as [Installation Message Signing](https://d
 * the request method and target URI, exactly as the request is sent, without any fragment
 * the token header, and the trace header when the package added one
 * the `Authorization`, `Content-Length` and `Content-Type` headers, when present
-* a SHA-256 `Content-Digest` of the body, when the body is in `httpBody`. The package does not digest a streamed body.
+* a SHA-256 `Content-Digest` of the body, when the body is in `httpBody`. The package does not digest a streamed body. A [307 or 308 redirect](#redirects) keeps its digest.
 * a `created` timestamp and a 15 second `expires`, from [getServerAdjustedCurrentTimeMS](REFERENCE.md#getserveradjustedcurrenttimems). After the app's first attestation this follows the Approov servers' clock, so a wrong device clock does not move them outside your backend's window
 
 The [SignatureParametersFactory](REFERENCE.md#signatureparametersfactory) methods change these choices, and `putHostFactory(hostName:factory:)` sets a factory for one host. A required body digest, set with `setBodyDigestConfig(_:required:)`, fails each request without a body in `httpBody`.
@@ -233,9 +233,9 @@ There is no binding header by default. Set one when your requests carry a creden
 ApproovService.setBindingHeader(header: "Authorization")
 ```
 
-The package reads the value from the request, or else from the session configuration's `httpAdditionalHeaders`. It matches the exact name you set, so spell it as your requests do.
+The package reads the value from the request, or else from the session configuration's `httpAdditionalHeaders`. It matches the header name without regard to case.
 
-The SDK holds one binding value for the whole app. For every request that carries the binding header, the package sets that value just before it fetches the token. These are two separate steps. So a token can carry the value of another request, when requests with different values are in flight at once.
+The SDK holds one binding value for the whole app. For each request that carries the binding header, the package sets that value and fetches the token in one locked step. So each token carries the value of its own request. While one request is in this step, other requests that carry the binding header wait. Requests without it do not wait.
 
 The package binds each redirect again. Do not mix `setBindingHeader` with direct `setDataHashInToken` calls, because both set the same SDK value.
 
@@ -298,6 +298,8 @@ While Approov protection is on, the package cancels a task before it connects if
 ## Redirects
 
 A redirect is protected again for its target. First, the package removes what it added to the previous attempt: the token, trace and signature headers, and the secure strings. So none of them reaches another host, and your redirect delegate sees the request without them. Then the package processes the follow-up as a new request, with a token fetch for the target URL.
+
+On a 307 or 308 redirect, URLSession gives the follow-up its body as a stream, which the package does not read. So the package puts the body of the previous attempt back in `httpBody`, and the follow-up gets its `Content-Digest` again. Your redirect delegate sees that body. If your delegate sets a new body stream, the follow-up has no digest.
 
 A request keeps the mutator it started with, across its redirects. If that mutator fails the follow-up, a completion handler or an `async` caller gets your error. It does not get `NSURLErrorCancelled` or the redirect response.
 

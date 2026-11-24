@@ -113,6 +113,122 @@ final class Redirect370Tests: XCTestCase {
         XCTAssertFalse(MiniSDKAttesterProxyController.callLog().contains("fetchSecureStringAndWait:secret-value"))
     }
 
+    // sends a request and returns the echo of the last hop as JSON
+    private func sendForEcho(_ request: URLRequest) throws -> [String: Any] {
+        let session = ApproovURLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        let done = expectation(description: "request")
+        var body: Data?
+        var failure: Error?
+        session.dataTask(with: request) { data, _, error in
+            body = data
+            failure = error
+            done.fulfill()
+        }.resume()
+        wait(for: [done], timeout: 20)
+        XCTAssertNil(failure)
+        return try XCTUnwrap(try JSONSerialization.jsonObject(with: try XCTUnwrap(body)) as? [String: Any])
+    }
+
+    func testABodyRedirectedWith307Or308KeepsItsContentDigest() throws {
+        let body = Data("{\"amount\":42,\"to\":\"account-1\"}".utf8)
+        let digest = "sha-256=:" + ApproovDefaultMessageSigning.sha256(data: body).base64EncodedString() + ":"
+        for status in [307, 308] {
+            var request = try redirect(to: base + "/after-redirect", status: status, method: "POST")
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = body
+            let echo = try sendForEcho(request)
+            let headers = (echo["headers"] as? [String: String]) ?? [:]
+            XCTAssertEqual(echo["method"] as? String, "POST", "\(status)")
+            XCTAssertEqual(echo["body"] as? String, String(decoding: body, as: UTF8.self), "\(status): the body was not sent")
+            XCTAssertNotNil(headers["approov-token"], "\(status)")
+            XCTAssertEqual(headers["content-digest"], digest, "\(status): the follow-up has no digest of its body")
+            XCTAssertTrue(headers["signature-input"]?.contains("\"content-digest\"") ?? false,
+                          "\(status): the signature does not cover the digest: \(headers["signature-input"] ?? "none")")
+        }
+    }
+
+    func testABodyRedirectedTwiceKeepsItsContentDigest() throws {
+        let body = Data("{\"amount\":9}".utf8)
+        let second = try redirect(to: base + "/after-redirect", status: 308).url!.absoluteString
+        var request = try redirect(to: second, status: 307, method: "POST")
+        request.httpBody = body
+        let echo = try sendForEcho(request)
+        let headers = (echo["headers"] as? [String: String]) ?? [:]
+        XCTAssertEqual(echo["url"] as? String, base + "/after-redirect")
+        XCTAssertEqual(echo["body"] as? String, String(decoding: body, as: UTF8.self))
+        XCTAssertEqual(headers["content-digest"],
+                       "sha-256=:" + ApproovDefaultMessageSigning.sha256(data: body).base64EncodedString() + ":")
+    }
+
+    // the app's own delegate, which follows each redirect, adding a header or replacing the body stream
+    private final class BodyRedirectDelegate: NSObject, URLSessionDataDelegate {
+        var replacement: Data?
+        var body = Data()
+        var done: XCTestExpectation?
+        func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                        newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+            var followed = request
+            followed.setValue("app-value", forHTTPHeaderField: "X-App")
+            if let replacement {
+                followed.httpBodyStream = InputStream(data: replacement)
+                followed.setValue(String(replacement.count), forHTTPHeaderField: "Content-Length")
+            }
+            completionHandler(followed)
+        }
+        func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+            body.append(data)
+        }
+        func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+            done?.fulfill()
+        }
+    }
+
+    private func sendThroughDelegate(_ request: URLRequest, replacement: Data?) throws -> [String: Any] {
+        let delegate = BodyRedirectDelegate()
+        delegate.replacement = replacement
+        delegate.done = expectation(description: "request")
+        let session = ApproovURLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
+        defer { session.invalidateAndCancel() }
+        session.dataTask(with: request).resume()
+        wait(for: [delegate.done!], timeout: 20)
+        return try XCTUnwrap(try JSONSerialization.jsonObject(with: delegate.body) as? [String: Any])
+    }
+
+    func testABodyRedirectedThroughTheAppsDelegateKeepsItsContentDigest() throws {
+        let body = Data("{\"amount\":7}".utf8)
+        var request = try redirect(to: base + "/after-redirect", status: 307, method: "POST")
+        request.httpBody = body
+        let echo = try sendThroughDelegate(request, replacement: nil)
+        let headers = (echo["headers"] as? [String: String]) ?? [:]
+        XCTAssertEqual(headers["x-app"], "app-value")
+        XCTAssertEqual(echo["body"] as? String, String(decoding: body, as: UTF8.self))
+        XCTAssertEqual(headers["content-digest"],
+                       "sha-256=:" + ApproovDefaultMessageSigning.sha256(data: body).base64EncodedString() + ":")
+    }
+
+    func testABodyStreamTheAppsDelegateReplacedIsNotDigestedAsTheOldBody() throws {
+        let body = Data("{\"amount\":7}".utf8)
+        let replacement = Data("{\"amount\":8}".utf8)
+        var request = try redirect(to: base + "/after-redirect", status: 307, method: "POST")
+        request.httpBody = body
+        let echo = try sendThroughDelegate(request, replacement: replacement)
+        let headers = (echo["headers"] as? [String: String]) ?? [:]
+        XCTAssertEqual(echo["body"] as? String, String(decoding: replacement, as: UTF8.self))
+        XCTAssertNotNil(headers["signature"])
+        XCTAssertNil(headers["content-digest"], "a stream the layer cannot read was given a digest")
+    }
+
+    func testABodyRedirectedWith303HasNoContentDigest() throws {
+        var request = try redirect(to: base + "/after-redirect", status: 303, method: "POST")
+        request.httpBody = Data("{\"amount\":42}".utf8)
+        let echo = try sendForEcho(request)
+        let headers = (echo["headers"] as? [String: String]) ?? [:]
+        XCTAssertEqual(echo["method"] as? String, "GET")
+        XCTAssertNil(headers["content-digest"], "a GET without a body carries the digest of the POST body")
+        XCTAssertNotNil(headers["signature"])
+    }
+
     func testARequestSentAgainIsStrippedAndProtectedAfresh() throws {
         var request = URLRequest(url: try XCTUnwrap(URL(string: base + "/a")))
         request.setValue("own-key", forHTTPHeaderField: "Api-Key")

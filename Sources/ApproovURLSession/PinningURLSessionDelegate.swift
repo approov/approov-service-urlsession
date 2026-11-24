@@ -282,7 +282,14 @@ class PinningURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDel
         // follow-up, which is then protected as a brand-new request for its target; an attempt the layer
         // did not protect is followed as it is
         let record = ApproovService.protectionRecord(of: task.currentRequest) ?? ApproovService.protectionRecord(of: request)
-        let followUp = record.map { ApproovService.stripProtection(request, record: $0) } ?? request
+        var followUp = record.map { ApproovService.stripProtection(request, record: $0) } ?? request
+        // a 307 or 308 follow-up carries the body as a one-shot stream, which is never read, so the body
+        // recorded for the attempt that was redirected is put back as data, the same bytes the stream holds,
+        // so that the follow-up can be digested and signed as the attempt was; an upload task sends its own
+        // body, not the one in the request, so it is left as it is
+        if !(task is URLSessionUploadTask), let body = ApproovService.redirectBody(from: record, for: followUp) {
+            followUp.httpBody = body
+        }
         let protect: (URLRequest?) -> Void = { next in
             guard let next, record != nil, ApproovService.isApproovEnabled() else {
                 completionHandler(next)
