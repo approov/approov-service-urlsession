@@ -2,146 +2,288 @@
 
 The `approov-service-urlsession` package works through an `ApproovURLSession`. After you call `initialize` with your account ID, the package adds an Approov token to each request to your API domains. The token is a signed JWT that provides proof of attestation, which your backend can check.
 
-A standard integration needs nothing from this document. You add the dependency, initialize, and use an `ApproovURLSession`, as the [README](README.md) shows. The options below change the defaults, for apps with specific needs. You can find every method used in this document in [REFERENCE.md](REFERENCE.md).
+A standard integration of the Approov Package for URLSession needs nothing from this document. You add the dependency, initialize, and use an `ApproovURLSession`, as the [README](README.md) shows. The options below change the defaults, suitable for applications with specific needs. You can find every method used in this document in [REFERENCE.md](REFERENCE.md).
+
+| What you need | Read |
+| :--- | :--- |
+| Understand what reaches your backend | [What each request carries](#what-each-request-carries), then [What happens by default](#what-happens-by-default) |
+| Change how network failures are handled | [What happens by default](#what-happens-by-default), then [Service mutators](#service-mutators) |
+| Protect request contents with signatures | [Message signing](#message-signing), then [Account Message Signing](https://docs.approov.io/operations/message-signing/account/) |
+| Replace an embedded API secret | [Secure strings](#secure-strings) |
+| Configure startup or runtime activation | [Initialize, then configure](#initialize-then-configure), then [Bypass initialization](#bypass-initialization) |
+| Investigate an unexpected result | [Diagnostics](#diagnostics), then [Errors your app can see](#errors-your-app-can-see) |
 
 ## What each request carries
 
-The package fetches an Approov token for every request it processes, and the result decides what the request carries:
+What the package adds to a request depends on two things:
 
-| Request to | Token header | Trace header | Secure strings | Signature | Connection |
-|---|---|---|---|---|---|
-| A token-protected API, token obtained | the token | when the SDK gives one | substituted | when signing is installed | checked |
-| A token-protected API, no token, request proceeds | empty, or the status name | when the SDK gives one | placeholders left as written | when signing is installed | checked |
-| A secrets-only API (`-noApproovToken`) | none | none | substituted | none | checked |
-| Any other host | none | none | placeholders left as written | none | OS trust |
+* the kind of host: a token-protected API domain, a secrets-only API domain, or a host not protected by Approov (one you have not added)
+* the outcome of the attestation attempt for the request
 
-Secure strings are only substituted into an https request. A cleartext request never receives one, and the package logs a warning naming each header or query parameter it left as written.
+Based on the attestation outcome and the kind of host, the package and its [service mutator](#service-mutators) decide what to add to the request. They also decide whether the request goes ahead at all.
 
-### Secrets-only APIs
+| Request goes to | Outcome | What the package adds |
+| :--- | :--- | :--- |
+| a token-protected domain: an API domain you added to Approov | `SUCCESS` | the token header, and the trace header when the SDK gives a trace ID. Your secure strings, or the [status of each one that could not be fetched](#secure-strings). The signatures, once you install [message signing](#message-signing). A checked connection. |
+| a secrets-only domain: an API domain you added with `approov api -add <domain> -noApproovToken` | `UNPROTECTED_URL` | your secure strings, or the status of each one that could not be fetched. A checked connection. No token or trace header, and no signatures. |
+| a host not protected by Approov | `UNKNOWN_URL` | nothing. The connection relies on OS trust. |
+| a token-fetch failure, to a host protected by Approov | a failure status | depends on the service mutator (see below) |
+| a token-fetch failure, to a host not protected by Approov | a failure status | nothing (see below) |
 
-An API you added with `approov api -add <domain> -noApproovToken` needs no Approov token. Its connections are still checked against its keys, and its requests get their secure strings.
+A failure status means the app could not complete the attestation. For example, there was no network, or the Approov service could not be reached. The [service mutator](#what-happens-by-default) then decides whether the request fails in the app or is sent. A request that is sent carries the `Approov-Token` header with an empty token after any prefix. If you turned on [setUseApproovStatusIfNoToken](#sending-the-status-in-the-token-header), it carries the status name instead. It has the trace header when the SDK gives a trace ID, and no secure strings.
+
+For a host not protected by Approov, the request goes out unchanged, whatever the outcome. The standard mutators never fail it in the app. Only your own mutator can, by throwing from `handleInterceptorFetchTokenResult` (see [Service mutators](#service-mutators)).
+
+The headers your backend may receive:
+
+* `Approov-Token` carries the Approov token, or is empty (or holds the [status](#sending-the-status-in-the-token-header)) when no token could be fetched. Only your backend can tell from the token whether the app passed. See [Approov tokens](https://docs.approov.io/core-concepts/approov-tokens/architecture-and-security/).
+* `Signature` and `Signature-Input` carry the signatures, once you install [message signing](#message-signing). `Content-Digest` carries the body digest that they cover.
+* `Approov-TraceID` is an optional debug header. Your backend passes it through unchanged.
+
+Whatever the attestation outcome, an `ApproovURLSession` checks the TLS connection to each domain you added, token-protected or secrets-only (see [Connection validation](#connection-validation)).
 
 ## What happens by default
 
-The service mutator decides what happens when the token fetch does not succeed. The default mutator, `.DEFAULT`, is `.CLOSE_FAILURE`, which keeps the 3.5.x decisions:
+The package processes a task when your app first resumes it. For every request it processes, it fetches an Approov token for the request URL. It does not process a request before `initialize` or in [bypass mode](#bypass-initialization), a [WebSocket](#websockets) upgrade, or a request to an [excluded URL](#excluding-urls). It then applies the decisions of the installed [service mutator](#service-mutators). The package provides three standard ones:
 
-| Token fetch status | `CLOSE_FAILURE` | `ALWAYS_PROCEED` |
-|---|---|---|
-| `SUCCESS` | sends the token | sends the token |
-| `NO_APPROOV_SERVICE` | sends an empty token header | sends an empty token header |
-| `NO_NETWORK`, `POOR_NETWORK`, `MITM_DETECTED` | fails with `ApproovError.networkingError`, the user can retry | sends an empty token header |
-| `REJECTED` and any other failure | fails with `ApproovError.rejectionError` or `permanentError` | sends an empty token header |
-| `UNKNOWN_URL`, `UNPROTECTED_URL` | adds no Approov header | adds no Approov header |
+* `.CLOSE_FAILURE` keeps the 3.5.x token decisions for your API domains. A failed token fetch fails the request in the app, with an `ApproovError` as in 3.5.x.
+* `.ALWAYS_PROCEED` never fails a request because of its token fetch. Whatever the token fetch outcome, the request is sent, and your backend decides. Your backend is then the enforcement point.
+* `.DEFAULT` is the mutator installed out of the box. `setServiceMutator(nil)` puts it back, and so does each `initialize` that succeeds. `.DEFAULT` points to whatever the release considers default behaviour, which is currently `.CLOSE_FAILURE`.
 
-A failure only affects your Approov API domains, the hosts in your pin set. A request to any other host whose token fetch fails is sent unchanged under either mutator. While the app has no configuration yet, for example on a first launch without a network, no host is in the pin set, so nothing is blocked.
+To opt in to always proceeding:
 
-### Secure string results
+```swift
+ApproovService.setServiceMutator(.ALWAYS_PROCEED)
+```
 
-A secure string is fetched for each placeholder on a request to a token-protected or secrets-only API. Neither standard mutator fails a request because of a secure string:
+In the table below, "an Approov protected host" means one of the API domains you added to Approov, of either kind.
 
-* `SUCCESS` replaces the placeholder with the value.
-* `UNKNOWN_KEY` leaves the value as your app wrote it, because it is not a secure string key.
-* Any other status replaces the placeholder with the status name, after any required prefix, such as `Bearer REJECTED`. Your backend sees why the secret is missing.
+| Approov token fetch status | `CLOSE_FAILURE` (default) | `ALWAYS_PROCEED` |
+| :--- | :--- | :--- |
+| `SUCCESS` | proceeds with the token, any trace header, the secure strings and, with message signing installed, the signatures | same |
+| `UNPROTECTED_URL` (secrets-only API) | proceeds with the secure strings only, no Approov headers | same |
+| `UNKNOWN_URL` (host not protected by Approov) | proceeds untouched | same |
+| `NO_APPROOV_SERVICE`, Approov protected host | proceeds with an empty token header (or the status), but no secure strings | same |
+| `NO_NETWORK`, `POOR_NETWORK`, `MITM_DETECTED`, Approov protected host | fails with `ApproovError.networkingError`, which the user can retry. With `setUseApproovStatusIfNoToken(shouldUse: true)` it proceeds with the status in the token header instead | proceeds with an empty token header (or the status), but no secure strings |
+| any other status (`REJECTED`, `INTERNAL_ERROR`, `BAD_URL`, ...), Approov protected host | fails with `ApproovError.permanentError` | proceeds with an empty token header (or the status), but no secure strings |
+| any failure status, host not protected by Approov, or any host before the app has its first Approov configuration | proceeds untouched, and no standard mutator fails it | same |
 
-### Values a header or URL cannot carry
+"The status" in this table means the status name in the token header, after any prefix. A request that goes ahead after a failed token fetch also carries the trace header when the SDK gives a trace ID. It is signed too, if you installed [message signing](#message-signing).
 
-A header carries only tab and printable ASCII. A query value must come back unchanged from the URL. A secure string that cannot be carried leaves the placeholder as written, and the package logs a warning naming the header or query parameter, never the value.
+`NO_APPROOV_SERVICE` means the app could not reach the Approov service or its failover.
+
+These are the token fetch decisions only. Under either mutator, these still fail the request:
+
+* a TLS connection that fails the check
+* an abort that your own hooks ask for
+* a message signing configuration error
+
+### Sending the status in the token header
+
+With `ApproovService.setUseApproovStatusIfNoToken(shouldUse: true)`, a request that proceeds without a token carries the status name, such as `NO_NETWORK`, after any prefix. Under `CLOSE_FAILURE` the network statuses then proceed instead of failing, and `REJECTED` still fails. A host not protected by Approov never receives the status.
 
 ### Errors your app can see
 
-* A decision of `CLOSE_FAILURE` fails the request with an `ApproovError`, as in 3.5.x.
-* A `URLError` your own mutator throws reaches your app unchanged.
-* Anything else a mutator hook throws, an `ApproovError` your code throws included, fails the request with a `URLError` (`.unknown`) naming the hook, with your error as its underlying error.
-* A message signing configuration error, a required body digest that cannot be generated or an unsupported algorithm, fails the request with a `URLError`.
+A request that fails reports its error to the completion handler, the `async` caller or your delegate's `urlSession(_:task:didCompleteWithError:)`:
+
+* A `CLOSE_FAILURE` decision fails the request with an `ApproovError`, as in 3.5.x.
+* A `URLError` that your own mutator throws reaches your app unchanged.
+* Anything else a mutator hook throws, an `ApproovError` your code throws included, fails the request with a `URLError` (`.unknown`). The error names the hook, and your error is its underlying error.
+* A message signing configuration error fails the request with a `URLError`. This is a required body digest that cannot be generated, or an unsupported algorithm.
 * A connection that fails the check fails with `NSURLErrorServerCertificateUntrusted`.
 
 A failed request fails alone. The session and its other tasks are not affected.
 
-## Sending the status in the token header
-
-With `ApproovService.setUseApproovStatusIfNoToken(shouldUse: true)`, a request that proceeds without a token carries the token fetch status name, such as `NO_NETWORK` or `NO_APPROOV_SERVICE`, in place of the empty token, after any prefix. Under `CLOSE_FAILURE` this also lets `NO_NETWORK`, `POOR_NETWORK` and `MITM_DETECTED` go ahead with the status instead of failing. `REJECTED` still fails. The status is never sent to a host that is not one of your Approov API domains.
-
 ## Message signing
 
-Message signing is **off unless you install it**. The signer, `ApproovDefaultMessageSigning`, is a service mutator. Give it a default factory and install it after `initialize`:
+The signer, `ApproovDefaultMessageSigning`, adds RFC 9421 message signatures to every request that carries the Approov token header.
+
+Message signing is **off unless you install it**. If you do not need signatures, keep the default and install nothing.
+
+The signer is implemented as a service mutator, so installing another mutator, passing `nil` to `setServiceMutator` or an `initialize` that succeeds removes it. The signer makes the standard decisions, the same as `CLOSE_FAILURE`. If those suit you, give it a default factory and install it right after `initialize`, as in the example. To sign under other decisions, such as `ALWAYS_PROCEED`, combine them with the signer in a mutator of your own, as shown below.
 
 ```swift
 ApproovService.setServiceMutator(ApproovDefaultMessageSigning().setDefaultFactory(
     ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory()))
 ```
 
-From then on, every request that carries the token header is signed with the install signature, `ecdsa-p256-sha256`. It uses a key unique to the app installation, held in the device's secure hardware. Its dictionary member is `install`.
+Once the signer is installed, every request that carries the Approov token header is signed with the install signature, `ecdsa-p256-sha256`. It uses a key unique to the app installation. The private key is held in the Secure Enclave and never leaves the device. Its dictionary member is `install`.
 
-You can add the account signature, `hmac-sha256`, with `setUseInstallAndAccountMessageSigning()` on the factory. It uses a shared account key, delivered to the app when it passes attestation. Its member is `account`. Both are members of the same `Signature` and `Signature-Input` headers, over the same covered components. Sending both means a device without secure hardware still produces a signature your backend can verify. If one signature cannot be produced, the request goes ahead with the other, or unsigned. `setUseAccountMessageSigning()` and `setUseInstallMessageSigning()` select one.
+You can add the account signature, `hmac-sha256`, with `setUseInstallAndAccountMessageSigning()` on the factory. It uses a shared account key, delivered to the app when it passes attestation. Its member is `account`. Both are members of the same `Signature` and `Signature-Input` headers, over the same covered components. If one signature cannot be produced, the request goes ahead with the other, or unsigned. `setUseAccountMessageSigning()` and `setUseInstallMessageSigning()` select one signature only.
 
-The signer makes the `CLOSE_FAILURE` decisions. Installing another mutator, passing `nil` to `setServiceMutator` or calling `initialize` removes it. To combine signing with your own decisions, call the signer's `handleInterceptorProcessedRequest` from your own mutator.
+A request to a secrets-only API that the SDK reports as `UNPROTECTED_URL` carries no token header and is not signed. A request to an Approov protected host can go ahead after a failed token fetch. It then still carries the token header, empty or with the status. So the signer signs it too, over that value.
 
-See [Installation Message Signing](https://approov.io/docs/latest/approov-usage-documentation/#installation-message-signing) and [Account Message Signing](https://approov.io/docs/latest/approov-usage-documentation/#account-message-signing).
+To sign under other decisions, combine them with the signer in a mutator of your own. Your mutator makes its decisions and calls the signer from its `handleInterceptorProcessedRequest`. This mutator makes the `ALWAYS_PROCEED` token decisions and signs:
+
+```swift
+import Approov
+import ApproovURLSessionPackage
+
+final class ProceedAndSign: ApproovServiceMutator {
+    private let signer = ApproovDefaultMessageSigning().setDefaultFactory(
+        ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory())
+
+    func handleInterceptorFetchTokenResult(_ approovResults: ApproovTokenFetchResult, url: String) throws -> Bool {
+        return try ApproovAlwaysProceedMutator.ALWAYS_PROCEED.handleInterceptorFetchTokenResult(approovResults, url: url)
+    }
+
+    func handleInterceptorProcessedRequest(_ request: URLRequest, changes: ApproovRequestMutations) throws -> URLRequest {
+        return try signer.handleInterceptorProcessedRequest(request, changes: changes)
+    }
+}
+
+ApproovService.setServiceMutator(ProceedAndSign())
+```
+
+When you write such a mutator:
+
+* Keep your `handleInterceptorProcessedRequest` safe to repeat. The package calls it again for each redirect, so the follow-up is signed again for its target. There is no hook to turn this on or off.
+* To change the request before it is signed, make your change first and then call the signer.
+* Let an error from the signer propagate unchanged. A required body digest that cannot be generated then fails the request, as it does when the signer is installed on its own.
+
+Your backend receives `Signature` and `Signature-Input` headers whose members include `install`, `account` or both. A signature that cannot be produced is logged as an error, such as `ApproovService: install message signature unavailable, leaving it out`.
+
+Your backend verifies the signatures as [Installation Message Signing](https://docs.approov.io/operations/message-signing/installation/) and [Account Message Signing](https://docs.approov.io/operations/message-signing/account/) describe.
 
 ### What the default signature covers
 
 * the request method and target URI, exactly as the request is sent, without any fragment
-* the `Approov-Token` header, and the `Approov-TraceID` header when present
+* the token header, and the trace header when the package added one
 * the `Authorization`, `Content-Length` and `Content-Type` headers, when present
-* a SHA-256 `Content-Digest` of the body, when the body is in `httpBody`. A streamed body is not digested.
-* a `created` timestamp and a 15 second `expires`, both from `ApproovService.getServerAdjustedCurrentTimeMS()`, so they follow the Approov servers' clock even when the device clock is wrong. If the Approov SDK does not provide that time, the device clock is used and a warning is logged
+* a SHA-256 `Content-Digest` of the body, when the body is in `httpBody`. The package does not digest a streamed body.
+* a `created` timestamp and a 15 second `expires`, from [getServerAdjustedCurrentTimeMS](REFERENCE.md#getserveradjustedcurrenttimems). After the app's first attestation this follows the Approov servers' clock, so a wrong device clock does not move them outside your backend's window
 
-### Choosing the signatures and the covered components
-
-```swift
-let factory = ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory()
-    .setUseInstallAndAccountMessageSigning()
-    .setExpiresLifetime(60)
-    .addOptionalHeaders(["X-Request-Id"])
-let paymentsFactory = ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory()
-    .setExpiresLifetime(5)
-
-ApproovService.setServiceMutator(ApproovDefaultMessageSigning()
-    .setDefaultFactory(factory)
-    .putHostFactory(hostName: "payments.example.com", factory: paymentsFactory))
-```
-
-A host factory applies to requests to that host, matched without regard to case or port. The default factory applies to every other protected host. `try factory.setBodyDigestConfig(ApproovDefaultMessageSigning.DIGEST_SHA256, required: true)` makes the digest required: a body that cannot be digested then fails the request.
+The [SignatureParametersFactory](REFERENCE.md#signatureparametersfactory) methods change these choices, and `putHostFactory(hostName:factory:)` sets a factory for one host. A required body digest, set with `setBodyDigestConfig(_:required:)`, fails each request without a body in `httpBody`.
 
 ## Header names
 
-`setTokenHeader(header:prefix:)` sets the token header and an optional prefix, such as `"Authorization"` and `"Bearer "`. `setTraceIDHeader(header:)` sets the trace header, and `nil` turns it off. The 3.5.x names `setApproovHeader` and `setApproovTraceIDHeader` still work and are deprecated.
+You can change the name of the token header and the trace header, and the prefix in front of the token. By default, the token goes in `Approov-Token` with no prefix, and the trace ID in `Approov-TraceID`.
 
-## About the Approov account ID
+Change them when your backend expects the token in another header, such as `Authorization` with a `Bearer ` prefix, or does not want the trace header. Passing `nil` turns the trace header off.
 
-The string you pass to `initialize` looks like `#your-account#p6nZ...=`. It names your account and carries a fingerprint of the account's public key. It is not a secret, it does not rotate, and the same value serves every app in the account. Knowing it grants nothing.
+```swift
+ApproovService.setTokenHeader(header: "Authorization", prefix: "Bearer ")   // default "Approov-Token", no prefix
+ApproovService.setTraceIDHeader(header: nil)                                // default "Approov-TraceID", nil disables
+```
+
+The 3.5.x names `setApproovHeader` and `setApproovTraceIDHeader` still work and are deprecated. Each `initialize` that succeeds puts these back to their defaults, so set them after it.
 
 ## Bypass initialization
 
-`ApproovService.initialize(config: "")` starts the package without Approov protection: an `ApproovURLSession` then behaves like a plain `URLSession`. A later `initialize` with your account ID turns protection on. Once protection is on, an `initialize` with `""` is ignored.
+Initialize with an empty string instead of the account ID to start the package in bypass mode. In bypass mode the package is enabled but protects nothing: `isApproovServiceEnabled()` is `true` and `isApproovProtectionEnabled()` is `false`. In this mode:
+
+* requests through an `ApproovURLSession` go out with no Approov processing. There is no token, signing, secure strings or Approov connection check, only OS trust.
+* the methods that call the SDK do not call it. Those that return a result throw `ApproovError.permanentError` or return `nil`.
+
+Before any `initialize`, a request is handled the same way as in bypass mode. It is neither failed nor held.
+
+Bypass mode is a starting or fallback state. Use it, for example, while your app fetches the account ID remotely. The README example also uses it as a guard, in case the account ID does not reach the app intact.
+
+```swift
+try ApproovService.initialize(config: "")
+```
+
+A later `initialize` with the account ID turns Approov on at runtime, if the SDK accepts it. Like each `initialize` that succeeds, it resets the configuration to its defaults, so make your configuration calls again after it. An `ApproovURLSession` you already created protects its requests from then on.
+
+Once protection is on, the package ignores an `initialize` with an empty string, and resets nothing. It logs `ApproovService already initialized with a valid config; ignoring empty configuration` at `.info`. The SDK rejects a later `initialize` with a different account ID or a different comment. The package then throws `ApproovError.initializationFailure`, and its state is unchanged. See [initialize in the reference](REFERENCE.md#initialize).
 
 ## Initialize, then configure
 
-Each `initialize` that is not ignored resets the configuration to its defaults: header names, the status flag, the service mutator, substitutions, exclusions and the binding header. The logging level is kept. Make your configuration calls after `initialize`, before the app sends protected requests. A setting applies to requests processed after it is made.
+You normally initialize the package once. Call `initialize` and handle any error it throws. It is synchronous and returns without waiting for the network. Then make every configuration call your app needs, such as:
+
+* the token, trace and binding headers, and `setUseApproovStatusIfNoToken`
+* substitution headers and query parameters
+* exclusion regular expressions
+* the service mutator, and so message signing
+* the logging level
+
+Until your configuration calls run, requests use the defaults. A setting applies to requests that the package processes after you make it.
+
+```swift
+try ApproovService.initialize(config: "<your-approov-account-id>")
+ApproovService.setServiceMutator(.ALWAYS_PROCEED)
+```
+
+Configure immediately after `initialize`, before the app sends protected requests. The [README](README.md#initializing) shows where to call `initialize`.
+
+Each `initialize` that succeeds resets these settings to their defaults:
+
+* the token, trace and binding headers
+* `setUseApproovStatusIfNoToken`
+* the substitutions and the exclusions
+* the service mutator
+
+It also clears `getLastARC()`. It keeps the logging level. Any other setting made before `initialize` is lost.
+
+Two kinds of `initialize` change nothing: an empty account ID after protection is on, and a call that the SDK rejects (see [Bypass initialization](#bypass-initialization)). A repeat call with the same account ID and comment succeeds, for example from another Approov package in the same app. It resets this package's configuration too.
+
+When the SDK initializes, `initialize` logs `ApproovService: Approov SDK initialized` at `.info`. When the SDK was already initialized with the same account ID and comment, it logs `ApproovService: Approov SDK already initialized` at `.info`.
+
+### About the Approov account ID
+
+The string you pass to `initialize` looks like `#your-account#p6nZ...=`. It names your account and ends with a hash of the account's public key, which the SDK checks. The same value serves every app in the account, and it is not a secret.
 
 ## Token binding
 
-`setBindingHeader(header:)` binds the token to the value of a header your requests carry, such as `Authorization`. Only a hash of the value is sent to Approov. When the value changes, the next token is bound to the new value. Do not mix `setBindingHeader` with direct `setDataHashInToken` calls.
+[Token binding](https://docs.approov.io/backend-integration/token-binding/) ties the Approov token to the value of a header on the request, typically an OAuth `Authorization` header. A token then cannot be replayed with different credentials.
+
+There is no binding header by default. Set one when your requests carry a credential header, such as an OAuth `Authorization` header, whose value changes rarely, such as a long-lived OAuth token. Each new value makes the SDK fetch a new token from the Approov service.
+
+```swift
+ApproovService.setBindingHeader(header: "Authorization")
+```
+
+The package reads the value from the request, or else from the session configuration's `httpAdditionalHeaders`. It matches the exact name you set, so spell it as your requests do.
+
+The SDK holds one binding value for the whole app. For every request that carries the binding header, the package sets that value just before it fetches the token. These are two separate steps. So a token can carry the value of another request, when requests with different values are in flight at once.
+
+The package binds each redirect again. Do not mix `setBindingHeader` with direct `setDataHashInToken` calls, because both set the same SDK value.
+
+The call logs `ApproovService: setBindingHeader: <name>` at `.debug`, and the token your backend receives carries the `pay` claim.
 
 ## Secure strings
 
-`addSubstitutionHeader(header:prefix:)` names a header whose value, after the prefix, is a secure string key. `addSubstitutionQueryParam(key:)` names a query parameter whose value is a key. The package replaces each with the secure string, as described in [secure string results](#secure-string-results).
+[Secure strings](https://docs.approov.io/backend-integration/secure-strings/) let you remove API keys and other secrets from your app. An app that passes attestation gets them at runtime from the Approov service. You put a placeholder in a request header or query parameter, and the package replaces it with the secret before the request is sent.
 
-### Keys and values
+By default there are no substitution headers or query parameters, so a secure string placeholder goes out unchanged. Register the headers and query parameters whose values are secure string keys.
 
-A secure string key is at most 64 characters (see [secure strings](https://approov.io/docs/latest/backend-integration/secure-strings/)). For a key used in a query parameter, use only letters, digits, `.`, `_`, `~` and `-`. Every occurrence of a query parameter is substituted on its own, and nothing else in the URL changes. A `+` in a substituted query value reaches a backend that form-decodes the query as a space. A value a request cannot carry is still readable with `fetchSecureString`.
+```swift
+ApproovService.addSubstitutionHeader(header: "X-Api-Key", prefix: nil)         // whole value is the key
+ApproovService.addSubstitutionHeader(header: "Authorization", prefix: "Bearer ") // value after the prefix is the key
+ApproovService.addSubstitutionQueryParam(key: "api_key")
+```
+
+The package substitutes only on an https request to a secrets-only domain, or to a token-protected domain after a successful token fetch. If a value's secure string fetch fails, the value is replaced by the fetch status name and the request goes ahead. `UNKNOWN_KEY` is the exception: no secure string is defined for that value, so it is left as your app wrote it. Neither standard mutator fails a request because of a secure string.
+
+Header names are matched without regard to case. The package substitutes every occurrence of a query parameter on its own, and changes nothing else in the URL.
+
+The package leaves a placeholder as written, and logs a warning that names the header or query parameter, in two cases. The first is a cleartext request. The second is a secret that a header or the URL cannot carry unchanged. A header carries only tab and printable ASCII.
+
+Your backend receives the secret in place of the key. When it does not, the value it receives gives the reason: a status name such as `REJECTED`, or the key itself. The package logs each fetch at `.debug`, such as `ApproovService: header substitution: X-Api-Key, REJECTED, ARC: <arc>` (see [Diagnostics](#diagnostics)).
 
 ## Excluding URLs
 
-`addExclusionURLRegex(urlRegex:)` sends requests whose URL matches the pattern without any Approov processing. Their connections are still checked. A pattern that does not compile is logged as an error and not added.
+Requests whose URL contains a match for an exclusion regular expression are sent untouched, without a token fetch. The expression is not anchored, and the package compares it with the full URL, query included. Use `^` and `$` to match the whole URL. The default `handleInterceptorShouldProcessRequest` applies the exclusions. A mutator that overrides it drops them, unless it calls `ApproovCloseFailureMutator.CLOSE_FAILURE.handleInterceptorShouldProcessRequest(request)`.
+
+There are no exclusions by default. Use them for requests to your API domains that should not fetch a token, such as a health check.
+
+```swift
+ApproovService.addExclusionURLRegex(urlRegex: "^https://api\\.example\\.com/health.*")
+```
+
+Connection checks still apply to excluded requests on domains added to Approov. Each `initialize` that succeeds resets the exclusions.
+
+`addExclusionURLRegex` logs the expression at `.debug`. An invalid regular expression is logged as an error and nothing is added.
 
 ## Connection validation
 
-The package checks the TLS connection to each domain you have added to Approov against the certificate public keys configured for the domain. For a domain with none of its own, it falls back to the Managed Trust Roots. This check is known as pinning. Hosts are matched without regard to case or a trailing dot.
+An `ApproovURLSession` checks the TLS connection to each domain you added to Approov, matched without regard to case or a trailing dot. It checks against the certificate public keys configured for the domain. For a domain with none defined, it falls back to the Managed Trust Roots. With neither, the connection relies on OS trust, and the package logs one warning per host.
 
-A domain with no keys of its own and no Managed Trust Roots connects on OS trust, and the package logs one warning per host. If the keys cannot be read, the connection is refused.
+It is on by default for every domain you added to Approov. The OS first evaluates the certificate chain. The package then compares the public key of each certificate in that chain with the keys for the domain. A request whose connection fails either check fails with `NSURLErrorServerCertificateUntrusted`. The `dataTaskPublisherWithApproov` publisher reports `NSURLErrorCancelled` instead. If the keys cannot be read, the connection is refused. `signRequest` does not check the connection.
 
-`handlePinningShouldProcessRequest` on your mutator can turn the check off. A connection is checked once, when it is opened, so the hook is asked with a request holding only the scheme, host and port, and its answer applies to every request that reuses the connection.
+A failure logs an error that names the host, such as `ApproovService: pin verification failed for api.example.com with no match for 2 pins`.
+
+`handlePinningShouldProcessRequest` on your mutator can turn the check off. The package checks a connection once, when it is opened. So the hook can get a request that holds only the scheme, host and port. Its answer applies to every request that reuses the connection.
 
 ### WebSockets
 
@@ -149,60 +291,66 @@ WebSockets are not supported. No Approov token or secure string is added to a We
 
 ### Custom authentication challenges
 
-The package answers server trust challenges for your API domains. Every other challenge, such as a client certificate or HTTP authentication, goes to your delegate. For shared handling, give the delegate to the session and implement `urlSession(_:didReceive:completionHandler:)`. A delegate passed to a `WithApproov` method gets the same, after the package's check.
+The package answers server trust challenges. Every other challenge, such as a client certificate or HTTP authentication, goes to your delegate. Give the delegate to the session, or to a `WithApproov` method, and implement `urlSession(_:didReceive:completionHandler:)`.
 
-While Approov is enabled, a task whose own `task.delegate` implements `urlSession(_:didReceive:completionHandler:)` or `urlSession(_:task:willPerformHTTPRedirection:newRequest:completionHandler:)` is cancelled before it connects. That delegate would decide server trust or redirects instead of the package. Pass that delegate to the session initializer or to a `WithApproov` method instead.
-
-## Service mutators
-
-A mutator changes the package's decisions. Implement `ApproovServiceMutator` and override only the hooks you need; every other hook keeps the `CLOSE_FAILURE` decision:
-
-| Hook | Decides |
-|---|---|
-| `handleInterceptorShouldProcessRequest` | whether a request is processed at all |
-| `handleInterceptorFetchTokenResult` | what a request carries for its token fetch status, or whether it fails |
-| `handleInterceptorHeaderSubstitutionResult`, `handleInterceptorQueryParamSubstitutionResult` | whether a secure string is substituted |
-| `handleInterceptorProcessedRequest` | final changes to the processed request, where signing happens |
-| `handlePinningShouldProcessRequest` | whether the connection is checked |
-| `handlePrecheckResult`, `handleFetchTokenResult`, `handleFetchSecureStringResult`, `handleFetchCustomJWTResult` | how the direct methods report a result |
-
-To fail a request on your own terms, throw a `URLError` from a hook. Your app's error handling then sees an ordinary network failure. A request keeps the mutator it started with, across its redirects.
-
-```swift
-final class OwnHostsOnly: ApproovServiceMutator {
-    func handleInterceptorFetchTokenResult(_ approovResults: ApproovTokenFetchResult, url: String) throws -> Bool {
-        if approovResults.status == .noApproovService {
-            throw URLError(.cannotConnectToHost)
-        }
-        return try ApproovCloseFailureMutator.CLOSE_FAILURE.handleInterceptorFetchTokenResult(approovResults, url: url)
-    }
-}
-ApproovService.setServiceMutator(OwnHostsOnly())
-```
+While Approov protection is on, the package cancels a task before it connects if the task's own `task.delegate` implements `urlSession(_:didReceive:completionHandler:)` or `urlSession(_:task:willPerformHTTPRedirection:newRequest:completionHandler:)`. That delegate would decide server trust or redirects instead of the package. Pass that delegate to the session initializer or to a `WithApproov` method instead.
 
 ## Redirects
 
-A redirect is protected afresh for its target. The package first removes what it added to the previous attempt, the token, trace and signature headers and the substituted secure strings, so none of them reaches another host. Your redirect delegate sees the request without them. Then the follow-up is processed as a new request: a token is fetched for the target, and secure strings are substituted only from your own placeholders and only on a protected https target. A URL the server sent is never changed.
+A redirect is protected again for its target. First, the package removes what it added to the previous attempt: the token, trace and signature headers, and the secure strings. So none of them reaches another host, and your redirect delegate sees the request without them. Then the package processes the follow-up as a new request, with a token fetch for the target URL.
+
+A request keeps the mutator it started with, across its redirects. If that mutator fails the follow-up, a completion handler or an `async` caller gets your error. It does not get `NSURLErrorCancelled` or the redirect response.
 
 Some things the package cannot do:
 
-* A request to a host not added to Approov that redirects into one of your API domains arrives without protection. Add every domain your app calls, redirecting aliases included.
-* A request held before it is sent is not refreshed, so a long delay can send an expired token.
-* An HTTP authentication retry is not signed again.
-* A download resumed from resume data is not supported, because the resume data holds the original request and its expired token.
+* It follows a redirect unchanged when it did not change the first request. So a host not added to Approov that redirects into one of your API domains sends the follow-up without protection. Add every domain your app calls, redirecting aliases included.
+* It does not refresh a request held before it is sent, so a long delay can send an expired token.
+* It does not sign an HTTP authentication retry again.
+* It does not support a download resumed from resume data, which holds the original request and its expired token.
 
-## Multiple service layers
+## Service mutators
 
-You can use more than one Approov package in the same app. The Approov SDK is initialized once: a later `initialize` with the same account ID is ignored, and one with a different account ID fails.
+A service mutator, an `ApproovServiceMutator`, is the object that holds the package's decisions, such as whether a failed token fetch fails the request. It has one method for each decision, and the package asks the installed mutator at each decision point. The standard mutators and their decisions are in [What happens by default](#what-happens-by-default).
+
+Write your own mutator when your app needs a decision that the standard ones do not make. Every method has a default, the `CLOSE_FAILURE` decision, so implement only what you need. A mutator of your own that should never abort a request delegates the token decisions to `ApproovAlwaysProceedMutator.ALWAYS_PROCEED`. A mutator you install applies to requests processed after the call.
+
+The package's signer is also a mutator. To sign under decisions of your own, see [Message signing](#message-signing).
+
+The hooks:
+
+| Hook | Decides |
+| :--- | :--- |
+| `handleInterceptorShouldProcessRequest` | whether a request gets Approov processing at all (by default, every request that is not excluded) |
+| `handleInterceptorFetchTokenResult` | given the token fetch result, whether to send the request with its Approov headers, send it without them, or abort it |
+| `handleInterceptorHeaderSubstitutionResult`, `handleInterceptorQueryParamSubstitutionResult` | whether to apply a secure string substitution |
+| `handleInterceptorProcessedRequest` | final changes to the processed request. The signer signs here, so a mutator that calls it makes its own changes first |
+| `handlePinningShouldProcessRequest` | whether Approov connection checks (Managed Trust Roots or configured public keys) apply to a request |
+| `handlePrecheckResult`, `handleFetchTokenResult`, `handleFetchSecureStringResult`, `handleFetchCustomJWTResult` | how the direct methods turn a result into an error |
+
+To fail a request on your own terms, throw a `URLError` from a hook. Your app's error handling then sees an ordinary network failure (see [Errors your app can see](#errors-your-app-can-see)).
 
 ## Diagnostics
 
-`ApproovService.setLoggingLevel(_:)` takes `.off`, `.error`, `.warning`, `.info` (the default) or `.debug`, and every line the package writes follows it. The loggable token is written at `.debug` only.
+The package writes a diagnostic line for each token fetch, and for each secure string fetch.
 
-`ApproovService.getLastARC()` returns the [Attestation Response Code](https://approov.io/docs/latest/approov-usage-documentation/#attestation-response-code) of the most recent fetch the package made, without making one of its own. The `arc` claim of a loggable token is the same code. To decode one, ask the CLI for the decoding command once. It prints a `curl` command with your account's API key filled in and an `<arc>` placeholder:
+These lines are written at debug level, which is off by default (see [setLoggingLevel](REFERENCE.md#setlogginglevel)).
 
-```sh
-approov token -showArcInfoCurl
+To write them, set the level in a debug build:
+
+```swift
+ApproovService.setLoggingLevel(.debug)
 ```
 
-Run it with the code in place of `<arc>`. The response lists the flags behind the result, for example `app-not-registered`.
+The package writes through `os_log`, so the lines appear in the Xcode console. `.off` silences the package completely.
+
+The package never logs a token. For each request it processes, it logs the [loggable form](https://docs.approov.io/core-concepts/approov-tokens/architecture-and-security/#loggable-tokens) of the result. Its `arc` claim, the [Attestation Response Code](https://docs.approov.io/app-integration/frontend/attestation/#attestation-response-code), tells why attestation gave that result. The direct methods, such as `fetchToken`, log only the status. For example:
+
+```
+ApproovService: updateRequest api.example.com: {"did":"...","exp":1757400000,"arc":"IXPSB7TRK26LXE3M", ...,"sip":"a1b2c3"}
+```
+
+The line names only the host of the request. So no path or query value, such as a substituted secure string or personal data, is logged.
+
+`ApproovService.getLastARC()` returns the ARC of the most recent fetch the package made, without making one of its own. It returns `""` before the first fetch, and when ARC is not enabled for the account.
+
+To find the reasons behind an `arc`, see [decoding an Attestation Response Code](https://docs.approov.io/app-integration/frontend/attestation/#decoding-an-attestation-response-code). Your account's [metrics](https://docs.approov.io/operations/metrics-graphs/grafana-overview/) show the same results in aggregate. A [development signing certificate](https://docs.approov.io/operations/app-signing-certificates/development-and-testing/#development-app-signing-certificates) lets debug builds pass attestation.

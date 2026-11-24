@@ -1,7 +1,7 @@
 # Approov Package for URLSession
 
 ![Swift](https://img.shields.io/badge/Swift-5.8%2B-F05138?logo=swift&logoColor=white)
-![Platforms](https://img.shields.io/badge/iOS-11%2B%20%7C%20watchOS%209%2B-000000?logo=apple&logoColor=white)
+![Platforms](https://img.shields.io/badge/iOS-12%2B%20%7C%20watchOS%209%2B-000000?logo=apple&logoColor=white)
 ![SwiftPM](https://img.shields.io/github/v/tag/approov/approov-service-urlsession?label=SwiftPM&logo=swift&logoColor=white)
 ![CocoaPods](https://img.shields.io/cocoapods/v/ApproovURLSession?logo=cocoapods&logoColor=white)
 ![Message Signing](https://img.shields.io/badge/Message%20Signing-RFC%209421-1f6feb)
@@ -58,7 +58,7 @@ Add the pod to your `Podfile` and run `pod install`:
 pod 'ApproovURLSession', '~> 3.7.0'
 ```
 
-The package supports iOS 11 or later and watchOS 9 or later.
+The package supports iOS 12 or later and watchOS 9 or later.
 
 Next, [initialize the package](#initializing).
 

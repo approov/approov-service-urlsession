@@ -20,7 +20,7 @@ Entries marked **Breaking** need a source change.
 - A connection that fails the certificate check fails with `NSURLErrorServerCertificateUntrusted` instead of `NSURLErrorCancelled`. The Combine publisher from `dataTaskPublisherWithApproov` still reports `NSURLErrorCancelled`.
 - Pins are matched to a host regardless of case. A domain with no pins and no Managed Trust Roots connects on OS trust with a warning. Pins that cannot be read refuse the connection.
 - Every log line follows `setLoggingLevel`, and the loggable token is logged at `DEBUG` only.
-- Each redirect is protected afresh for its target: a token is fetched for the target URL and secure strings are substituted only from your own placeholders. This includes a redirect decided by a delegate passed to a `WithApproov` method. See [redirects](ADVANCED.md#redirects).
+- Each redirect is protected afresh for its target: the package removes what it added and fetches a token for the target URL. This includes a redirect decided by a delegate passed to a `WithApproov` method. See [redirects](ADVANCED.md#redirects).
 - **Breaking:** While Approov is enabled, a task whose own `task.delegate` implements the redirect callback is cancelled before it connects, as one that implements `urlSession(_:didReceive:completionHandler:)` already is. Pass that delegate to the session initializer or to a `WithApproov` method instead.
 - A redirect that your mutator refuses reports your error to a completion handler or an async caller, not `NSURLErrorCancelled` or the redirect response.
 - WebSockets are not supported. See [WebSockets](ADVANCED.md#websockets).
