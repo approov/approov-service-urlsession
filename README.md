@@ -52,10 +52,11 @@ targets: [
 
 ### CocoaPods
 
-Add the pod to your `Podfile` and run `pod install`:
+The pods come from GitHub, not from the CocoaPods trunk. Add both to your `Podfile` and run `pod install`:
 
 ```ruby
-pod 'ApproovURLSession', '~> 3.7.0'
+pod 'ApproovURLSession', :git => 'https://github.com/approov/approov-service-urlsession.git', :tag => '3.7.0'
+pod 'approov-ios-sdk', :git => 'https://github.com/approov/approov-ios-sdk.git', :tag => '3.7.0'
 ```
 
 The package supports iOS 12 or later and watchOS 9 or later.

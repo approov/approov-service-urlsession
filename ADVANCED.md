@@ -88,8 +88,8 @@ A request that fails reports its error to the completion handler, the `async` ca
 
 * A `CLOSE_FAILURE` decision fails the request with an `ApproovError`, as in 3.5.x.
 * A `URLError` that your own mutator throws reaches your app unchanged.
-* Anything else a mutator hook throws, an `ApproovError` your code throws included, fails the request with a `URLError` (`.unknown`). The error names the hook, and your error is its underlying error.
-* A message signing configuration error fails the request with a `URLError`. This is a required body digest that cannot be generated, or an unsupported algorithm.
+* If your mutator throws any other error, `ApproovError` included, the package wraps it in a `URLError` with code `.unknown`. Its message names the hook, for example `ApproovServiceMutator.handleInterceptorProcessedRequest failed: ...`. Your original error is in its `userInfo` under `NSUnderlyingErrorKey`.
+* A message signing configuration error fails the request with a `URLError`. This is a required body digest that cannot be generated, or an unsupported algorithm from a custom configuration.
 * A connection that fails the check fails with `NSURLErrorServerCertificateUntrusted`.
 
 A failed request fails alone. The session and its other tasks are not affected.
