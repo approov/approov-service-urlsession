@@ -3,7 +3,7 @@ Pod::Spec.new do |s|
   # The version main is at — must match the top CHANGELOG entry, in lock-step with Package.swift
   # releaseTAG and the runtime user-property string. Bump all three in a PR; the "Release Current
   # Main Branch" CI job then tags main at this version.
-  s.version      = "3.5.13"
+  s.version      = "3.7.0"
   s.summary      = "Approov mobile attestation SDK"
   s.description  = <<-DESC
     Approov SDK integrates security attestation and secure string fetching for both iOS and watchOS apps.
@@ -15,13 +15,13 @@ Pod::Spec.new do |s|
   s.module_name = 'ApproovURLSessionPackage'
 
   # Supported platforms
-  s.ios.deployment_target = '11.0'
+  s.ios.deployment_target = '12.0'
   s.watchos.deployment_target = '9.0'
 
   # Specify the source code paths for the combined target
   s.source_files = "Sources/ApproovURLSession/**/*.{swift,h}"
   # Dependency on the Approov SDK
-  s.dependency 'approov-ios-sdk', '~> 3.5.3'
+  s.dependency 'approov-ios-sdk', '~> 3.7.0'
    # Add dependency on swift-http-structured-headers
   s.dependency 'swift-http-structured-headers', '~> 1.4.0'
   s.frameworks = 'Approov'

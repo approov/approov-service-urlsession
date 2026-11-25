@@ -26,12 +26,14 @@ import Foundation
 /// the task delegate implements urlSession(_:didReceive:completionHandler:), so forwarding that callback
 /// would let the caller's delegate bypass Approov pinning. Both challenge callbacks therefore go through
 /// PinningURLSessionDelegate, which applies pinning and passes only the challenges pinning does not decide
-/// on to the caller's delegate.
+/// on to the caller's delegate. The redirect callback goes through it as well, so a redirect is protected
+/// afresh for its target, as it is for a session delegate.
 @available(iOS 15.0, *)
 final class PinningTaskDelegate: NSObject, URLSessionTaskDelegate {
     private static let challengeSelectors: Set<Selector> = [
         #selector(URLSessionDelegate.urlSession(_:didReceive:completionHandler:)),
         #selector(URLSessionTaskDelegate.urlSession(_:task:didReceive:completionHandler:)),
+        #selector(URLSessionTaskDelegate.urlSession(_:task:willPerformHTTPRedirection:newRequest:completionHandler:)),
     ]
 
     // the delegate supplied by the caller for this task
@@ -65,5 +67,11 @@ final class PinningTaskDelegate: NSObject, URLSessionTaskDelegate {
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
         pinningDelegate.urlSession(session, task: task, didReceive: challenge, completionHandler: completionHandler)
+    }
+
+    // A redirect goes through PinningURLSessionDelegate too, so the caller's delegate sees the follow-up with
+    // what the layer added stripped, and the request it chooses is protected afresh for its target.
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        pinningDelegate.urlSession(session, task: task, willPerformHTTPRedirection: response, newRequest: request, completionHandler: completionHandler)
     }
 }

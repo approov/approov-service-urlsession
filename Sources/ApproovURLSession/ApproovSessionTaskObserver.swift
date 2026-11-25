@@ -15,6 +15,7 @@
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 import Foundation
+import ObjectiveC
 import os.log
 
 /// Type-erased access to a completion gate, used when Approov rejects a request
@@ -41,7 +42,7 @@ final class ApproovTaskCompletionGate<Value>: ApproovTaskCompletionHandling, @un
         let handler = self.handler
         self.handler = nil
         lock.unlock()
-        handler?(value, response, error)
+        handler?(value, response, PinningURLSessionDelegate.pinningError(replacing: error))
     }
 
     func complete(with error: Error) {
@@ -63,24 +64,98 @@ public class ApproovSessionTaskObserver: NSObject {
         let pinningSession: URLSession
         let sessionConfig: URLSessionConfiguration
         let completionHandler: ApproovTaskCompletionHandling?
+        /// When true the task is watched only to reject a delegate that would decide server trust.
+        /// No Approov token is fetched and the request is not mutated. Used for task types the
+        /// request pipeline cannot process, currently WebSockets, whose wss:// URL is rejected by
+        /// the token fetch as a bad url.
+        let guardOnly: Bool
         /// Owning the observation token means observation stops when this registration is
         /// released, with no manual addObserver/removeObserver pairing to get wrong.
         var observation: NSKeyValueObservation?
 
         init(pinningSession: URLSession,
              sessionConfig: URLSessionConfiguration,
-             completionHandler: ApproovTaskCompletionHandling?) {
+             completionHandler: ApproovTaskCompletionHandling?,
+             guardOnly: Bool = false) {
             self.pinningSession = pinningSession
             self.sessionConfig = sessionConfig
             self.completionHandler = completionHandler
+            self.guardOnly = guardOnly
         }
     }
 
     /// Key for the associated object holding the registration on a task.
     private static var registrationKey: UInt8 = 0
 
+    /// Key for the associated object holding the error a task was failed with by the layer.
+    private static var failureKey: UInt8 = 0
+
+    /**
+     * Takes the error the layer failed a task with, so that its completion reports that error rather than
+     * the cancellation that stopped the task.
+     *
+     * @param task is the task that completed
+     * @return the error the layer failed the task with, or nil if it did not
+     */
+    /// Key for the associated object holding the mutator a task's request started with.
+    private static var mutatorKey: UInt8 = 0
+
+    // holds a mutator, which may be a value type, as an associated object
+    private final class MutatorBox {
+        let mutator: ApproovServiceMutator
+        init(_ mutator: ApproovServiceMutator) {
+            self.mutator = mutator
+        }
+    }
+
+    /**
+     * Gets the mutator a task's request started with, which decides its later attempts.
+     *
+     * @param task is the task
+     * @return the mutator, or nil if the layer has not processed the task
+     */
+    static func mutator(for task: URLSessionTask) -> ApproovServiceMutator? {
+        return (objc_getAssociatedObject(task, &mutatorKey) as? MutatorBox)?.mutator
+    }
+
+    /// Key for the associated object holding a task's completion gate, for a task created with a completion
+    /// handler or by an async method.
+    private static var completionKey: UInt8 = 0
+
+    /**
+     * Fails a task that the layer stops after it started, such as on a redirect the mutator refuses. The
+     * error is kept for the delegate's didCompleteWithError, and a completion handler or async caller gets
+     * it now, ahead of the cancellation or redirect response that ends the task.
+     *
+     * @param task is the task
+     * @param error is the error the task fails with
+     */
+    static func fail(_ task: URLSessionTask, with error: Error) {
+        recordFailure(error, on: task)
+        let observedTask = observableTask(for: task) ?? task
+        (objc_getAssociatedObject(observedTask, &completionKey) as? ApproovTaskCompletionHandling)?.complete(with: error)
+    }
+
+    static func recordFailure(_ error: Error, on task: URLSessionTask) {
+        objc_setAssociatedObject(task, &failureKey, error as NSError, .OBJC_ASSOCIATION_RETAIN)
+    }
+
+    static func takeFailure(for task: URLSessionTask) -> Error? {
+        let failure = objc_getAssociatedObject(task, &failureKey) as? NSError
+        if failure != nil {
+            objc_setAssociatedObject(task, &failureKey, nil, .OBJC_ASSOCIATION_RETAIN)
+        }
+        return failure
+    }
+
     private static let loggingQueue = DispatchQueue(label: "io.approov.ApproovService.loggingQueue", qos: .userInitiated)
     private static var _enableLogging: Bool = false
+
+    // whether the task lines are written, as enableLogging without its deprecation
+    private static var taskLinesEnabled: Bool {
+        return loggingQueue.sync { _enableLogging }
+    }
+    @available(*, deprecated, message: "Use ApproovService.setLoggingLevel(.debug). The task lines are written at debug level, so this switch no longer raises them above the level.")
     public static var enableLogging: Bool {
         get {
             return loggingQueue.sync { _enableLogging }
@@ -103,35 +178,58 @@ public class ApproovSessionTaskObserver: NSObject {
         task: URLSessionTask,
         pinningSession: URLSession,
         sessionConfig: URLSessionConfiguration,
-        completionHandler: ApproovTaskCompletionHandling? = nil
+        completionHandler: ApproovTaskCompletionHandling? = nil,
+        guardOnly: Bool = false
     ) {
+        // An instance that wraps a URLSessionTask through a proxy does not report the task's state
+        // changes; they are reported only on the wrapped task. An observation registered through
+        // the proxy would never fire and the request would be sent without an Approov token.
+        // Observe the wrapped task, and cancel with an error any wrapped task that cannot be
+        // unwrapped.
+        guard let observedTask = ApproovSessionTaskObserver.observableTask(for: task) else {
+            let message = "ApproovService: cannot protect a request through \(NSStringFromClass(object_getClass(task)!)): "
+                + "it does not expose the URLSessionTask it wraps, so the task is cancelled"
+            ApproovService.log(.error, message)
+            completionHandler?.complete(with: ApproovError.permanentError(message: message))
+            task.cancel()
+            return
+        }
+        if observedTask !== task {
+            ApproovService.log(.info, "ApproovService: observing \(NSStringFromClass(object_getClass(task)!)) through the task it wraps, \(NSStringFromClass(object_getClass(observedTask)!))")
+        }
         let registration = TaskRegistration(
             pinningSession: pinningSession,
             sessionConfig: sessionConfig,
-            completionHandler: completionHandler
+            completionHandler: completionHandler,
+            guardOnly: guardOnly
         )
         // Observe with the block-based API: the token is owned by the registration, and the
         // typed change value removes the need to map a raw state number.
         // Read the state from the task rather than from the change: URLSessionTask.state is an
         // NS_ENUM that does not bridge into NSKeyValueObservedChange, so change.newValue is
         // always nil here (verified on this toolchain).
-        registration.observation = task.observe(\.state, options: [.new]) { [weak self] observedTask, _ in
-            self?.handleStateChange(of: observedTask, newState: observedTask.state)
+        registration.observation = observedTask.observe(\.state, options: [.new]) { [weak self] changedTask, _ in
+            self?.handleStateChange(of: changedTask, newState: changedTask.state)
         }
         registrationsQueue.sync {
             objc_setAssociatedObject(
-                task,
+                observedTask,
                 &ApproovSessionTaskObserver.registrationKey,
                 registration,
                 .OBJC_ASSOCIATION_RETAIN
             )
         }
-        if ApproovSessionTaskObserver.enableLogging {
+        if let completionHandler {
+            // kept for the task's lifetime, as the registration is taken off at the first resume
+            objc_setAssociatedObject(observedTask, &ApproovSessionTaskObserver.completionKey, completionHandler,
+                                     .OBJC_ASSOCIATION_RETAIN)
+        }
+        if ApproovSessionTaskObserver.taskLinesEnabled {
             logMessage(
                 line: String(#line),
-                taskId: task.taskIdentifier,
+                taskId: observedTask.taskIdentifier,
                 property: "registration",
-                value: String(describing: ObjectIdentifier(task))
+                value: String(describing: ObjectIdentifier(observedTask))
             )
         }
     }
@@ -139,10 +237,51 @@ public class ApproovSessionTaskObserver: NSObject {
     /// Testing hook: reports whether a task still carries a registration, and which session
     /// configuration it carries. Used to assert that registrations live and die with their task.
     func registeredSessionConfig(for task: URLSessionTask) -> URLSessionConfiguration? {
-        registrationsQueue.sync {
+        let observedTask = ApproovSessionTaskObserver.observableTask(for: task) ?? task
+        return registrationsQueue.sync {
             (objc_getAssociatedObject(
-                task, &ApproovSessionTaskObserver.registrationKey) as? TaskRegistration)?.sessionConfig
+                observedTask, &ApproovSessionTaskObserver.registrationKey) as? TaskRegistration)?.sessionConfig
         }
+    }
+
+    /// The object whose state changes are reported for this task: the task itself when it is a
+    /// genuine NSURLSessionTask, the task it wraps when it is a forwarding wrapper that exposes
+    /// it, or nil when it is neither. The class is read with the runtime, not with isKind(of:),
+    /// because a proxy forwards isKind(of:) and claims to be a URLSessionTask.
+    static func observableTask(for task: URLSessionTask) -> URLSessionTask? {
+        if isGenuineTask(task) {
+            return task
+        }
+        guard let wrapperClass = object_getClass(task) else {
+            return nil
+        }
+        for accessor in ["wrappedTask", "wrappedObject"] {
+            let selector = NSSelectorFromString(accessor)
+            guard class_respondsToSelector(wrapperClass, selector),
+                  let wrapped = task.perform(selector)?.takeUnretainedValue() as AnyObject?,
+                  isGenuineTask(wrapped) else {
+                continue
+            }
+            return (wrapped as! URLSessionTask)
+        }
+        return nil
+    }
+
+    private static let sessionTaskClass: AnyClass? = NSClassFromString("NSURLSessionTask")
+
+    /// True when the object's runtime class descends from NSURLSessionTask.
+    private static func isGenuineTask(_ object: AnyObject) -> Bool {
+        guard let taskClass = sessionTaskClass else {
+            return false
+        }
+        var current: AnyClass? = object_getClass(object)
+        while let cls = current {
+            if cls == taskClass {
+                return true
+            }
+            current = class_getSuperclass(cls)
+        }
+        return false
     }
 
     /// Atomically takes the registration off the task. Returns nil if another thread got
@@ -161,10 +300,30 @@ public class ApproovSessionTaskObserver: NSObject {
         }
     }
 
+    /// True when the task carries a delegate, other than our own wrapper, that would be offered the
+    /// server-trust challenge or a redirect ahead of the session delegate. Only the session-level selector is
+    /// checked: URLSession delivers connection-level challenges, server trust among them, to that
+    /// selector and never to the task-level one, so a delegate implementing only the task-level
+    /// callback cannot override pinning and must keep working for its own challenges.
+    private static func taskDelegateCouldOverridePinning(_ task: URLSessionTask) -> Bool {
+        // task.delegate is iOS 15+. watchOS 9 and the macOS test host already exceed what it needs,
+        // and Approov does not support tvOS, so only the iOS floor is stated.
+        guard #available(iOS 15.0, *) else { return false }
+        // Only meaningful while Approov is enforcing pinning. In empty-config bypass mode there is no
+        // pin check to displace, so the caller's delegate is not overriding anything and rejecting the
+        // task would break an application that simply handles its own authentication.
+        guard ApproovService.isApproovEnabled() else { return false }
+        guard let delegate = task.delegate else { return false }
+        if delegate is PinningTaskDelegate { return false }
+        // a delegate that decides redirects would see, and could send on, what the layer added to the request
+        return delegate.responds(to: #selector(URLSessionDelegate.urlSession(_:didReceive:completionHandler:)))
+            || delegate.responds(to: #selector(URLSessionTaskDelegate.urlSession(_:task:willPerformHTTPRedirection:newRequest:completionHandler:)))
+    }
+
     /// Handles a state change reported by the per-task observation installed in observe(task:).
     /// The registration is taken off the task first, so this runs at most once per task.
     private func handleStateChange(of task: URLSessionTask, newState: URLSessionTask.State) {
-        if ApproovSessionTaskObserver.enableLogging {
+        if ApproovSessionTaskObserver.taskLinesEnabled {
             logMessage(
                 line: String(#line),
                 taskId: task.taskIdentifier,
@@ -179,9 +338,7 @@ public class ApproovSessionTaskObserver: NSObject {
             if task.state == .running {
                 task.cancel()
             }
-            if ApproovService.loggingLevel >= .error {
-                os_log("ApproovService: Missing registration for URLSession task %d", type: .error, task.taskIdentifier)
-            }
+            ApproovService.log(.error, "ApproovService: Missing registration for URLSession task \(task.taskIdentifier)")
             return
         }
 
@@ -194,15 +351,45 @@ public class ApproovSessionTaskObserver: NSObject {
         }
 
         task.suspend()
+
+        // A task delegate that implements the session-level challenge callback is offered the
+        // server-trust challenge ahead of the session delegate, so it decides pinning for this
+        // task and PinningURLSessionDelegate never runs. ApproovURLSession owns that decision for
+        // a protected host, so such a task cannot be allowed to proceed. The delegate is settable
+        // only until the task is resumed, and it cannot be replaced now, so the task is rejected
+        // rather than re-wrapped. Reached before the TLS handshake because the task is suspended
+        // above. The async convenience methods are unaffected: they attach a PinningTaskDelegate,
+        // which routes both challenge callbacks through pinning. A delegate implementing only the
+        // task-level callback is left alone, since connection-level challenges are never offered
+        // to it.
+        if ApproovSessionTaskObserver.taskDelegateCouldOverridePinning(task) {
+            ApproovService.log(.error, "ApproovService: Rejecting URLSession task \(task.taskIdentifier): its task delegate implements urlSession(_:didReceive:completionHandler:) or the redirect callback, and would decide server trust or redirects instead of Approov. Pass the delegate to one of the WithApproov methods, or to ApproovURLSession's initializer, so Approov protection is applied.")
+            task.cancel()
+            return
+        }
+
+        // A guard-only task is watched for the delegate check above and nothing else. The request
+        // pipeline cannot process it: fetching a token for a wss:// URL fails with "bad url", and
+        // running it here would cancel every WebSocket. Resume and leave it alone.
+        if registration.guardOnly {
+            task.resume()
+            return
+        }
+
         DispatchQueue.global(qos: .userInitiated).async {
             guard let currentRequest = task.currentRequest else {
                 task.cancel()
                 return
             }
 
+            // the mutator in force now decides every attempt of this request, its redirects included
+            let mutator = ApproovService.getServiceMutator()
+            objc_setAssociatedObject(task, &ApproovSessionTaskObserver.mutatorKey, MutatorBox(mutator),
+                                     .OBJC_ASSOCIATION_RETAIN)
             let updateResponse = ApproovService.updateRequestWithApproov(
                 request: currentRequest,
-                sessionConfig: registration.sessionConfig
+                sessionConfig: registration.sessionConfig,
+                mutator: mutator
             )
 
             switch updateResponse.decision {
@@ -210,12 +397,8 @@ public class ApproovSessionTaskObserver: NSObject {
                 let selector = NSSelectorFromString("updateCurrentRequest:")
                 if task.responds(to: selector) {
                     task.perform(selector, with: updateResponse.request)
-                } else if ApproovService.loggingLevel >= .error {
-                    os_log(
-                        "ApproovService: Unable to modify NSURLRequest headers; object instance is of type %@",
-                        type: .error,
-                        type(of: task).description()
-                    )
+                } else {
+                    ApproovService.log(.error, "ApproovService: Unable to modify NSURLRequest headers; object instance is of type \(type(of: task).description())")
                 }
                 self.resumeIfSuspended(task)
 
@@ -226,11 +409,10 @@ public class ApproovSessionTaskObserver: NSObject {
                 guard task.state == .suspended else {
                     return
                 }
+                // the request fails alone: the session stays valid, and the task's completion reports the
+                // error rather than the cancellation that stops it
                 let error = updateResponse.error ?? URLError(.unknown)
-                registration.pinningSession.delegate?.urlSession?(
-                    registration.pinningSession,
-                    didBecomeInvalidWithError: error
-                )
+                ApproovSessionTaskObserver.recordFailure(error, on: task)
                 registration.completionHandler?.complete(with: error)
                 // Always terminate the underlying task. Completion-based tasks
                 // are protected from the subsequent cancellation callback by the
@@ -243,20 +425,13 @@ public class ApproovSessionTaskObserver: NSObject {
     private func resumeIfSuspended(_ task: URLSessionTask) {
         if task.state == .suspended {
             task.resume()
-        } else if task.state != .canceling && task.state != .completed && ApproovService.loggingLevel >= .error {
-            os_log("ApproovService: Task was not in suspended state after Approov processing", type: .error)
+        } else if task.state != .canceling && task.state != .completed {
+            ApproovService.log(.error, "ApproovService: Task was not in suspended state after Approov processing")
         }
     }
 
     private func logMessage(line: String, taskId: Int, property: String, value: String) {
-        os_log(
-            "%{public}@ - Line: %{public}@, TaskID: %{public}d, Property: %{public}@, Value: %{public}@",
-            TAG,
-            line,
-            taskId,
-            property,
-            value
-        )
+        ApproovService.log(.debug, "\(TAG) - Line: \(line), TaskID: \(taskId), Property: \(property), Value: \(value)")
     }
 
 }

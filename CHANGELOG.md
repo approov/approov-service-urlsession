@@ -4,6 +4,71 @@ All notable changes to this package will be documented in this file.
 
 The format is based on Keep a Changelog and this project adheres to Semantic Versioning.
 
+## [3.7.0] - 2026-11-25
+
+Entries marked **Breaking** need a source change.
+
+### Changed
+- Uses Approov iOS SDK 3.7.0, which requires iOS 12.0 or later; the minimum iOS version is now 12.0.
+- **Breaking:** A mutator hook that throws anything other than a `URLError` fails the request with a `URLError` (`.unknown`) naming the hook, with your error as its underlying error. A `URLError` you throw reaches your app unchanged. The standard decisions still throw `ApproovError`. Catch `Error` around `signRequest`.
+- **Breaking:** A required body digest that cannot be generated, or an unsupported signature algorithm, fails the request with a `URLError` instead of `ApproovError.permanentError`.
+- A failed secure string fetch no longer fails the request. The status name replaces the placeholder, such as `Api-Key: REJECTED`, so a backend that checks the value must expect it. A value that is not a secure string key (`UNKNOWN_KEY`) is left as your app wrote it, as in 3.5.x. See [secure strings](ADVANCED.md#secure-strings).
+- A failed token fetch only affects requests to your Approov API domains, the hosts in your pin set. Requests to other hosts are sent unchanged.
+- `NO_APPROOV_SERVICE` sends the request with an empty token header and the trace header.
+- With `setUseApproovStatusIfNoToken(true)` the token header holds the status name, such as `NO_NETWORK`, and network failures proceed instead of failing.
+- APIs added with `approov api -add <domain> -noApproovToken` get their secure strings.
+- A connection that fails the certificate check fails with `NSURLErrorServerCertificateUntrusted` instead of `NSURLErrorCancelled`. The Combine publisher from `dataTaskPublisherWithApproov` still reports `NSURLErrorCancelled`.
+- Pins are matched to a host regardless of case. A domain with no pins and no Managed Trust Roots connects on OS trust with a warning. Pins that cannot be read refuse the connection.
+- Every log line follows `setLoggingLevel`, and the loggable token is logged at `DEBUG` only.
+- Each redirect is protected afresh for its target: the package removes what it added and fetches a token for the target URL. This includes a redirect decided by a delegate passed to a `WithApproov` method. See [redirects](ADVANCED.md#redirects).
+- **Breaking:** While Approov is enabled, a task whose own `task.delegate` implements the redirect callback is cancelled before it connects, as one that implements `urlSession(_:didReceive:completionHandler:)` already is. Pass that delegate to the session initializer or to a `WithApproov` method instead.
+- A redirect that your mutator refuses reports your error to a completion handler or an async caller, not `NSURLErrorCancelled` or the redirect response.
+- WebSockets are not supported. See [WebSockets](ADVANCED.md#websockets).
+
+### Added
+- The standard mutators `.CLOSE_FAILURE`, the default, which keeps the 3.5.x decisions, and `.ALWAYS_PROCEED`, which never aborts a request. Install one with `ApproovService.setServiceMutator(.ALWAYS_PROCEED)`. See [what happens by default](ADVANCED.md#what-happens-by-default).
+- The names shared by all Approov packages: `setTokenHeader(header:prefix:)`, `getTokenHeader()`, `getTokenPrefix()`, `setTraceIDHeader(header:)`, `getTraceIDHeader()`, `getUseApproovStatusIfNoToken()`, `isApproovServiceEnabled()`, `isApproovProtectionEnabled()` and `setInstallAttributes(_:)`.
+- `ApproovService.getServerAdjustedCurrentTimeMS()`, the current time corrected to the Approov servers' clock where the Approov SDK provides it, otherwise the device clock. Message signatures take their `created` and `expires` times from it.
+- `SignatureParametersFactory.setUseInstallAndAccountMessageSigning()` adds the account signature to the install signature. See [message signing](ADVANCED.md#message-signing).
+- The getters of `ApproovRequestMutations` are public, so a custom mutator can read what the package changed.
+
+### Deprecated
+- `setApproovHeader`, `getApproovTokenHeader`, `setApproovTraceIDHeader` and `getApproovTraceIDHeader`. Use the shared names above.
+- `ApproovServiceMutatorDefault`. Use `.DEFAULT`, as in `ApproovService.setServiceMutator(.DEFAULT)`.
+- `ApproovSessionTaskObserver.enableLogging`. Use `ApproovService.setLoggingLevel(.debug)`.
+
+### Removed
+- `setApproovInterceptorExtensions`, `getApproovInterceptorExtensions` and the `ApproovInterceptorExtensions` protocol. Use `setServiceMutator`.
+- `prefetch()`, `setProceedOnNetworkFailure(proceed:)` and `getProceedOnNetworkFailure()`, which had no effect, and `setFailureCacheTTL(ttl:)`. Failed token fetches are no longer cached.
+
+### Fixed
+- Requests made through `ApproovURLSession` are no longer sent without an Approov token when an instance wraps the session's tasks through a proxy. The proxy does not report the task's state changes, which are reported only on the wrapped task, so the observation registered on the proxy never fired. The wrapped task is now observed, and a wrapped task that cannot be unwrapped is cancelled with an error instead of being sent.
+- A request sent again from `task.currentRequest` is protected afresh and its secret is never used as a key.
+- Query parameter substitution no longer crashes on some key names, substitutes every occurrence, and keeps the placeholder when the URL cannot carry the value.
+- One failed request no longer cancels the session's other tasks or tells your delegate the session became invalid. A task without a completion handler reports the real error.
+- Message signing signs the URL as it is sent: without the fragment, with its percent-encoding, and with a non-default port in `@authority`.
+- `getLastARC()` makes no token fetch of its own.
+- Your session delegate now receives the WebSocket open and close callbacks.
+- Requests in flight at once with different binding header values each get a token bound to their own value. The package matches the binding header name without regard to case.
+- A body redirected with 307 or 308 keeps its `Content-Digest`.
+- The error for a failed token fetch shows the URL without user info, query or fragment.
+
+## [3.5.14] - 2026-09-28
+
+### Compatibility edge cases
+
+- While Approov is enabled, directly assigned task delegates with `urlSession(_:didReceive:completionHandler:)` now cause cancellation on classic data, fresh download, upload, and WebSocket tasks. Use `...WithApproov(delegate:)` or the session initializer instead.
+- Applications that supply signing headers can see changes: generated values replace existing values, and signing failures remove signature-related headers, including `Content-Digest`.
+
+### Fixed
+- Pinning can no longer be removed from a request by assigning a task delegate to a task obtained from one of the classic task factory methods (`dataTask`, `downloadTask`, `uploadTask`). `URLSession` prefers a task delegate's implementation of `urlSession(_:didReceive:completionHandler:)` over the session delegate's, and `URLSessionTask.delegate` is settable until the task is resumed, so a delegate answering the server-trust challenge could bypass Approov's pin check entirely. Such a task is now rejected before the TLS handshake. The six async convenience methods, which wrap a supplied delegate in `PinningTaskDelegate`, were already protected.
+- WebSocket tasks are now covered by the pinning guard. `webSocketTask(with:)` and its overloads previously returned an unobserved task, so a caller-supplied task delegate could displace the pin check on the upgrade exactly as it could on a data task. Attestation of WebSockets remains unimplemented: no Approov token is added to the upgrade request, and nothing re-attests a connection once it is open, so the guarantee for a WebSocket is TLS pinning of the upgrade and nothing more.
+- `downloadTask(withResumeData:)` and its completion-handler overload are deprecated and not supported with Approov: resume data carries the original request, including its expired Approov token. Start a new download instead.
+- Host resolution no longer depends on a URL starting with `https`. `hostnameFromURL` matched that prefix and sent every other scheme down its bare-host-name branch, which prepends `https://`, so `http://example.com` and `wss://example.com` resolved to the host `http` and `wss` respectively rather than `example.com`. A non-empty host is now required at each step. This value is used for logging only, so the effect was mis-scoped log lines rather than a protection decision.
+- Documented custom authentication-challenge handling for session delegates, wrapped delegates supplied to `...WithApproov(delegate:)`, and directly assigned task delegates. The async wrappers enforce pinning and forward other challenges. While Approov is enabled, the guard rejects directly assigned delegates with a session-level challenge callback on observed tasks. Task-level callbacks support HTTP authentication but do not receive connection-level challenges, such as client certificates. See REFERENCE.md.
+- A caller delegate that implements only some of its optional callbacks no longer hangs a task. `PinningURLSessionDelegate` forwarded six completion-handler callbacks with `delegate.urlSession?(...)`, an optional Objective-C call that is a no-op when the delegate does not implement that method, so the completion handler was never invoked and the task never finished. `URLSessionDataDelegate` and `URLSessionTaskDelegate` declare every method optional, so a delegate implementing any subset is legal and was enough to hang an upload indefinitely. Reproduced with a delegate implementing only `urlSession(_:dataTask:didReceive:)`. Each forward now checks `responds(to:)` first and always answers the handler; `needNewBodyStream` and `needNewBodyStreamFrom` had no fallback at all, so they hung even with no delegate set. Present since the delegate was introduced.
+- Message signing no longer appends to the `Signature`, `Signature-Input` and `Content-Digest` headers, which produced two dictionary members in one header when a request was processed twice and was rejected by RFC 9421 and RFC 9530 verifiers. Stale signing headers are also stripped on every fail-open path, so a fail-open no longer transmits a signature that does not authenticate the token and body sent with it (#61).
+
 ## [3.5.13] - 2026-09-25
 
 ### Fixed
@@ -30,7 +95,7 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 - The runtime Approov user-property now reports the service-layer version (`approov-service-urlsession/<version>`); previously a bare, version-less string was reported.
 
 ### Fixed
-- Message signing now conforms to the cross-layer fail-open policy (core-project-approov#564). An ES256 ASN.1/DER decode failure and a `Signature`/`Signature-Input` serialization failure now log at error level and proceed **unsigned** instead of aborting the request, matching the existing install/account/base64 fail-open paths. The ES256 ASN.1/DER decoder is now bounds-checked so a malformed or truncated signature throws (and fails open) rather than risking an out-of-bounds trap. Only a required body digest that cannot be generated and an unsupported signing algorithm still fail closed.
+- Message signing now conforms to the cross-layer fail-open policy. An ES256 ASN.1/DER decode failure and a `Signature`/`Signature-Input` serialization failure now log at error level and proceed **unsigned** instead of aborting the request, matching the existing install/account/base64 fail-open paths. The ES256 ASN.1/DER decoder is now bounds-checked so a malformed or truncated signature throws (and fails open) rather than risking an out-of-bounds trap. Only a required body digest that cannot be generated and an unsupported signing algorithm still fail closed.
 
 ## [3.5.10] - 2026-06-08
 

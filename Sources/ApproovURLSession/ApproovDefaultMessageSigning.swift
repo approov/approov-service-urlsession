@@ -15,6 +15,7 @@
 // THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 import CommonCrypto
+import RawStructuredFieldValues
 import Foundation
 import os.log
 
@@ -125,8 +126,16 @@ public class ApproovDefaultMessageSigning: ApproovServiceMutator, CustomStringCo
      * - Returns: The generated `SignatureParameters`, or `nil` if no factory is available.
      */
     private func buildSignatureParameters(provider: ApproovURLSessionComponentProvider, changes: ApproovRequestMutations) throws -> SignatureParameters? {
-        let factory = hostFactories[provider.getAuthority()] ?? defaultFactory
-        return try factory?.buildSignatureParameters(provider: provider, changes: changes)
+        return try factoryFor(provider)?.buildSignatureParameters(provider: provider, changes: changes)
+    }
+
+    // the factory for the request's host, matched without regard to case or port, or the default one
+    private func factoryFor(_ provider: ApproovURLSessionComponentProvider) -> SignatureParametersFactory? {
+        let host = ApproovService.normalisedHost(provider.getRequest().url?.host ?? "")
+        for (hostName, factory) in hostFactories where ApproovService.normalisedHost(hostName) == host {
+            return factory
+        }
+        return defaultFactory
     }
 
     /**
@@ -151,99 +160,112 @@ public class ApproovDefaultMessageSigning: ApproovServiceMutator, CustomStringCo
      *             to the ApproovServiceMutator.handleInterceptorProcessedRequest
      *             method.
      */
+    /// A request carrying no signing headers. Returned from every path that proceeds unsigned, so a
+    /// value left by the application, or by an earlier pass over the same request, is never sent with
+    /// a token and body it does not authenticate. Content-Digest is included: generateBodyDigest
+    /// mutates the provider's request before the fail-open paths below are reached, so omitting it
+    /// would send a body digest that no signature covers.
+    private static func withoutSignatureHeaders(_ request: URLRequest) -> URLRequest {
+        var unsigned = request
+        for field in ["Signature", "Signature-Input", "Signature-Base-Digest", "Content-Digest"] {
+            unsigned.setValue(nil, forHTTPHeaderField: field)
+        }
+        return unsigned
+    }
+
     @available(*, deprecated, message: "Use handleInterceptorProcessedRequest instead.")
     public func processedRequest(_ request: URLRequest, changes: ApproovRequestMutations) throws -> URLRequest {
         // If the request doesn't have an Approov token, we don't need to sign it
-        if (request.allHTTPHeaderFields?[ApproovService.getApproovTokenHeader()]) != nil {
+        if request.value(forHTTPHeaderField: ApproovService.getTokenHeader()) != nil {
             // Generate and add a message signature
             let provider = ApproovURLSessionComponentProvider(request: request)
             guard let params = try buildSignatureParameters(provider: provider, changes: changes) else {
-                // No signature to be added; proceed with the original request
+                // No signature to be added; proceed with the original request. Nothing of ours was
+                // put on it, so nothing of ours is removed: a Signature or Content-Digest here is the
+                // application's own, for a host we are not signing for, and deleting it would corrupt
+                // a request we never touched.
                 return request
             }
 
-            // Unsupported signing algorithm is a developer misconfiguration: fail closed
-            // (propagate) so it surfaces immediately, and is checked before the fail-open block
-            // below so it cannot be swallowed.
-            let alg = params.getAlg()
-            guard alg == ApproovDefaultMessageSigning.ALG_ES256 || alg == ApproovDefaultMessageSigning.ALG_HS256 else {
-                throw ApproovError.permanentError(message: "Unsupported algorithm identifier: \(alg ?? "unknown")")
+            // one signature per configured algorithm, unless the parameters name one; an unsupported
+            // algorithm is a developer misconfiguration, so it fails closed before the fail-open block
+            let algorithms = params.getAlg().map { [$0] } ?? (factoryFor(provider)?.signatureAlgorithms() ?? [])
+            for alg in algorithms {
+                guard alg == ApproovDefaultMessageSigning.ALG_ES256 || alg == ApproovDefaultMessageSigning.ALG_HS256 else {
+                    throw ApproovRequestPathError.configuration("Unsupported algorithm identifier: \(alg)")
+                }
             }
 
-            // Message signing is fail-open from here (core-project-approov#564): any failure to
-            // build the signature base, obtain/decode the SDK signature, decode the ES256
-            // ASN.1/DER signature, or serialize the headers logs at error level and proceeds
-            // UNSIGNED. The only fail-closed cases are a required body digest that cannot be
+            // Message signing is fail-open from here: a signature that cannot be produced is left out
+            // with an error logged, the other one still being sent, and with neither the request
+            // proceeds UNSIGNED. The only fail-closed cases are a required body digest that cannot be
             // generated (handled in buildSignatureParameters above) and an unsupported algorithm
             // (checked above). The backend remains the enforcement point for message signatures.
-            do {
-                // Build the signature base
-                let baseBuilder = SignatureBaseBuilder(sigParams: params, ctx: provider)
-                let message = try baseBuilder.createSignatureBase()
-                // WARNING never log the message as it contains an Approov token which provides access to your API.
-
-                // Generate the signature
-                let sigId: String
-                let signature: Data
-                if alg == ApproovDefaultMessageSigning.ALG_ES256 {
-                    sigId = "install"
-                    guard let base64Signature = getInstallMessageSignature(message: message),
-                          let decodedSignature = decodeBase64Signature(base64Signature) else {
-                        if ApproovService.loggingLevel >= .error {
-                            os_log("ApproovService: install message signature unavailable, skipping signing", type: .error)
+            var signatures: [(String, Data)] = []
+            var inputs: [(String, InnerList)] = []
+            var firstMessage: String?
+            for alg in algorithms {
+                let memberParams = SignatureParameters(base: params).setAlg(alg)
+                let sigId = (alg == ApproovDefaultMessageSigning.ALG_ES256) ? "install" : "account"
+                do {
+                    // WARNING never log the message as it contains an Approov token which provides access to your API.
+                    let message = try SignatureBaseBuilder(sigParams: memberParams, ctx: provider).createSignatureBase()
+                    let signature: Data
+                    if alg == ApproovDefaultMessageSigning.ALG_ES256 {
+                        guard let base64Signature = getInstallMessageSignature(message: message),
+                              let decodedSignature = decodeBase64Signature(base64Signature) else {
+                            ApproovService.log(.error, "ApproovService: install message signature unavailable, leaving it out")
+                            continue
                         }
-                        return request
-                    }
-                    // decode the signature from ASN.1 DER format (a malformed signature fails open via the catch)
-                    signature = try ApproovDefaultMessageSigning.decodeASN_1_DER_ES256_Signature(decodedSignature)
-                } else {
-                    sigId = "account"
-                    guard let base64Signature = getAccountMessageSignature(message: message),
-                          let decodedSignature = decodeBase64Signature(base64Signature) else {
-                        if ApproovService.loggingLevel >= .error {
-                            os_log("ApproovService: account message signature unavailable, skipping signing", type: .error)
+                        // decode the signature from ASN.1 DER format (a malformed signature is left out)
+                        signature = try ApproovDefaultMessageSigning.decodeASN_1_DER_ES256_Signature(decodedSignature)
+                    } else {
+                        guard let base64Signature = getAccountMessageSignature(message: message),
+                              let decodedSignature = decodeBase64Signature(base64Signature) else {
+                            ApproovService.log(.error, "ApproovService: account message signature unavailable, leaving it out")
+                            continue
                         }
-                        return request
+                        signature = decodedSignature
                     }
-                    signature = decodedSignature
+                    inputs.append((sigId, try memberParams.toComponentValue()))
+                    signatures.append((sigId, signature))
+                    firstMessage = firstMessage ?? message
+                } catch {
+                    ApproovService.log(.error, "ApproovService: \(sigId) message signature failed, leaving it out: \(error.localizedDescription)")
                 }
-
-                // Create signature headers. A serialization failure (thrown or nil) fails open.
-                guard let sigHeader = try SFV.serializeDictionary(key: sigId, data: signature),
-                      let sigInputHeader = try SFV.serializeDictionary(key: sigId, innerList: params.toComponentValue()) else {
-                    if ApproovService.loggingLevel >= .error {
-                        os_log("ApproovService: failed to serialize signature headers, skipping signing", type: .error)
-                    }
-                    return request
-                }
-
-                // Add headers to the request
-                var signedRequest = provider.getRequest()
-                signedRequest.addValue(sigHeader, forHTTPHeaderField: "Signature")
-                signedRequest.addValue(sigInputHeader, forHTTPHeaderField: "Signature-Input")
-
-                if params.isDebugMode() {
-                    let digest = ApproovDefaultMessageSigning.sha256(data: Data(message.utf8))
-                    // The optional debug digest header must not drop a valid signature on failure.
-                    if let sigBaseDigestHeader = try? SFV.serializeDictionary(key: "sha-256", data: digest) {
-                        signedRequest.addValue(sigBaseDigestHeader, forHTTPHeaderField: "Signature-Base-Digest")
-                    } else if ApproovService.loggingLevel >= .debug {
-                        os_log("ApproovService: Failed to serialize Signature-Base-Digest header - no debug entry", type: .debug)
-                    }
-                }
-
-                // WARNING never log the full request as it contains an Approov token which provides access to your API
-                return signedRequest
-            } catch {
-                // Fail open: building the signature base, decoding the ES256 ASN.1/DER signature,
-                // or serializing the headers failed. Log at error and proceed unsigned.
-                if ApproovService.loggingLevel >= .error {
-                    os_log("ApproovService: message signing failed, proceeding unsigned: %@", type: .error, error.localizedDescription)
-                }
-                return request
             }
+            guard !signatures.isEmpty else {
+                ApproovService.log(.error, "ApproovService: no message signature could be produced, proceeding unsigned")
+                return ApproovDefaultMessageSigning.withoutSignatureHeaders(provider.getRequest())
+            }
+
+            // Create signature headers. A serialization failure (thrown or nil) fails open.
+            guard let sigHeader = try? SFV.serializeDictionary(entries: signatures),
+                  let sigInputHeader = try? SFV.serializeDictionary(entries: inputs) else {
+                ApproovService.log(.error, "ApproovService: failed to serialize signature headers, skipping signing")
+                return ApproovDefaultMessageSigning.withoutSignatureHeaders(provider.getRequest())
+            }
+
+            // Add headers to the request
+            var signedRequest = provider.getRequest()
+            signedRequest.setValue(sigHeader, forHTTPHeaderField: "Signature")
+            signedRequest.setValue(sigInputHeader, forHTTPHeaderField: "Signature-Input")
+
+            if params.isDebugMode(), let message = firstMessage {
+                let digest = ApproovDefaultMessageSigning.sha256(data: Data(message.utf8))
+                // The optional debug digest header must not drop a valid signature on failure.
+                if let sigBaseDigestHeader = try? SFV.serializeDictionary(key: "sha-256", data: digest) {
+                    signedRequest.setValue(sigBaseDigestHeader, forHTTPHeaderField: "Signature-Base-Digest")
+                } else {
+                    ApproovService.log(.debug, "ApproovService: Failed to serialize Signature-Base-Digest header - no debug entry")
+                }
+            }
+
+            // WARNING never log the full request as it contains an Approov token which provides access to your API
+            return signedRequest
         }
 
+        // No Approov token on the request, so nothing was signed and nothing of ours to strip.
         return request
     }
 
@@ -374,9 +396,7 @@ public class ApproovDefaultMessageSigning: ApproovServiceMutator, CustomStringCo
             try defaultSignatureParametersFactory.setBodyDigestConfig(ApproovDefaultMessageSigning.DIGEST_SHA256, required: false)
         } catch {
             // ApproovDefaultMessageSigning.DIGEST_SHA256 is a supported body digest algorithm - will never throw
-            if ApproovService.loggingLevel >= .error {
-                os_log("ApproovDefaultMessageSigning - generateDefaultSignatureParametersFactory: Failed to set default body digest algorithm", type: .error)
-            }
+            ApproovService.log(.error, "ApproovDefaultMessageSigning - generateDefaultSignatureParametersFactory: Failed to set default body digest algorithm")
         }
         return defaultSignatureParametersFactory
     }
@@ -391,6 +411,7 @@ public class SignatureParametersFactory {
     private var baseParameters: SignatureParameters?
     private var bodyDigestAlgorithm: String?
     private var bodyDigestRequired: Bool = false
+    private var useInstallMessageSigning: Bool = true
     private var useAccountMessageSigning: Bool = false
     private var addCreated: Bool = false
     private var expiresLifetime: Int64 = 0
@@ -439,6 +460,7 @@ public class SignatureParametersFactory {
      * - Returns: The current instance for method chaining.
      */
     public func setUseInstallMessageSigning() -> SignatureParametersFactory {
+        self.useInstallMessageSigning = true
         self.useAccountMessageSigning = false
         return self
     }
@@ -449,8 +471,37 @@ public class SignatureParametersFactory {
      * - Returns: The current instance for method chaining.
      */
     public func setUseAccountMessageSigning() -> SignatureParametersFactory {
+        self.useInstallMessageSigning = false
         self.useAccountMessageSigning = true
         return self
+    }
+
+    /**
+     * Configures the factory to produce both the install and the account message signature, as two
+     * members of the same Signature and Signature-Input headers over the same components, so that a
+     * device without secure hardware still produces a signature the backend can verify.
+     *
+     * - Returns: The current instance for method chaining.
+     */
+    public func setUseInstallAndAccountMessageSigning() -> SignatureParametersFactory {
+        self.useInstallMessageSigning = true
+        self.useAccountMessageSigning = true
+        return self
+    }
+
+    // the algorithms of the signatures to produce, install first
+    func signatureAlgorithms() -> [String] {
+        if let algorithm = algorithmOverrideForTesting {
+            return [algorithm]
+        }
+        var algorithms: [String] = []
+        if useInstallMessageSigning {
+            algorithms.append(ApproovDefaultMessageSigning.ALG_ES256)
+        }
+        if useAccountMessageSigning {
+            algorithms.append(ApproovDefaultMessageSigning.ALG_HS256)
+        }
+        return algorithms
     }
 
     func setAlgorithmOverrideForTesting(_ algorithm: String?) -> SignatureParametersFactory {
@@ -529,10 +580,12 @@ public class SignatureParametersFactory {
         } else {
             requestParameters = SignatureParameters(base: baseParameters!) // Safe to unwrap, cannot be nil
         }
-        requestParameters.setAlg(algorithmOverrideForTesting ?? (useAccountMessageSigning ? ApproovDefaultMessageSigning.ALG_HS256 : ApproovDefaultMessageSigning.ALG_ES256))
+        // the algorithm is left unset, so that one signature per configured algorithm is produced over
+        // these same parameters
 
         if addCreated || expiresLifetime > 0 {
-            let currentTime = Int64(Date().timeIntervalSince1970)
+            // the times follow the Approov servers' clock, so a wrong device clock does not matter
+            let currentTime = ApproovService.serverAdjustedTimeMS() / 1000
             if addCreated {
                 requestParameters.setCreated(currentTime)
             }
@@ -558,7 +611,7 @@ public class SignatureParametersFactory {
         if bodyDigestAlgorithm != nil {
             let bodyDigestCreated = try generateBodyDigest(provider: provider, requestParameters: requestParameters)
             if !bodyDigestCreated && bodyDigestRequired {
-                throw ApproovError.permanentError(message: "Failed to create required body digest")
+                throw ApproovRequestPathError.configuration("Failed to create required body digest")
             }
         }
 
@@ -604,7 +657,7 @@ public class SignatureParametersFactory {
             guard let digestHeader = try SFV.serializeDictionary(key: bodyDigestAlg, data: digest) else {
                 throw ApproovError.permanentError(message: "Failed to serialize Content-Digest header")
             }
-            request.addValue(digestHeader, forHTTPHeaderField: "Content-Digest")
+            request.setValue(digestHeader, forHTTPHeaderField: "Content-Digest")
             provider.setRequest(request)
         } catch let error {
             throw ApproovError.permanentError(message: "Failed to serialize Content-Digest header: \(error)")
@@ -670,32 +723,40 @@ class ApproovURLSessionComponentProvider: ComponentProvider {
         return request.httpMethod ?? "GET"
     }
 
+    // @authority: the host in lower case, with the port unless it is the scheme's default
     public func getAuthority() -> String {
-        return request.url?.host ?? ""
+        guard let url = request.url, let host = url.host else {
+            return ""
+        }
+        let scheme = url.scheme?.lowercased()
+        if let port = url.port, !((scheme == "https" && port == 443) || (scheme == "http" && port == 80)) {
+            return "\(host.lowercased()):\(port)"
+        }
+        return host.lowercased()
     }
 
     public func getScheme() -> String {
         return request.url?.scheme ?? "http"
     }
 
+    // @target-uri: the URL exactly as it is sent, which never carries the fragment
     public func getTargetUri() -> String {
-        return request.url?.absoluteString ?? ""
+        let url = request.url?.absoluteString ?? ""
+        return url.firstIndex(of: "#").map { String(url[..<$0]) } ?? url
     }
 
     public func getRequestTarget() -> String {
-        var target = getPath()
-        if let query = request.url?.query {
-            target += "?\(query)"
-        }
-        return target
+        let query = getQuery()
+        return query.isEmpty ? getPath() : "\(getPath())?\(query)"
     }
 
+    // @path and @query: as written in the URL, never percent-decoded
     public func getPath() -> String {
-        return request.url?.path ?? ""
+        return request.url.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false)?.percentEncodedPath } ?? ""
     }
 
     public func getQuery() -> String {
-        return request.url?.query ?? ""
+        return request.url.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false)?.percentEncodedQuery } ?? ""
     }
 
     public func getQueryParam(name: String) -> String? {
@@ -732,5 +793,3 @@ class ApproovURLSessionComponentProvider: ComponentProvider {
     }
 }
 
-@available(*, deprecated, message: "Use ApproovServiceMutator instead.")
-extension ApproovDefaultMessageSigning: ApproovInterceptorExtensions {}

@@ -8,13 +8,10 @@ import MiniSDKTestSupport
 
 /// Integration tests for the ApproovService URLSession service layer.
 ///
-/// Tests are organized to match the sections defined in TESTING_REQUIREMENTS.md
-/// from the core-service-layers-testing repository. Each test includes a comment
-/// referencing the requirement(s) it covers.
-///
-/// - SeeAlso: `TESTING_REQUIREMENTS.md` in core-service-layers-testing
+/// Tests are grouped by area: initialization, request processing, mutators, pinning,
+/// message signing and secure strings.
 final class ApproovServiceMiniSDKTests: XCTestCase {
-    private let validInitialConfig = "#cb-ivol#mAxOF0ekJUOC36J5XWmVmVipOcUoEdMjhPSp2FVtyTo="
+    private let validInitialConfig = testAccountID
     private var cancellables = Set<AnyCancellable>()
 
     override func setUpWithError() throws {
@@ -34,7 +31,6 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
     }
 
     // MARK: - §1 Initialization
-    // TESTING_REQUIREMENTS.md §1
 
     /// §1 Same Config Re-initialization / Different Config Re-initialization
     ///
@@ -143,7 +139,6 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
     }
 
     // MARK: - §2 Request Processing & Token Behaviors
-    // TESTING_REQUIREMENTS.md §2
 
     /// §2 Precheck Evaluation
     ///
@@ -222,8 +217,9 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
     /// §2 Missing Artifacts Fallback
     ///
     /// When the Approov service is unavailable (NO_APPROOV_SERVICE), the request
-    /// should proceed without an Approov token or trace ID.
-    func testUpdateRequestNoApproovServiceProceedsWithoutToken() throws {
+    /// proceeds with an empty token header and the trace ID, as evidence that Approov
+    /// processing occurred (3.7.0; 3.5.x sent neither).
+    func testUpdateRequestNoApproovServiceProceedsWithAnEmptyToken() throws {
         try reinitializeServiceWithTargetHost()
         setDirective(
             """
@@ -240,8 +236,8 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
         let reply = fetchNetworkReply(for: request)
 
         XCTAssertNotNil(reply, "Expected to receive a reply from worker when proceeding without token")
-        XCTAssertNil(getHeader(from: reply, key: "Approov-Token"))
-        XCTAssertNil(getHeader(from: reply, key: "Approov-TraceID"))
+        XCTAssertEqual(getHeader(from: reply, key: "Approov-Token"), "")
+        XCTAssertNotNil(getHeader(from: reply, key: "Approov-TraceID"))
     }
 
     /// §2 Exclusion URL Matching
@@ -279,7 +275,7 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
             guard case let ApproovError.networkingError(message) = error else {
                 return XCTFail("Expected networkingError, got \(error)")
             }
-            XCTAssertEqual(message, "fetchToken network error: no network")
+            XCTAssertEqual(message, "fetchToken network error: NO_NETWORK")
         }
     }
 
@@ -420,7 +416,7 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
             guard case let ApproovError.networkingError(message) = error else {
                 return XCTFail("Expected networkingError, got \(error)")
             }
-            XCTAssertTrue(message.contains("no network"), "Unexpected message: \(message)")
+            XCTAssertTrue(message.contains("NO_NETWORK"), "Unexpected message: \(message)")
         }
     }
 
@@ -447,14 +443,13 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
             guard case let ApproovError.permanentError(message) = error else {
                 return XCTFail("Expected permanentError, got \(error)")
             }
-            XCTAssertTrue(message.contains("rejected"), "Unexpected message: \(message)")
+            XCTAssertTrue(message.contains("REJECTED"), "Unexpected message: \(message)")
         }
     }
 
     // MARK: - §3 Service Mutators & Decision Overrides
-    // TESTING_REQUIREMENTS.md §3
 
-    struct AlwaysProceedMutator: ApproovServiceMutator {
+    struct ProceedOnFailureTestMutator: ApproovServiceMutator {
         func handleInterceptorFetchTokenResult(_ approovResults: ApproovTokenFetchResult, url: String) throws -> Bool {
             return false // proceed without throwing
         }
@@ -479,7 +474,7 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
             """
         )
         
-        ApproovService.setServiceMutator(AlwaysProceedMutator())
+        ApproovService.setServiceMutator(ProceedOnFailureTestMutator())
 
         let request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
         let reply = fetchNetworkReply(for: request)
@@ -489,7 +484,6 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
     }
 
     // MARK: - §4 Pinning Configuration & Scenarios
-    // TESTING_REQUIREMENTS.md §4
 
     /// §4 Accept Any Pins
     ///
@@ -574,7 +568,6 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
     }
 
     // MARK: - §5 Message Signing
-    // TESTING_REQUIREMENTS.md §5
 
     /// §5 Install Signature Success / Single Signature Application
     /// §2 Unprotected Request Processing
@@ -708,6 +701,248 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
     /// Malformed and truncated ES256 ASN.1/DER install signatures should throw
     /// inside the decoder, be caught by the fail-open signing policy, and allow
     /// the request to proceed unsigned.
+    /// A fail-open must emit no signing headers, including ones the caller had already set. Before the
+    /// fix every fail-open path returned the inbound request untouched, so a stale Signature was
+    /// transmitted with a token and body it does not authenticate.
+    func testFailOpenStripsStaleSignatureHeadersSuppliedByTheCaller() throws {
+        try reinitializeServiceWithTargetHost()
+        let factory = ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory()
+            .setUseInstallMessageSigning()
+        let signer = ApproovDefaultMessageSigning()
+            .setInstallMessageSignatureProviderForTesting { _ in Data([0x31, 0x00]).base64EncodedString() }
+            .setDefaultFactory(factory)
+        ApproovService.setServiceMutator(signer)
+
+        var request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
+        request.httpMethod = "GET"
+        request.setValue("install=:c3RhbGU=:", forHTTPHeaderField: "Signature")
+        request.setValue("install=(\"@method\")", forHTTPHeaderField: "Signature-Input")
+        request.setValue("sha-256=:c3RhbGU=:", forHTTPHeaderField: "Signature-Base-Digest")
+        let reply = fetchNetworkReply(for: request)
+
+        XCTAssertNotNil(getHeader(from: reply, key: "Approov-Token"), "the token must survive a fail-open")
+        XCTAssertNil(getHeader(from: reply, key: "Signature"), "a stale Signature survived the fail-open")
+        XCTAssertNil(getHeader(from: reply, key: "Signature-Input"), "a stale Signature-Input survived the fail-open")
+        XCTAssertNil(getHeader(from: reply, key: "Signature-Base-Digest"), "a stale Signature-Base-Digest survived the fail-open")
+    }
+
+    /// The body-digest case needs a body: generateBodyDigest mutates the provider's request before the
+    /// fail-open paths run, so a body-less fixture cannot catch a Content-Digest left behind with no
+    /// signature covering it.
+    func testFailOpenStripsTheBodyDigestItAlreadyAdded() throws {
+        try reinitializeServiceWithTargetHost()
+        let factory = try ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory()
+            .setUseInstallMessageSigning()
+            .setBodyDigestConfig("sha-256", required: false)
+        let signer = ApproovDefaultMessageSigning()
+            .setInstallMessageSignatureProviderForTesting { _ in Data([0x31, 0x00]).base64EncodedString() }
+            .setDefaultFactory(factory)
+        ApproovService.setServiceMutator(signer)
+
+        var request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = Data("{\"check\":\"fail-open-digest\"}".utf8)
+        let reply = fetchNetworkReply(for: request)
+
+        XCTAssertNotNil(getHeader(from: reply, key: "Approov-Token"), "the token must survive a fail-open")
+        XCTAssertNil(getHeader(from: reply, key: "Signature"), "a signature was sent despite the fail-open")
+        XCTAssertNil(getHeader(from: reply, key: "Content-Digest"),
+                     "a body digest was sent with no signature covering it")
+    }
+
+    /// A stale value on a header that must appear exactly once has to be replaced, not appended to.
+    /// addValue produced "install=:old:, install=:new:", which RFC 9421 verifiers reject.
+    func testSigningHeadersReplaceAStaleValueRatherThanAppending() throws {
+        try reinitializeServiceWithTargetHost()
+        let factory = ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory()
+            .setUseInstallMessageSigning()
+        ApproovService.setServiceMutator(ApproovDefaultMessageSigning().setDefaultFactory(factory))
+
+        var request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
+        request.httpMethod = "GET"
+        request.setValue("install=:c3RhbGU=:", forHTTPHeaderField: "Signature")
+        request.setValue("install=(\"@method\")", forHTTPHeaderField: "Signature-Input")
+        let reply = fetchNetworkReply(for: request)
+
+        for field in ["Signature", "Signature-Input"] {
+            let value = try XCTUnwrap(getHeader(from: reply, key: field), "\(field) missing; signing did not run")
+            let members = value.components(separatedBy: "install=").count - 1
+            XCTAssertEqual(members, 1, "\(field) carries \(members) dictionary members: \(value)")
+            XCTAssertFalse(value.contains("c3RhbGU="), "\(field) still carries the stale value: \(value)")
+        }
+    }
+
+    private func initBypassMode() throws {
+        MiniSDKAttesterProxyController.reset()
+        let targetHost = try XCTUnwrap(URL(string: targetURLString)?.host)
+        MiniSDKAttesterProxyController.loadScenarioJSON(
+            scenarioJSON(caseName: uniqueCaseName(prefix: "bypass"), body: "\"protectedDomains\": [\"\(targetHost)\"]"))
+        ApproovService.resetForTesting()
+        ApproovService.setLoggingLevel(.off)
+        try ApproovService.initialize(config: "", comment: "bypass")
+    }
+
+    /// Approov disabled, app session delegate refuses, task delegate implements only the
+    /// task-level callback. The app's session delegate must still decide, and must still refuse.
+    @available(iOS 15.0, *)
+    func testAppSessionDelegateStillDecidesInBypassMode() async throws {
+        try initBypassMode()
+        let appSessionDelegate = RefusingSessionDelegate()
+        let session = ApproovURLSession(configuration: .ephemeral, delegate: appSessionDelegate, delegateQueue: nil)
+        defer { session.invalidateAndCancel() }
+        let url = try XCTUnwrap(URL(string: targetURLString))
+        var completed = false
+        do {
+            _ = try await session.dataWithApproov(for: URLRequest(url: url), delegate: TaskLevelOnlyDefaultHandling())
+            completed = true
+        } catch {}
+        print("appSessionDelegateAsked=\(appSessionDelegate.wasAsked) requestCompleted=\(completed)")
+        XCTAssertTrue(appSessionDelegate.wasAsked, "the app's session delegate was never asked")
+        XCTAssertFalse(completed, "the request completed although the app's session delegate refused")
+    }
+
+    /// Approov disabled. A classic task with a plain session-level auth callback must run.
+    @available(iOS 15.0, *)
+    func testClassicTaskWorksInBypassMode() throws {
+        try initBypassMode()
+        let session = ApproovURLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        let url = try XCTUnwrap(URL(string: targetURLString))
+        let done = expectation(description: "bypass task")
+        var status = -1
+        var failure: Error?
+        let task = session.dataTask(with: URLRequest(url: url)) { _, r, e in
+            status = (r as? HTTPURLResponse)?.statusCode ?? -1; failure = e; done.fulfill()
+        }
+        task.delegate = SessionLevelDefaultHandling()
+        task.resume()
+        wait(for: [done], timeout: 20)
+        print("status=\(status) error=\(failure.map { "\($0)" } ?? "nil")")
+        XCTAssertNil(failure, "a classic task was cancelled in bypass mode, where there is no pinning to protect")
+        XCTAssertEqual(status, 200)
+    }
+
+    /// a host where Approov signing is not configured. The application's own Content-Digest
+    /// must survive; it is not ours to delete.
+    func testApplicationContentDigestSurvivesWhenSigningNotConfigured() throws {
+        try reinitializeServiceWithTargetHost()
+        ApproovService.setServiceMutator(ApproovDefaultMessageSigning())   // no factory configured
+        var request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("sha-256=:YXBwLW93bmVkLWRpZ2VzdA==:", forHTTPHeaderField: "Content-Digest")
+        request.httpBody = Data("{\"a\":1}".utf8)
+        let reply = fetchNetworkReply(for: request)
+        let digest = getHeader(from: reply, key: "Content-Digest")
+        print("Content-Digest on the wire = \(digest ?? "MISSING")")
+        XCTAssertEqual(digest, "sha-256=:YXBwLW93bmVkLWRpZ2VzdA==:",
+                       "the application's own Content-Digest was deleted")
+    }
+
+    /// POSITIVE PATH, and the one that matters most: a WebSocket to a protected host must still
+    /// connect. Observing these tasks through the full request pipeline cancelled every one of them,
+    /// because the Approov token fetch rejects a wss:// URL with "bad url". The reply worker accepts
+    /// the upgrade, so an answered ping proves TLS and the upgrade completed and nothing cancelled the
+    /// task. A cancellation here means the layer broke it.
+    @available(iOS 15.0, *)
+    func testWebSocketToAProtectedHostIsNotCancelledByTheLayer() throws {
+        try reinitializeServiceWithTargetHost()
+        let session = ApproovURLSession(configuration: .ephemeral, delegate: CompletionRecordingDelegate(), delegateQueue: nil)
+        defer { session.invalidateAndCancel() }
+        let wsURL = try XCTUnwrap(URL(string: targetURLString.replacingOccurrences(of: "https://", with: "wss://")))
+        let task = session.webSocketTask(with: wsURL)
+        task.resume()
+        // the worker accepts the upgrade, so a 101 response proves TLS and the upgrade completed
+        let upgraded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            (task.response as? HTTPURLResponse)?.statusCode == 101 || task.state == .completed
+        }, object: nil)
+        wait(for: [upgraded], timeout: 20)
+        XCTAssertEqual((task.response as? HTTPURLResponse)?.statusCode, 101,
+                       "the WebSocket to a protected host did not open: \(String(describing: task.error))")
+        task.cancel(with: .normalClosure, reason: nil)
+    }
+
+    /// Pinning still applies to the upgrade, through the session delegate. Verified non-vacuous:
+    /// remove the forced pin failure and this test fails, because the upgrade then completes, as in the
+    /// positive path above, rather than being cancelled.
+    @available(iOS 15.0, *)
+    func testWebSocketUpgradeIsPinned() throws {
+        try reinitializeServiceWithTargetHost()
+        MiniSDKAttesterProxyController.setNextPinningDirectiveJSON("{\"operation\": \"getPins\", \"shouldFail\": true}")
+        let recorder = CompletionRecordingDelegate()
+        let session = ApproovURLSession(configuration: .ephemeral, delegate: recorder, delegateQueue: nil)
+        defer { session.invalidateAndCancel() }
+        let wsURL = try XCTUnwrap(URL(string: targetURLString.replacingOccurrences(of: "https://", with: "wss://")))
+        let done = expectation(description: "ws pinned")
+        var code: Int?
+        recorder.onComplete = { code = ($0 as NSError?)?.code; done.fulfill() }
+        session.webSocketTask(with: wsURL).resume()
+        wait(for: [done], timeout: 20)
+        XCTAssertEqual(code, NSURLErrorServerCertificateUntrusted,
+                       "a failing pin check did not stop the WebSocket upgrade: \(code.map(String.init) ?? "nil")")
+    }
+
+    /// The guard covers WebSocket tasks: a task delegate that would answer the server-trust challenge
+    /// is rejected. Contrast with the positive path, which is not cancelled.
+    @available(iOS 15.0, *)
+    func testWebSocketTaskDelegateCannotDisplacePinning() throws {
+        try reinitializeServiceWithTargetHost()
+        let recorder = CompletionRecordingDelegate()
+        let session = ApproovURLSession(configuration: .ephemeral, delegate: recorder, delegateQueue: nil)
+        defer { session.invalidateAndCancel() }
+        let wsURL = try XCTUnwrap(URL(string: targetURLString.replacingOccurrences(of: "https://", with: "wss://")))
+        let done = expectation(description: "ws guard")
+        var code: Int?
+        recorder.onComplete = { code = ($0 as NSError?)?.code; done.fulfill() }
+        let task = session.webSocketTask(with: wsURL)
+        task.delegate = TrustAnyCertificateTaskDelegate()
+        task.resume()
+        wait(for: [done], timeout: 20)
+        XCTAssertEqual(code, NSURLErrorCancelled,
+                       "a trust-any task delegate was not rejected on a WebSocket: \(code.map(String.init) ?? "nil")")
+    }
+
+    /// A URLSessionDataDelegate may implement any subset of its optional methods. Where no completion
+    /// handler is supplied, URLSession delivers the response through the delegate, and the wrapper
+    /// forwards that callback with delegate.urlSession?(...), which is a no-op when the caller has not
+    /// implemented it. The completion handler is then never called and the task never finishes.
+    /// Exercised on an upload task, which is the shape that has no completion-handler variant in play.
+    @available(iOS 15.0, *)
+    func testPartialDataDelegateDoesNotHangAnUpload() throws {
+        try reinitializeServiceWithTargetHost()
+        let caller = PartialDataDelegate()
+        let session = ApproovURLSession(configuration: .ephemeral, delegate: caller, delegateQueue: nil)
+        defer { session.invalidateAndCancel() }
+        var request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let done = expectation(description: "upload finished")
+        caller.onComplete = { _ in done.fulfill() }
+        session.uploadTask(with: request, from: Data("{\"a\":1}".utf8)).resume()
+        wait(for: [done], timeout: 8)
+    }
+
+    /// Host resolution must work for any scheme, not just https, and must never return an empty host
+    /// for a URL that has one. Matching on an "https" prefix sent every other scheme down the
+    /// bare-host-name branch, which rewrote "http://example.com" to "https://http://example.com".
+    func testHostResolutionAcrossSchemes() throws {
+        let cases: [(String, String)] = [
+            ("https://example.com/path?q=1", "example.com"),
+            ("https://example.com:8443/path", "example.com"),
+            ("http://example.com/path", "example.com"),
+            ("wss://example.com", "example.com"),
+            ("ws://example.com", "example.com"),
+            ("example.com", "example.com"),
+            ("example.com/path", "example.com"),
+        ]
+        for (input, expected) in cases {
+            let url = try XCTUnwrap(URL(string: input), "could not build a URL from \(input)")
+            XCTAssertEqual(ApproovService.hostnameFromURL(url: url), expected,
+                           "\(input) resolved to the wrong host")
+        }
+    }
+
     func testInstallMessageSigningMalformedDERFailsOpen() throws {
         let malformedSignatures: [(String, Data)] = [
             ("malformed-der", Data([0x31, 0x00])),
@@ -794,6 +1029,160 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
     ///
     /// Required body digest generation is a policy error and must fail closed
     /// when no repeatable body is available.
+    /// No upload task can carry a body digest, whichever shape the body takes. uploadTask supplies the
+    /// body as a parameter or a file, never in request.httpBody, which is the only place the signer
+    /// looks. So an upload is signed over its method, target and headers, and the body is not covered.
+    /// Contrast with a dataTask carrying the same bytes in httpBody, which is covered.
+    @available(iOS 15.0, *)
+    func testNoUploadTaskShapeCarriesABodyDigest() throws {
+        try reinitializeServiceWithTargetHost()
+        let factory = try ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory()
+            .setUseInstallMessageSigning()
+            .setBodyDigestConfig(ApproovDefaultMessageSigning.DIGEST_SHA256, required: false)
+        ApproovService.setServiceMutator(ApproovDefaultMessageSigning().setDefaultFactory(factory))
+
+        let body = Data("{\"upload\":\"data\"}".utf8)
+        var request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        // uploadTask(with:from:), body passed as a parameter
+        let fromData = uploadNetworkReply(for: request, from: body)
+        XCTAssertNotNil(getHeader(from: fromData, key: "Signature"), "the upload was not signed")
+        XCTAssertNil(getHeader(from: fromData, key: "Content-Digest"),
+                     "uploadTask(with:from:) unexpectedly carried a Content-Digest")
+
+        // control: the same bytes in request.httpBody through a dataTask ARE covered
+        var withBody = request
+        withBody.httpBody = body
+        let control = fetchNetworkReply(for: withBody)
+        XCTAssertNotNil(getHeader(from: control, key: "Content-Digest"),
+                        "CONTROL FAILED: httpBody produced no digest either, so the test proves nothing")
+    }
+
+    /// A REQUIRED body digest fails every upload shape closed, all five overloads, asserted on the
+    /// Approov error rather than on the presence of any error. A digest rejection cancels the task, so
+    /// "some error happened" would also be satisfied by a network failure or a pinning rejection and
+    /// would not establish the cause. The real error reaches a completion handler where there is one,
+    /// and the session delegate's didCompleteWithError where there is not; the session stays valid.
+    @available(iOS 15.0, *)
+    func testRequiredBodyDigestFailsEveryUploadShapeClosed() throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try Data("{\"upload\":\"file\"}".utf8).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+        let body = Data("{\"upload\":\"data\"}".utf8)
+
+        // (label, makes the task on the given session, true when the error arrives by handler)
+        let shapes: [(String, (ApproovURLSession, URLRequest, @escaping (Error?) -> Void) -> URLSessionUploadTask)] = [
+            ("uploadTask(with:from:)", { s, r, _ in s.uploadTask(with: r, from: body) }),
+            ("uploadTask(with:from:completionHandler:)", { s, r, report in
+                s.uploadTask(with: r, from: body) { _, _, e in report(e) } }),
+            ("uploadTask(with:fromFile:)", { s, r, _ in s.uploadTask(with: r, fromFile: file) }),
+            ("uploadTask(with:fromFile:completionHandler:)", { s, r, report in
+                s.uploadTask(with: r, fromFile: file) { _, _, e in report(e) } }),
+            ("uploadTask(withStreamedRequest:)", { s, r, _ in
+                var streamed = r
+                streamed.httpBodyStream = InputStream(data: body)
+                return s.uploadTask(withStreamedRequest: streamed) }),
+        ]
+
+        for (label, makeTask) in shapes {
+            try reinitializeServiceWithTargetHost()
+            let factory = try ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory()
+                .setUseInstallMessageSigning()
+                .setBodyDigestConfig(ApproovDefaultMessageSigning.DIGEST_SHA256, required: true)
+            ApproovService.setServiceMutator(ApproovDefaultMessageSigning().setDefaultFactory(factory))
+
+            let recorder = CompletionRecordingDelegate()
+            let session = ApproovURLSession(configuration: .ephemeral, delegate: recorder, delegateQueue: nil)
+            defer { session.invalidateAndCancel() }
+
+            var request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+            let reported = expectation(description: label)
+            reported.assertForOverFulfill = false
+            var seen: Error?
+            let report: (Error?) -> Void = { e in
+                if seen == nil { seen = e }
+                reported.fulfill()
+            }
+            recorder.onComplete = report
+            makeTask(session, request, report).resume()
+            wait(for: [reported], timeout: 15)
+
+            guard let error = seen as? URLError else {
+                XCTFail("\(label): expected the layer's URLError, got \(String(describing: seen))")
+                continue
+            }
+            XCTAssertTrue(error.localizedDescription.contains("Failed to create required body digest"),
+                          "\(label): wrong cause: \(error.localizedDescription)")
+        }
+    }
+
+    /// With the digest OPTIONAL a streamed upload proceeds through the real API and is signed, but the
+    /// signature covers no body. Asserting the signature is present matters as much as asserting the
+    /// digest is absent: without it the test would pass on an unsigned upload.
+    @available(iOS 15.0, *)
+    func testUploadFromStreamedRequestWithOptionalDigestIsSignedWithoutBodyCoverage() throws {
+        try reinitializeServiceWithTargetHost()
+        let factory = try ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory()
+            .setUseInstallMessageSigning()
+            .setBodyDigestConfig(ApproovDefaultMessageSigning.DIGEST_SHA256, required: false)
+        ApproovService.setServiceMutator(ApproovDefaultMessageSigning().setDefaultFactory(factory))
+
+        var request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBodyStream = InputStream(data: Data("{\"upload\":\"stream\"}".utf8))
+
+        let recorder = CompletionRecordingDelegate()
+        let session = ApproovURLSession(configuration: .ephemeral, delegate: recorder, delegateQueue: nil)
+        defer { session.invalidateAndCancel() }
+        let done = expectation(description: "streamed upload")
+        var failure: Error?
+        recorder.onComplete = { failure = $0; done.fulfill() }
+        let task = session.uploadTask(withStreamedRequest: request)
+        task.resume()
+        wait(for: [done], timeout: 15)
+
+        XCTAssertNil(failure, "the streamed upload failed with an optional digest: \(String(describing: failure))")
+        let sent = task.currentRequest
+        XCTAssertNotNil(sent?.value(forHTTPHeaderField: "Signature"), "the streamed upload was not signed")
+        XCTAssertNotNil(sent?.value(forHTTPHeaderField: "Signature-Input"), "no Signature-Input on the streamed upload")
+        XCTAssertNil(sent?.value(forHTTPHeaderField: "Content-Digest"),
+                     "a Content-Digest appeared for a body that cannot be read")
+    }
+
+    /// uploadTask(with:fromFile:) keeps the body in a file that URLSession reads itself, so the layer
+    /// never sees it either. Signed, but again with no body coverage.
+    @available(iOS 15.0, *)
+    func testUploadFromFileIsSignedWithoutBodyCoverage() throws {
+        try reinitializeServiceWithTargetHost()
+        let factory = try ApproovDefaultMessageSigning.generateDefaultSignatureParametersFactory()
+            .setUseInstallMessageSigning()
+            .setBodyDigestConfig(ApproovDefaultMessageSigning.DIGEST_SHA256, required: false)
+        ApproovService.setServiceMutator(ApproovDefaultMessageSigning().setDefaultFactory(factory))
+
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try Data("{\"upload\":\"file\"}".utf8).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+
+        var request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let reply = uploadNetworkReply(for: request, fromFile: file)
+
+        XCTAssertNotNil(getHeader(from: reply, key: "Approov-Token"), "the file upload carried no token")
+        // Without this the test would pass on an unsigned upload, so it would not establish that the
+        // upload is signed while its body is uncovered, which is the whole point of it.
+        XCTAssertNotNil(getHeader(from: reply, key: "Signature"), "the file upload was not signed")
+        XCTAssertNotNil(getHeader(from: reply, key: "Signature-Input"), "the file upload carried no Signature-Input")
+        XCTAssertNil(getHeader(from: reply, key: "Content-Digest"),
+                     "a Content-Digest appeared for a body held in a file")
+    }
+
     func testRequiredBodyDigestFailureFailsClosed() throws {
         try reinitializeServiceWithTargetHost()
 
@@ -809,8 +1198,9 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
         let response = ApproovService.updateRequestWithApproov(request: request, sessionConfig: nil)
 
         XCTAssertEqual(response.decision, .ShouldFail)
-        guard case let ApproovError.permanentError(message)? = response.error else {
-            return XCTFail("Expected permanentError, got \(String(describing: response.error))")
+        // a configuration error of the app's, the layer's URLError
+        guard let message = (response.error as? URLError)?.localizedDescription else {
+            return XCTFail("Expected URLError, got \(String(describing: response.error))")
         }
         XCTAssertTrue(message.contains("Failed to create required body digest"), "Unexpected message: \(message)")
         XCTAssertThrowsError(try ApproovService.signRequest(request))
@@ -835,8 +1225,9 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
         let response = ApproovService.updateRequestWithApproov(request: request, sessionConfig: nil)
 
         XCTAssertEqual(response.decision, .ShouldFail)
-        guard case let ApproovError.permanentError(message)? = response.error else {
-            return XCTFail("Expected permanentError, got \(String(describing: response.error))")
+        // a configuration error of the app's, the layer's URLError
+        guard let message = (response.error as? URLError)?.localizedDescription else {
+            return XCTFail("Expected URLError, got \(String(describing: response.error))")
         }
         XCTAssertTrue(message.contains("Unsupported algorithm identifier"), "Unexpected message: \(message)")
         XCTAssertThrowsError(try ApproovService.signRequest(request))
@@ -871,7 +1262,6 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
     }
 
     // MARK: - §6 Secure Strings & Custom JWT
-    // TESTING_REQUIREMENTS.md §6
 
     /// §6 Valid Secure String Key
     ///
@@ -920,7 +1310,7 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
             guard case let ApproovError.permanentError(message) = error else {
                 return XCTFail("Expected permanentError, got \\\(error)")
             }
-            XCTAssertTrue(message.contains("bad key"), "Expected bad key message")
+            XCTAssertTrue(message.contains("BAD_KEY"), "Expected bad key message")
         }
     }
 
@@ -973,7 +1363,7 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
             guard case let ApproovError.permanentError(message) = error else {
                 return XCTFail("Expected permanentError, got \(error)")
             }
-            XCTAssertEqual(message, "fetchCustomJWT: disabled")
+            XCTAssertEqual(message, "fetchCustomJWT: DISABLED")
         }
     }
 
@@ -985,105 +1375,7 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
             guard case let ApproovError.permanentError(message) = error else {
                 return XCTFail("Expected permanentError, got \(error)")
             }
-            XCTAssertEqual(message, "fetchCustomJWT: bad payload")
-        }
-    }
-
-    /// §7 Failure Caching
-    ///
-    /// Verifies that SDK failures (e.g., NO_NETWORK) are cached and short-circuit
-    /// subsequent requests within the TTL window without querying the SDK again.
-    func testCachedFailureShortCircuitsSDKFetchWithinTTL() throws {
-        try reinitializeServiceWithTargetHost()
-
-        // 1. Force a NO_NETWORK failure which should populate the cache
-        setDirective(
-            """
-            {
-              "operation": "fetchApproovToken",
-              "response": {
-                "status": "NO_NETWORK"
-              }
-            }
-            """
-        )
-
-        let request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
-        let response1 = ApproovService.updateRequestWithApproov(request: request, sessionConfig: nil)
-        XCTAssertEqual(response1.decision, .ShouldRetry)
-        XCTAssertEqual(response1.sdkMessage, "no network")
-
-        // 2. Change the underlying directive to SUCCESS.
-        // Since the cache is still valid, the SDK should be bypassed and
-        // the response should still be the cached NO_NETWORK.
-        setDirective(
-            """
-            {
-              "operation": "fetchApproovToken",
-              "response": {
-                "status": "SUCCESS",
-                "token": "fresh-token-that-should-be-ignored"
-              }
-            }
-            """
-        )
-
-        let response2 = ApproovService.updateRequestWithApproov(request: request, sessionConfig: nil)
-        XCTAssertEqual(response2.decision, .ShouldRetry)
-        XCTAssertEqual(response2.sdkMessage, "no network")
-    }
-
-    /// Verifies that concurrent requests share a cached failure once the first
-    /// in-flight SDK fetch observes the failure.
-    func testCachedFailureShortCircuitsConcurrentRequestsWithinTTL() throws {
-        try reinitializeServiceWithTargetHost()
-
-        setDirective(
-            """
-            {
-              "operation": "fetchApproovToken",
-              "response": {
-                "status": "NO_NETWORK"
-              }
-            }
-            """
-        )
-
-        let request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
-        let requestCount = 24
-        let startGate = DispatchSemaphore(value: 0)
-        let completionGroup = DispatchGroup()
-        let responsesLock = NSLock()
-        var responses: [ApproovUpdateResponse] = []
-
-        for _ in 0..<requestCount {
-            completionGroup.enter()
-            DispatchQueue.global(qos: .userInitiated).async {
-                startGate.wait()
-                let response = ApproovService.updateRequestWithApproov(request: request, sessionConfig: nil)
-                responsesLock.lock()
-                responses.append(response)
-                responsesLock.unlock()
-                completionGroup.leave()
-            }
-        }
-
-        for _ in 0..<requestCount {
-            startGate.signal()
-        }
-
-        switch completionGroup.wait(timeout: .now() + 5.0) {
-        case .success:
-            break
-        case .timedOut:
-            XCTFail("Timed out waiting for concurrent cached-failure requests")
-            return
-        }
-
-        XCTAssertEqual(responses.count, requestCount)
-        for response in responses {
-            XCTAssertEqual(response.decision, .ShouldRetry)
-            XCTAssertEqual(response.sdkMessage, "no network")
+            XCTAssertEqual(message, "fetchCustomJWT: BAD_PAYLOAD")
         }
     }
 
@@ -1150,50 +1442,7 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
         XCTAssertEqual(observedSecondCallbackCount, 1)
     }
 
-    /// Verifies that the cached failure expires after the TTL.
-    func testCachedFailureExpiresAfterTTL() throws {
-        try reinitializeServiceWithTargetHost()
-
-        // 1. Force a NO_NETWORK failure which should populate the cache
-        setDirective(
-            """
-            {
-              "operation": "fetchApproovToken",
-              "response": {
-                "status": "NO_NETWORK"
-              }
-            }
-            """
-        )
-
-        let request = URLRequest(url: try XCTUnwrap(URL(string: targetURLString)))
-        let response1 = ApproovService.updateRequestWithApproov(request: request, sessionConfig: nil)
-        XCTAssertEqual(response1.decision, .ShouldRetry)
-        XCTAssertEqual(response1.sdkMessage, "no network")
-
-        // 2. Change the underlying directive to SUCCESS.
-        setDirective(
-            """
-            {
-              "operation": "fetchApproovToken",
-              "response": {
-                "status": "SUCCESS",
-                "token": "fresh-token-after-ttl"
-              }
-            }
-            """
-        )
-
-        // 3. Sleep well beyond the 500ms TTL to avoid timing-related flakiness in CI.
-        Thread.sleep(forTimeInterval: 1.0)
-
-        let response2 = ApproovService.updateRequestWithApproov(request: request, sessionConfig: nil)
-        XCTAssertEqual(response2.decision, .ShouldProceed)
-        XCTAssertEqual(response2.sdkMessage, "success")
-    }
-
     // MARK: - §8 Version Telemetry & Release Versioning
-    // TESTING_REQUIREMENTS.md §8
 
     /// §8 Versioned Service-Layer Telemetry
     ///
@@ -1227,6 +1476,61 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
             fatalError("TESTING_REPLY_URL_UNPROTECTED environment variable is not set")
         }
         return url
+    }
+
+    /// Runs an upload task through the real API and reports the error it completed with, so a
+    /// fail-closed outcome can be asserted at the task level rather than on the request processor.
+    @available(iOS 15.0, *)
+    private func uploadTaskFailure(for request: URLRequest, fromFile file: URL? = nil, from data: Data? = nil, streamed: Bool = false) -> Error? {
+        let expectation = self.expectation(description: "upload failure")
+        var failure: Error?
+        let session = ApproovURLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        let handler: (Data?, URLResponse?, Error?) -> Void = { _, _, e in
+            failure = e
+            expectation.fulfill()
+        }
+        let task: URLSessionUploadTask
+        if streamed {
+            task = session.uploadTask(withStreamedRequest: request)
+            // a streamed upload has no completion handler, so completion arrives via the delegate
+        } else if let file = file {
+            task = session.uploadTask(with: request, fromFile: file, completionHandler: handler)
+        } else {
+            task = session.uploadTask(with: request, from: data, completionHandler: handler)
+        }
+        if streamed {
+            let recorder = CompletionRecordingDelegate()
+            recorder.onComplete = { e in failure = e; expectation.fulfill() }
+            task.delegate = recorder
+        }
+        task.resume()
+        waitForExpectations(timeout: 15.0)
+        return failure
+    }
+
+    /// Runs an upload task and returns the reply worker's echo of the request, so the headers that
+    /// actually reached the wire can be inspected. Mirrors fetchNetworkReply for uploads.
+    private func uploadNetworkReply(for request: URLRequest, fromFile file: URL? = nil, from data: Data? = nil) -> [String: Any]? {
+        let expectation = self.expectation(description: "upload request")
+        var receivedData: Data?
+        let session = ApproovURLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        let handler: (Data?, URLResponse?, Error?) -> Void = { d, _, _ in
+            receivedData = d
+            expectation.fulfill()
+        }
+        let task: URLSessionUploadTask
+        if let file = file {
+            task = session.uploadTask(with: request, fromFile: file, completionHandler: handler)
+        } else {
+            task = session.uploadTask(with: request, from: data, completionHandler: handler)
+        }
+        task.resume()
+        waitForExpectations(timeout: 10.0)
+        guard let d = receivedData,
+              let obj = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return nil }
+        return obj
     }
 
     private func fetchNetworkReply(for request: URLRequest) -> [String: Any]? {
@@ -1303,6 +1607,10 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
 
     private func reinitializeService(scenarioJSON: String? = nil, comment: String) throws {
         MiniSDKAttesterProxyController.reset()
+        // the SDK reads options on the first initialization of a process only
+        if comment.hasPrefix("options:") {
+            MiniSDKAttesterProxyController.resetSdkForTesting()
+        }
         if let scenarioJSON {
             MiniSDKAttesterProxyController.loadScenarioJSON(scenarioJSON)
         }
@@ -1411,6 +1719,7 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
     /// was supplied, from the inherited `configuration`. ApproovURLSession never initialises its
     /// URLSession base, so that configuration carried none of the caller's headers, timeouts,
     /// cookie storage or cache. Each method must send the request with the session's configuration.
+    @available(iOS 15.0, *)
     func testAsyncMethodsWithDelegateUseTheSessionConfiguration() async throws {
         try reinitializeServiceWithTargetHost()
         let marker = "async-delegate-config-marker"
@@ -1459,6 +1768,7 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
     /// A delegate passed to an async convenience method must be released once the request
     /// completes. Previously the per-call URLSession was never invalidated, and a URLSession
     /// retains its delegate until it is, so every such call leaked the session and the delegate.
+    @available(iOS 15.0, *)
     func testAsyncMethodWithDelegateReleasesTheDelegate() async throws {
         let session = ApproovURLSession(configuration: .ephemeral)
         defer { session.invalidateAndCancel() }
@@ -1482,6 +1792,7 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
     /// whenever the task delegate implements urlSession(_:didReceive:completionHandler:). A delegate
     /// passed to an async convenience method must still be subject to Approov pinning: this one
     /// accepts any certificate, and the request must still fail on a pin mismatch.
+    @available(iOS 15.0, *)
     func testAsyncMethodWithDelegateStillEnforcesPinning() async throws {
         try reinitializeServiceWithTargetHost()
         MiniSDKAttesterProxyController.setNextPinningDirectiveJSON("{\"operation\": \"getPins\", \"shouldFail\": true}")
@@ -1498,9 +1809,106 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
         }
     }
 
+    /// Async methods wrap challenge delegates, so the classic-task guard must permit them.
+    /// This positive path complements the forced pin-mismatch test above.
+    @available(iOS 15.0, *)
+    func testAsyncMethodWithSessionLevelChallengeDelegateStillRuns() async throws {
+        try reinitializeServiceWithTargetHost()
+        let session = ApproovURLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        let url = try XCTUnwrap(URL(string: targetURLString))
+        let delegate = SessionLevelChallengeDelegate()
+
+        let (_, response) = try await session.dataWithApproov(from: url, delegate: delegate)
+
+        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+        XCTAssertTrue(delegate.seen.isEmpty, "Approov must decide server trust before the caller")
+    }
+
+    /// A wrapped async delegate can answer a client-certificate challenge through its session-level
+    /// callback. A synthetic challenge isolates forwarding from certificate and server configuration.
+    @available(iOS 15.0, *)
+    func testAsyncTaskDelegateForwardsClientCertificateChallenge() throws {
+        let caller = SessionLevelChallengeDelegate()
+        let wrapper = PinningTaskDelegate(wrapping: caller)
+        let session = URLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        let host = try XCTUnwrap(URL(string: targetURLString)?.host)
+        let space = URLProtectionSpace(host: host, port: 443, protocol: "https", realm: nil,
+                                       authenticationMethod: NSURLAuthenticationMethodClientCertificate)
+        let challenge = URLAuthenticationChallenge(protectionSpace: space, proposedCredential: nil,
+                                                    previousFailureCount: 0, failureResponse: nil,
+                                                    error: nil, sender: ProbeSender())
+        XCTAssertTrue(wrapper.responds(to: #selector(URLSessionDelegate.urlSession(_:didReceive:completionHandler:))))
+        var completions = 0
+
+        wrapper.urlSession(session, didReceive: challenge) { disposition, credential in
+            completions += 1
+            XCTAssertEqual(disposition, .performDefaultHandling)
+            XCTAssertNil(credential)
+        }
+
+        XCTAssertEqual(caller.seen, [NSURLAuthenticationMethodClientCertificate])
+        XCTAssertEqual(completions, 1)
+    }
+
+    /// A task delegate implementing the session-level challenge callback is offered the server-trust
+    /// challenge before the session delegate, so it would decide pinning for that task. The classic
+    /// task methods hand back a task whose delegate the caller can still set, so the task must be
+    /// rejected rather than allowed to run unpinned. Without the guard this request returns 200 with
+    /// the pin check forced to fail.
+    @available(iOS 15.0, *)
+    func testClassicTaskWithSessionLevelChallengeDelegateIsRejected() throws {
+        try reinitializeServiceWithTargetHost()
+        MiniSDKAttesterProxyController.setNextPinningDirectiveJSON("{\"operation\": \"getPins\", \"shouldFail\": true}")
+        let session = ApproovURLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        let url = try XCTUnwrap(URL(string: targetURLString))
+
+        let done = expectation(description: "task finished")
+        var failure: Error?
+        var status = -1
+        let task = session.dataTask(with: URLRequest(url: url)) { _, response, error in
+            status = (response as? HTTPURLResponse)?.statusCode ?? -1
+            failure = error
+            done.fulfill()
+        }
+        task.delegate = TrustAnyCertificateTaskDelegate()
+        task.resume()
+        wait(for: [done], timeout: 20)
+
+        XCTAssertNotNil(failure, "a task delegate that accepts any certificate bypassed pinning on the classic task API (status \(status))")
+    }
+
+    /// The guard must not reject a delegate that only implements the task-level challenge callback:
+    /// it cannot see a server-trust challenge, and rejecting it would break mutual TLS callers.
+    @available(iOS 15.0, *)
+    func testClassicTaskWithTaskLevelOnlyChallengeDelegateStillRuns() throws {
+        try reinitializeServiceWithTargetHost()
+        let session = ApproovURLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        let url = try XCTUnwrap(URL(string: targetURLString))
+
+        let done = expectation(description: "task finished")
+        var status = -1
+        var failure: Error?
+        let task = session.dataTask(with: URLRequest(url: url)) { _, response, error in
+            status = (response as? HTTPURLResponse)?.statusCode ?? -1
+            failure = error
+            done.fulfill()
+        }
+        task.delegate = TaskLevelOnlyChallengeDelegate()
+        task.resume()
+        wait(for: [done], timeout: 20)
+
+        XCTAssertNil(failure, "a task-level-only challenge delegate was rejected: \(String(describing: failure))")
+        XCTAssertEqual(status, 200)
+    }
+
     /// Callbacks the task delegate does not implement are delivered to the delegate the session
     /// was created with, as they are for URLSession.data(for:delegate:). Previously the per-call
     /// session replaced the session delegate entirely.
+    @available(iOS 15.0, *)
     func testAsyncMethodWithDelegateFallsBackToTheSessionDelegate() async throws {
         let sessionDelegate = MetricsRecordingDelegate()
         let sessionMetrics = expectation(description: "session delegate received metrics")
@@ -1515,6 +1923,7 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
 
     /// Callbacks the task delegate does implement are delivered to it rather than to the
     /// session delegate.
+    @available(iOS 15.0, *)
     func testAsyncMethodWithDelegateDeliversCallbacksToTheTaskDelegate() async throws {
         let sessionDelegate = MetricsRecordingDelegate()
         let sessionMetrics = expectation(description: "session delegate received metrics")
@@ -1552,6 +1961,7 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
     /// URLSession deletes a download's temporary file when the task's completion handler returns, so the async
     /// download methods must hand the caller a file it owns, as URLSession.download(for:) does. URLSession.shared
     /// is the control: if the control ever fails, the test is wrong rather than the library.
+    @available(iOS 15.0, *)
     func testAsyncDownloadMethodsHandTheFileToTheCaller() async throws {
         try reinitializeServiceWithTargetHost()
         let session = ApproovURLSession(configuration: .ephemeral)
@@ -1607,6 +2017,73 @@ final class ApproovServiceMiniSDKTests: XCTestCase {
 /// A task delegate that implements no callbacks.
 private final class EmptyTaskDelegate: NSObject, URLSessionTaskDelegate {}
 
+/// Sender for synthetic authentication challenges.
+private final class ProbeSender: NSObject, URLAuthenticationChallengeSender {
+    func use(_ credential: URLCredential, for challenge: URLAuthenticationChallenge) {}
+    func continueWithoutCredential(for challenge: URLAuthenticationChallenge) {}
+    func cancel(_ challenge: URLAuthenticationChallenge) {}
+}
+
+/// Records challenges through the session-level callback, on a session or a wrapped async task.
+private final class SessionLevelChallengeDelegate: NSObject, URLSessionTaskDelegate {
+    var seen: [String] = []
+    func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
+                    completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        seen.append(challenge.protectionSpace.authenticationMethod)
+        completionHandler(.performDefaultHandling, nil)
+    }
+}
+
+/// Conforms to URLSessionDataDelegate but implements only didReceive data, which is legal: every
+/// method on that protocol is optional. The wrapper's forwarding must still complete the response
+/// and cache callbacks on its behalf.
+private final class PartialDataDelegate: NSObject, URLSessionDataDelegate {
+    var bytes = 0
+    var onComplete: ((Error?) -> Void)?
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        bytes += data.count
+    }
+    // Deliberately does NOT implement urlSession(_:dataTask:didReceive:completionHandler:) or
+    // willCacheResponse, both of which are optional on URLSessionDataDelegate.
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        onComplete?(error)
+    }
+}
+
+/// Records task completion, which is the reliable signal for a WebSocket that never opens.
+private final class CompletionRecordingDelegate: NSObject, URLSessionTaskDelegate {
+    var onComplete: ((Error?) -> Void)?
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        onComplete?(error)
+    }
+}
+
+/// the application's own session delegate, which refuses every server-trust challenge.
+private final class RefusingSessionDelegate: NSObject, URLSessionTaskDelegate {
+    var wasAsked = false
+    func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
+                    completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        wasAsked = true
+        completionHandler(.cancelAuthenticationChallenge, nil)
+    }
+}
+
+/// a task delegate implementing ONLY the task-level callback.
+private final class TaskLevelOnlyDefaultHandling: NSObject, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge,
+                    completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        completionHandler(.performDefaultHandling, nil)
+    }
+}
+
+/// a normal session-level auth callback that just asks the OS to handle it.
+private final class SessionLevelDefaultHandling: NSObject, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
+                    completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        completionHandler(.performDefaultHandling, nil)
+    }
+}
+
 /// A task delegate that accepts any server certificate at the session-level challenge.
 private final class TrustAnyCertificateTaskDelegate: NSObject, URLSessionTaskDelegate {
     func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
@@ -1616,6 +2093,16 @@ private final class TrustAnyCertificateTaskDelegate: NSObject, URLSessionTaskDel
         } else {
             completionHandler(.performDefaultHandling, nil)
         }
+    }
+}
+
+/// Accepts any server certificate at the task-level challenge only. Cannot override pinning,
+/// because connection-level challenges are never offered to that selector, so a task carrying it
+/// must still be allowed to run.
+private final class TaskLevelOnlyChallengeDelegate: NSObject, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge,
+                    completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        completionHandler(.performDefaultHandling, nil)
     }
 }
 
