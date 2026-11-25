@@ -9,7 +9,7 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 ### Added
 - `ApproovDefaultMessageSigning(decisions:)` signs under the decisions of another mutator, for example `ApproovDefaultMessageSigning(decisions: .ALWAYS_PROCEED)`. See [message signing](ADVANCED.md#message-signing).
 
-## [3.7.0] - 2026-11-03
+## [3.7.0] - 2026-11-25
 
 Entries marked **Breaking** need a source change.
 
