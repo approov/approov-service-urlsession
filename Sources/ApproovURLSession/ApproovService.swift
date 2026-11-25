@@ -827,8 +827,8 @@ public class ApproovService {
 
     /**
      * Gets the current time corrected to the Approov servers' clock, in milliseconds since the epoch.
-     * Message signatures take their created and expires times from it. With an Approov SDK that does not
-     * provide this time, it is the device clock.
+     * Message signatures take their created and expires times from it. If the Approov SDK gives no time,
+     * it is the device clock.
      *
      * @return the current time in milliseconds, adjusted to the Approov servers' clock
      * @throws ApproovError if Approov protection is not enabled
@@ -845,20 +845,15 @@ public class ApproovService {
     private static var deviceClockWarned = false
 
     /**
-     * Gets the current time from the Approov SDK, corrected to the Approov servers' clock. An SDK that
-     * does not provide it gives the device clock, with one warning.
+     * Gets the current time from the Approov SDK, corrected to the Approov servers' clock. If the SDK
+     * gives no time, because it is not initialized, the result is the device clock, with one warning.
      *
      * @return the current time in milliseconds since the epoch
      */
     static func serverAdjustedTimeMS() -> Int64 {
-        let selector = NSSelectorFromString("getServerAdjustedCurrentTimeMS")
-        let sdk: AnyObject = Approov.self
-        if sdk.responds(to: selector), let implementation = sdk.method(for: selector) {
-            typealias ServerAdjustedTime = @convention(c) (AnyObject, Selector) -> Int64
-            let time = unsafeBitCast(implementation, to: ServerAdjustedTime.self)(sdk, selector)
-            if time > 0 {
-                return time
-            }
+        let time = Approov.getServerAdjustedCurrentTimeMS()
+        if time > 0 {
+            return time
         }
         let firstUse: Bool = loggingQueue.sync {
             defer { deviceClockWarned = true }
