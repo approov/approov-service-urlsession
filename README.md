@@ -59,6 +59,20 @@ pod 'ApproovURLSession', :git => 'https://github.com/approov/approov-service-url
 pod 'approov-ios-sdk', :git => 'https://github.com/approov/approov-ios-sdk.git', :tag => '3.7.0'
 ```
 
+Xcode 27 builds only for iOS 15 or later. If Xcode shows a deployment target error for the pods, add this block to the end of your `Podfile` and run `pod install` again:
+
+```ruby
+post_install do |installer|
+  installer.pods_project.targets.each do |target|
+    target.build_configurations.each do |config|
+      if config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'].to_f < 15.0
+        config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
+      end
+    end
+  end
+end
+```
+
 The package supports iOS 12 or later and watchOS 9 or later.
 
 Next, [initialize the package](#initializing).
