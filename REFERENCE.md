@@ -366,6 +366,11 @@ What the package changed on a request, passed to `handleInterceptorProcessedRequ
 
 The message signing mutator. `setDefaultFactory(_:)` sets the factory for every protected host, and `putHostFactory(hostName:factory:)` one for a single host. `generateDefaultSignatureParametersFactory()` returns the default factory. See [message signing](ADVANCED.md#message-signing).
 
+| Member | Does |
+|---|---|
+| `combined()` | returns a new signer whose default factory adds both the install and the account signature. It makes the `.DEFAULT` decisions. Install it with `setServiceMutator` |
+| `combined(decisions:)` | as `combined()`, but it makes the decisions of `decisions`, for example `.CLOSE_FAILURE` or `.ALWAYS_PROCEED`. Each call returns a new signer |
+
 ## SignatureParametersFactory
 
 Builds the signature parameters for each request:

@@ -100,7 +100,7 @@ The signer, `ApproovDefaultMessageSigning`, adds RFC 9421 message signatures to 
 
 Message signing is **off unless you install it**. If you do not need signatures, keep the default and install nothing.
 
-The signer is implemented as a service mutator, so installing another mutator, passing `nil` to `setServiceMutator` or an `initialize` that succeeds removes it. The signer makes the standard decisions, the same as `CLOSE_FAILURE`. If those suit you, give it a default factory and install it right after `initialize`, as in the example. To sign under other decisions, such as `ALWAYS_PROCEED`, combine them with the signer in a mutator of your own, as shown below.
+The signer is implemented as a service mutator, so installing another mutator, passing `nil` to `setServiceMutator` or an `initialize` that succeeds removes it. The signer makes the standard decisions, the same as `CLOSE_FAILURE`. If those suit you, give it a default factory and install it right after `initialize`, as in the example. To sign under other decisions, such as `ALWAYS_PROCEED`, use [`combined(decisions:)`](#sign-with-other-decisions).
 
 ```swift
 ApproovService.setServiceMutator(ApproovDefaultMessageSigning().setDefaultFactory(
@@ -113,7 +113,7 @@ You can add the account signature, `hmac-sha256`, with `setUseInstallAndAccountM
 
 A request to a secrets-only API that the SDK reports as `UNPROTECTED_URL` carries no token header and is not signed. A request to an Approov protected host can go ahead after a failed token fetch. It then still carries the token header, empty or with the status. So the signer signs it too, over that value.
 
-To sign under other decisions, combine them with the signer in a mutator of your own. Your mutator makes its decisions and calls the signer from its `handleInterceptorProcessedRequest`. This mutator makes the `ALWAYS_PROCEED` token decisions and signs:
+To sign under decisions that `combined(decisions:)` does not offer, combine them with the signer in a mutator of your own. Your mutator makes its decisions and calls the signer from its `handleInterceptorProcessedRequest`. This mutator makes the `ALWAYS_PROCEED` token decisions and signs:
 
 ```swift
 import Approov
@@ -141,9 +141,19 @@ When you write such a mutator:
 * To change the request before it is signed, make your change first and then call the signer.
 * Let an error from the signer propagate unchanged. A required body digest that cannot be generated then fails the request, as it does when the signer is installed on its own.
 
-Your backend receives `Signature` and `Signature-Input` headers whose members include `install`, `account` or both. A signature that cannot be produced is logged as an error, such as `ApproovService: install message signature unavailable, leaving it out`.
+Your backend receives `Signature` and `Signature-Input` headers whose members include `install`, `account` or both. When a signature cannot be produced, the request goes ahead with the other signature or unsigned. The package logs a missing install or account signature as a warning once per process, such as `ApproovService: install message signature unavailable, signed without it`. It logs a request sent unsigned as an error once per process, such as `ApproovService: no message signature could be produced, proceeding unsigned: ...`. It logs later occurrences at `.debug`.
 
 Your backend verifies the signatures as [Installation Message Signing](https://docs.approov.io/operations/message-signing/installation/) and [Account Message Signing](https://docs.approov.io/operations/message-signing/account/) describe.
+
+### Sign with other decisions
+
+`ApproovDefaultMessageSigning.combined(decisions:)` returns a signer that adds both the install and the account signature. It makes the decisions of `decisions`: `.CLOSE_FAILURE`, `.ALWAYS_PROCEED`, `.DEFAULT` or a mutator of your own. `combined()` uses `.DEFAULT`, the same as `.CLOSE_FAILURE`. A signature that cannot be produced is left out, and the request goes ahead with the other signature or unsigned. Each call returns a new `ApproovDefaultMessageSigning`, so `setDefaultFactory(_:)` and `putHostFactory(hostName:factory:)` on it change only that signer.
+
+```swift
+ApproovService.setServiceMutator(ApproovDefaultMessageSigning.combined(decisions: .CLOSE_FAILURE))
+
+ApproovService.setServiceMutator(ApproovDefaultMessageSigning.combined(decisions: .ALWAYS_PROCEED))
+```
 
 ### What the default signature covers
 
