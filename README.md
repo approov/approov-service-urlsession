@@ -32,13 +32,13 @@ Optional features are in [ADVANCED.md](ADVANCED.md). Every method is in [REFEREN
 
 ### Swift Package Manager
 
-In Xcode, choose `File > Add Package Dependencies...`, enter `https://github.com/approov/approov-service-urlsession.git`, choose the dependency rule `Up to Next Major Version` from `3.7.0`, and add the `ApproovURLSessionPackage` product to your app target.
+In Xcode, choose `File > Add Package Dependencies...`, enter `https://github.com/approov/approov-service-urlsession.git`, choose the dependency rule `Up to Next Major Version` from `3.7.1`, and add the `ApproovURLSessionPackage` product to your app target.
 
 In a `Package.swift`, add the package and the product:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/approov/approov-service-urlsession.git", from: "3.7.0")
+    .package(url: "https://github.com/approov/approov-service-urlsession.git", from: "3.7.1")
 ],
 targets: [
     .target(
@@ -55,7 +55,7 @@ targets: [
 The pods come from GitHub, not from the CocoaPods trunk. Add both to your `Podfile` and run `pod install`:
 
 ```ruby
-pod 'ApproovURLSession', :git => 'https://github.com/approov/approov-service-urlsession.git', :tag => '3.7.0'
+pod 'ApproovURLSession', :git => 'https://github.com/approov/approov-service-urlsession.git', :tag => '3.7.1'
 pod 'approov-ios-sdk', :git => 'https://github.com/approov/approov-ios-sdk.git', :tag => '3.7.0'
 ```
 
