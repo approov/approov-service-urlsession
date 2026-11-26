@@ -871,10 +871,22 @@ class ApproovURLSessionComponentProvider: ComponentProvider {
         return request.url?.scheme ?? "http"
     }
 
-    // @target-uri: the URL exactly as it is sent, which never carries the fragment
+    // @target-uri: the URL as it is sent, without the fragment and without the scheme's default port
     public func getTargetUri() -> String {
-        let url = request.url?.absoluteString ?? ""
-        return url.firstIndex(of: "#").map { String(url[..<$0]) } ?? url
+        guard let url = request.url else {
+            return ""
+        }
+        let scheme = url.scheme?.lowercased()
+        if let port = url.port, (scheme == "https" && port == 443) || (scheme == "http" && port == 80),
+           var components = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+            components.port = nil
+            components.fragment = nil
+            if let target = components.string {
+                return target
+            }
+        }
+        let target = url.absoluteString
+        return target.firstIndex(of: "#").map { String(target[..<$0]) } ?? target
     }
 
     public func getRequestTarget() -> String {

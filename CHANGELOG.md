@@ -12,6 +12,9 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 ### Changed
 - A missing install or account signature is logged as a warning once per process, and a request sent unsigned as an error once per process. Later occurrences are logged at debug level.
 
+### Fixed
+- The signed target URI leaves out an explicit default port (`:443` for `https`, `:80` for `http`), so `https://api.example.com:443/v1` and `https://api.example.com/v1` give the same signature.
+
 ## [3.7.0] - 2026-11-25
 
 Entries marked **Breaking** need a source change.

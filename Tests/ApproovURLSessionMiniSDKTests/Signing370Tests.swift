@@ -137,6 +137,18 @@ final class Signing370Tests: XCTestCase {
         XCTAssertEqual(provider.getRequestTarget(), "/p%20a?q=%25x%7Cy")
         let defaultPort = ApproovURLSessionComponentProvider(request: URLRequest(url: try XCTUnwrap(URL(string: "https://api.example.com:443/"))))
         XCTAssertEqual(defaultPort.getAuthority(), "api.example.com")
+        XCTAssertEqual(defaultPort.getTargetUri(), "https://api.example.com/")
+        let targetUris = [
+            ("https://api.example.com:443/v1?a=1", "https://api.example.com/v1?a=1"),
+            ("http://api.example.com:80/v1", "http://api.example.com/v1"),
+            ("https://api.example.com:8443/v1", "https://api.example.com:8443/v1"),
+            ("http://api.example.com:443/v1", "http://api.example.com:443/v1"),
+            ("https://api.example.com/v1%2Fx?q=a%20b#frag", "https://api.example.com/v1%2Fx?q=a%20b"),
+        ]
+        for (sent, signed) in targetUris {
+            let sentProvider = ApproovURLSessionComponentProvider(request: URLRequest(url: try XCTUnwrap(URL(string: sent))))
+            XCTAssertEqual(sentProvider.getTargetUri(), signed, sent)
+        }
     }
 
     func testSignatureTimesFollowTheApproovServersClock() throws {
