@@ -269,6 +269,41 @@ public class ApproovDefaultMessageSigning: ApproovServiceMutator, CustomStringCo
         return unsigned
     }
 
+    // A missing signature is logged at a higher level the first time in the process, then at debug level,
+    // so a device that never produces one does not log on every request. Guarded by missingLogLock.
+    private static let missingLogLock = NSLock()
+    private static var installMissingLogged = false
+    private static var accountMissingLogged = false
+    private static var unsignedLogged = false
+
+    internal static func resetMissingSignatureLogsForTesting() {
+        missingLogLock.lock()
+        installMissingLogged = false
+        accountMissingLogged = false
+        unsignedLogged = false
+        missingLogLock.unlock()
+    }
+
+    private static func logMissingSignatures(_ missing: [(String, String)], produced: Bool) {
+        guard !missing.isEmpty else { return }
+        missingLogLock.lock()
+        defer { missingLogLock.unlock() }
+        if !produced {
+            let first = !unsignedLogged
+            unsignedLogged = true
+            let detail = missing.map { "\($0.0) signature \($0.1)" }.joined(separator: ": ")
+            ApproovService.log(first ? .error : .debug,
+                               "ApproovService: no message signature could be produced, proceeding unsigned: \(detail)")
+            return
+        }
+        for (sigId, reason) in missing {
+            let first = (sigId == "install") ? !installMissingLogged : !accountMissingLogged
+            if sigId == "install" { installMissingLogged = true } else { accountMissingLogged = true }
+            ApproovService.log(first ? .warning : .debug,
+                               "ApproovService: \(sigId) message signature \(reason), signed without it")
+        }
+    }
+
     @available(*, deprecated, message: "Use handleInterceptorProcessedRequest instead.")
     public func processedRequest(_ request: URLRequest, changes: ApproovRequestMutations) throws -> URLRequest {
         // If the request doesn't have an Approov token, we don't need to sign it
@@ -300,6 +335,7 @@ public class ApproovDefaultMessageSigning: ApproovServiceMutator, CustomStringCo
             var signatures: [(String, Data)] = []
             var inputs: [(String, InnerList)] = []
             var firstMessage: String?
+            var missing: [(String, String)] = []
             for alg in algorithms {
                 let memberParams = SignatureParameters(base: params).setAlg(alg)
                 let sigId = (alg == ApproovDefaultMessageSigning.ALG_ES256) ? "install" : "account"
@@ -310,7 +346,7 @@ public class ApproovDefaultMessageSigning: ApproovServiceMutator, CustomStringCo
                     if alg == ApproovDefaultMessageSigning.ALG_ES256 {
                         guard let base64Signature = getInstallMessageSignature(message: message),
                               let decodedSignature = decodeBase64Signature(base64Signature) else {
-                            ApproovService.log(.error, "ApproovService: install message signature unavailable, leaving it out")
+                            missing.append((sigId, "unavailable"))
                             continue
                         }
                         // decode the signature from ASN.1 DER format (a malformed signature is left out)
@@ -318,7 +354,7 @@ public class ApproovDefaultMessageSigning: ApproovServiceMutator, CustomStringCo
                     } else {
                         guard let base64Signature = getAccountMessageSignature(message: message),
                               let decodedSignature = decodeBase64Signature(base64Signature) else {
-                            ApproovService.log(.error, "ApproovService: account message signature unavailable, leaving it out")
+                            missing.append((sigId, "unavailable"))
                             continue
                         }
                         signature = decodedSignature
@@ -327,11 +363,11 @@ public class ApproovDefaultMessageSigning: ApproovServiceMutator, CustomStringCo
                     signatures.append((sigId, signature))
                     firstMessage = firstMessage ?? message
                 } catch {
-                    ApproovService.log(.error, "ApproovService: \(sigId) message signature failed, leaving it out: \(error.localizedDescription)")
+                    missing.append((sigId, "failed: \(error.localizedDescription)"))
                 }
             }
+            ApproovDefaultMessageSigning.logMissingSignatures(missing, produced: !signatures.isEmpty)
             guard !signatures.isEmpty else {
-                ApproovService.log(.error, "ApproovService: no message signature could be produced, proceeding unsigned")
                 return ApproovDefaultMessageSigning.withoutSignatureHeaders(provider.getRequest())
             }
 

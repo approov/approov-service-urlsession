@@ -1617,6 +1617,7 @@ public class ApproovService {
 
     static func resetForTesting() {
         PinningURLSessionDelegate.resetForTesting()
+        ApproovDefaultMessageSigning.resetMissingSignatureLogsForTesting()
         lastARCQueue.sync { lastARC = "" }
         loggingQueue.sync { messageSignatureWarned = false }
         initializerQueue.sync {
