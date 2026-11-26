@@ -85,6 +85,30 @@ public class ApproovDefaultMessageSigning: ApproovServiceMutator, CustomStringCo
         self.decisions = decisions
     }
 
+    /**
+     * Gets a new message signing service mutator that adds both the install and the account signature to
+     * every request carrying the Approov token header, and makes the decisions of the given mutator, such as
+     * .CLOSE_FAILURE, .ALWAYS_PROCEED or your own. A signature that cannot be produced is left out and the
+     * request goes ahead with the other one, or unsigned. Install it with ApproovService.setServiceMutator.
+     *
+     * @param decisions is the mutator whose decisions are to be made
+     * @return a new signer with the default factory set to sign with both signatures
+     */
+    public static func combined(decisions: ApproovServiceMutator) -> ApproovDefaultMessageSigning {
+        return ApproovDefaultMessageSigning(decisions: decisions)
+            .setDefaultFactory(generateDefaultSignatureParametersFactory().setUseInstallAndAccountMessageSigning())
+    }
+
+    /**
+     * Gets a new message signing service mutator that adds both the install and the account signature to
+     * every request carrying the Approov token header, and makes the .DEFAULT decisions.
+     *
+     * @return a new signer with the default factory set to sign with both signatures
+     */
+    public static func combined() -> ApproovDefaultMessageSigning {
+        return combined(decisions: .DEFAULT)
+    }
+
     // the mutator that makes the decisions, CLOSE_FAILURE if none was given
     private var decider: ApproovServiceMutator {
         return decisions ?? ApproovCloseFailureMutator.instance

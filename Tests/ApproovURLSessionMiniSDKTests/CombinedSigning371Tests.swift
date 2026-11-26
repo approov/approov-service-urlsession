@@ -271,4 +271,40 @@ final class CombinedSigning371Tests: XCTestCase {
         ApproovService.setServiceMutator(ApproovDefaultMessageSigning().setDefaultFactory(factory()))
         XCTAssertEqual(memberNames(try update(base + "/a").request), ["install"])
     }
+
+    // MARK: combined()
+
+    func testCombinedMakesTheGivenDecisionsAndSignsBoth() throws {
+        ApproovService.setServiceMutator(ApproovDefaultMessageSigning.combined(decisions: .ALWAYS_PROCEED))
+        let proceeded = try update(base + "/a", tokenStatus: "NO_NETWORK")
+        XCTAssertEqual(proceeded.decision, .ShouldProceed, String(describing: proceeded.error))
+        XCTAssertEqual(memberNames(proceeded.request), ["install", "account"])
+
+        ApproovService.setServiceMutator(ApproovDefaultMessageSigning.combined(decisions: .CLOSE_FAILURE))
+        XCTAssertEqual(try update(base + "/a", tokenStatus: "NO_NETWORK").decision, .ShouldRetry)
+
+        let recording = Recording()
+        ApproovService.setServiceMutator(ApproovDefaultMessageSigning.combined(decisions: recording))
+        XCTAssertEqual(try update(base + "/b", tokenStatus: "REJECTED").decision, .ShouldProceed)
+        XCTAssertTrue(recording.calls.contains("handleInterceptorFetchTokenResult:REJECTED"), "\(recording.calls)")
+    }
+
+    func testCombinedWithoutDecisionsMakesTheDefaultDecisions() throws {
+        for status in ["NO_NETWORK", "REJECTED", "UNKNOWN_URL"] {
+            ApproovService.setServiceMutator(.DEFAULT)
+            let expected = try update(base + "/a", tokenStatus: status)
+            ApproovService.setServiceMutator(ApproovDefaultMessageSigning.combined())
+            let actual = try update(base + "/a", tokenStatus: status)
+            XCTAssertEqual(actual.decision, expected.decision, status)
+            XCTAssertEqual(String(reflecting: actual.error), String(reflecting: expected.error), status)
+        }
+        ApproovService.setServiceMutator(ApproovDefaultMessageSigning.combined())
+        XCTAssertEqual(memberNames(try update(base + "/a").request), ["install", "account"])
+    }
+
+    func testCombinedReturnsANewInstanceEachTime() {
+        XCTAssertFalse(ApproovDefaultMessageSigning.combined() === ApproovDefaultMessageSigning.combined())
+        XCTAssertFalse(ApproovDefaultMessageSigning.combined(decisions: .ALWAYS_PROCEED)
+                       === ApproovDefaultMessageSigning.combined(decisions: .ALWAYS_PROCEED))
+    }
 }
