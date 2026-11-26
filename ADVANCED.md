@@ -185,7 +185,7 @@ Initialize with an empty string instead of the account ID to start the package i
 * requests through an `ApproovURLSession` go out with no Approov processing. There is no token, signing, secure strings or Approov connection check, only OS trust.
 * the methods that call the SDK do not call it. Those that return a result throw `ApproovError.permanentError` or return `nil`.
 
-Before any `initialize`, a request is handled the same way as in bypass mode. It is neither failed nor held.
+Before any `initialize`, a request is handled the same way as in bypass mode. It is neither failed nor held. This can happen when another SDK that starts at app launch, an app extension, or a background task sends a request before your app's own start code runs.
 
 Bypass mode is a starting or fallback state. Use it, for example, while your app fetches the account ID remotely. The README example also uses it as a guard, in case the account ID does not reach the app intact.
 

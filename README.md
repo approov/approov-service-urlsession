@@ -26,7 +26,7 @@ Then follow the steps below. Each step makes the next one possible:
 4. [Look in the debug log](ADVANCED.md#diagnostics) to see that each request gets a token.
 5. [Register your app and check tokens on your backend](#next-steps). Until your backend checks the token, your API is not protected.
 
-Optional features are in [ADVANCED.md](ADVANCED.md). Every method is in [REFERENCE.md](REFERENCE.md).
+The [Approov documentation for this package](https://docs.approov.io/app-integration/packages/ios-swift-urlsession/) has more background. Optional features are in [ADVANCED.md](ADVANCED.md). Every method is in [REFERENCE.md](REFERENCE.md).
 
 ## ADDING THE DEPENDENCY
 
@@ -150,7 +150,7 @@ Then continue with the [next steps](#next-steps).
 
 ## NEXT STEPS
 
-1. [Register your app](https://docs.approov.io/getting-started/add-app-signing-certificates/), so that your release builds pass attestation.
+1. [Register your app's signing certificate](https://docs.approov.io/getting-started/add-app-signing-certificates/), so that your release builds pass attestation.
 2. [Check tokens on your backend](https://docs.approov.io/getting-started/integrate-backend/), and signatures if you installed message signing. This is the step that protects your API.
 3. [Go live](https://docs.approov.io/getting-started/go-live/). Monitor first, then let your backend reject requests without a valid token.
 
