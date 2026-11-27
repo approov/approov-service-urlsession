@@ -4,6 +4,17 @@ All notable changes to this package will be documented in this file.
 
 The format is based on Keep a Changelog and this project adheres to Semantic Versioning.
 
+## [3.7.1] - YYYY-MM-DD
+
+### Added
+- `ApproovDefaultMessageSigning.combined()` and `combined(decisions:)` give a signer that adds both the install and the account signature and makes the decisions you pass, for example `ApproovDefaultMessageSigning.combined(decisions: .ALWAYS_PROCEED)`. See [message signing](ADVANCED.md#message-signing).
+
+### Changed
+- A missing install or account signature is logged as a warning once per process, and a request sent unsigned as an error once per process. Later occurrences are logged at debug level.
+
+### Fixed
+- The signed target URI leaves out an explicit default port (`:443` for `https`, `:80` for `http`), so `https://api.example.com:443/v1` and `https://api.example.com/v1` give the same signature.
+
 ## [3.7.0] - 2026-11-25
 
 Entries marked **Breaking** need a source change.

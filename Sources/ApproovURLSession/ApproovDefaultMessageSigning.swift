@@ -14,6 +14,7 @@
 // ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH
 // THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+import Approov
 import CommonCrypto
 import RawStructuredFieldValues
 import Foundation
@@ -60,15 +61,109 @@ public class ApproovDefaultMessageSigning: ApproovServiceMutator, CustomStringCo
     private var installMessageSignatureProviderForTesting: ((String) -> String?)?
     private var accountMessageSignatureProviderForTesting: ((String) -> String?)?
 
+    // the mutator that makes the decisions, or nil for the CLOSE_FAILURE decisions of init()
+    private let decisions: ApproovServiceMutator?
+
     /**
      * Initializer
      */
     public init() {
         hostFactories = [:]
+        decisions = nil
+    }
+
+    /**
+     * Creates a signer that makes the decisions of another mutator and signs the requests that mutator
+     * processed. Every decision hook is passed to the given mutator, and the request its
+     * handleInterceptorProcessedRequest returns is then signed, so a change it makes is covered by the
+     * signature. Apps use combined(decisions:).
+     *
+     * @param decisions is the mutator that makes the decisions, a standard one or your own
+     */
+    internal init(decisions: ApproovServiceMutator) {
+        hostFactories = [:]
+        self.decisions = decisions
+    }
+
+    /**
+     * Gets a new message signing service mutator that adds both the install and the account signature to
+     * every request carrying the Approov token header, and makes the decisions of the given mutator, such as
+     * .CLOSE_FAILURE, .ALWAYS_PROCEED or your own. A signature that cannot be produced is left out and the
+     * request goes ahead with the other one, or unsigned. Install it with ApproovService.setServiceMutator.
+     *
+     * @param decisions is the mutator whose decisions are to be made
+     * @return a new signer with the default factory set to sign with both signatures
+     */
+    public static func combined(decisions: ApproovServiceMutator) -> ApproovDefaultMessageSigning {
+        return ApproovDefaultMessageSigning(decisions: decisions)
+            .setDefaultFactory(generateDefaultSignatureParametersFactory().setUseInstallAndAccountMessageSigning())
+    }
+
+    /**
+     * Gets a new message signing service mutator that adds both the install and the account signature to
+     * every request carrying the Approov token header, and makes the .DEFAULT decisions.
+     *
+     * @return a new signer with the default factory set to sign with both signatures
+     */
+    public static func combined() -> ApproovDefaultMessageSigning {
+        return combined(decisions: .DEFAULT)
+    }
+
+    // the mutator that makes the decisions, CLOSE_FAILURE if none was given
+    private var decider: ApproovServiceMutator {
+        return decisions ?? ApproovCloseFailureMutator.instance
     }
 
     public var description: String {
-        return "ApproovDefaultMessageSigning"
+        guard let decisions else {
+            return "ApproovDefaultMessageSigning"
+        }
+        return "ApproovDefaultMessageSigning(\(String(describing: decisions)))"
+    }
+
+    // the decision hooks, each made by the decisions mutator. A standard decision it throws is recorded
+    // for the hook call in progress, so it reaches the app in the same form as when that mutator is
+    // installed on its own.
+
+    public func handlePrecheckResult(_ approovResults: ApproovTokenFetchResult) throws {
+        try decider.handlePrecheckResult(approovResults)
+    }
+
+    public func handleFetchTokenResult(_ approovResults: ApproovTokenFetchResult) throws {
+        try decider.handleFetchTokenResult(approovResults)
+    }
+
+    public func handleFetchSecureStringResult(_ approovResults: ApproovTokenFetchResult,
+                                              operation: String,
+                                              key: String) throws {
+        try decider.handleFetchSecureStringResult(approovResults, operation: operation, key: key)
+    }
+
+    public func handleFetchCustomJWTResult(_ approovResults: ApproovTokenFetchResult) throws {
+        try decider.handleFetchCustomJWTResult(approovResults)
+    }
+
+    public func handleInterceptorShouldProcessRequest(_ request: URLRequest) throws -> Bool {
+        return try decider.handleInterceptorShouldProcessRequest(request)
+    }
+
+    public func handleInterceptorFetchTokenResult(_ approovResults: ApproovTokenFetchResult,
+                                                  url: String) throws -> Bool {
+        return try decider.handleInterceptorFetchTokenResult(approovResults, url: url)
+    }
+
+    public func handleInterceptorHeaderSubstitutionResult(_ approovResults: ApproovTokenFetchResult,
+                                                          header: String) throws -> Bool {
+        return try decider.handleInterceptorHeaderSubstitutionResult(approovResults, header: header)
+    }
+
+    public func handleInterceptorQueryParamSubstitutionResult(_ approovResults: ApproovTokenFetchResult,
+                                                              queryKey: String) throws -> Bool {
+        return try decider.handleInterceptorQueryParamSubstitutionResult(approovResults, queryKey: queryKey)
+    }
+
+    public func handlePinningShouldProcessRequest(_ request: URLRequest) -> Bool {
+        return decider.handlePinningShouldProcessRequest(request)
     }
 
     /**
@@ -139,7 +234,8 @@ public class ApproovDefaultMessageSigning: ApproovServiceMutator, CustomStringCo
     }
 
     /**
-     * Processes a request to add message signature headers.
+     * Processes a request to add message signature headers. The decisions mutator processes the request
+     * first, and the request it returns is signed.
      *
      * - Parameters:
      *   - request: The original HTTP request.
@@ -149,7 +245,7 @@ public class ApproovDefaultMessageSigning: ApproovServiceMutator, CustomStringCo
      */
     public func handleInterceptorProcessedRequest(_ request: URLRequest,
                                                   changes: ApproovRequestMutations) throws -> URLRequest {
-        return try processedRequest(request, changes: changes)
+        return try processedRequest(decider.handleInterceptorProcessedRequest(request, changes: changes), changes: changes)
     }
 
     /**
@@ -171,6 +267,41 @@ public class ApproovDefaultMessageSigning: ApproovServiceMutator, CustomStringCo
             unsigned.setValue(nil, forHTTPHeaderField: field)
         }
         return unsigned
+    }
+
+    // A missing signature is logged at a higher level the first time in the process, then at debug level,
+    // so a device that never produces one does not log on every request. Guarded by missingLogLock.
+    private static let missingLogLock = NSLock()
+    private static var installMissingLogged = false
+    private static var accountMissingLogged = false
+    private static var unsignedLogged = false
+
+    internal static func resetMissingSignatureLogsForTesting() {
+        missingLogLock.lock()
+        installMissingLogged = false
+        accountMissingLogged = false
+        unsignedLogged = false
+        missingLogLock.unlock()
+    }
+
+    private static func logMissingSignatures(_ missing: [(String, String)], produced: Bool) {
+        guard !missing.isEmpty else { return }
+        missingLogLock.lock()
+        defer { missingLogLock.unlock() }
+        if !produced {
+            let first = !unsignedLogged
+            unsignedLogged = true
+            let detail = missing.map { "\($0.0) signature \($0.1)" }.joined(separator: ": ")
+            ApproovService.log(first ? .error : .debug,
+                               "ApproovService: no message signature could be produced, proceeding unsigned: \(detail)")
+            return
+        }
+        for (sigId, reason) in missing {
+            let first = (sigId == "install") ? !installMissingLogged : !accountMissingLogged
+            if sigId == "install" { installMissingLogged = true } else { accountMissingLogged = true }
+            ApproovService.log(first ? .warning : .debug,
+                               "ApproovService: \(sigId) message signature \(reason), signed without it")
+        }
     }
 
     @available(*, deprecated, message: "Use handleInterceptorProcessedRequest instead.")
@@ -204,6 +335,7 @@ public class ApproovDefaultMessageSigning: ApproovServiceMutator, CustomStringCo
             var signatures: [(String, Data)] = []
             var inputs: [(String, InnerList)] = []
             var firstMessage: String?
+            var missing: [(String, String)] = []
             for alg in algorithms {
                 let memberParams = SignatureParameters(base: params).setAlg(alg)
                 let sigId = (alg == ApproovDefaultMessageSigning.ALG_ES256) ? "install" : "account"
@@ -214,7 +346,7 @@ public class ApproovDefaultMessageSigning: ApproovServiceMutator, CustomStringCo
                     if alg == ApproovDefaultMessageSigning.ALG_ES256 {
                         guard let base64Signature = getInstallMessageSignature(message: message),
                               let decodedSignature = decodeBase64Signature(base64Signature) else {
-                            ApproovService.log(.error, "ApproovService: install message signature unavailable, leaving it out")
+                            missing.append((sigId, "unavailable"))
                             continue
                         }
                         // decode the signature from ASN.1 DER format (a malformed signature is left out)
@@ -222,7 +354,7 @@ public class ApproovDefaultMessageSigning: ApproovServiceMutator, CustomStringCo
                     } else {
                         guard let base64Signature = getAccountMessageSignature(message: message),
                               let decodedSignature = decodeBase64Signature(base64Signature) else {
-                            ApproovService.log(.error, "ApproovService: account message signature unavailable, leaving it out")
+                            missing.append((sigId, "unavailable"))
                             continue
                         }
                         signature = decodedSignature
@@ -231,11 +363,11 @@ public class ApproovDefaultMessageSigning: ApproovServiceMutator, CustomStringCo
                     signatures.append((sigId, signature))
                     firstMessage = firstMessage ?? message
                 } catch {
-                    ApproovService.log(.error, "ApproovService: \(sigId) message signature failed, leaving it out: \(error.localizedDescription)")
+                    missing.append((sigId, "failed: \(error.localizedDescription)"))
                 }
             }
+            ApproovDefaultMessageSigning.logMissingSignatures(missing, produced: !signatures.isEmpty)
             guard !signatures.isEmpty else {
-                ApproovService.log(.error, "ApproovService: no message signature could be produced, proceeding unsigned")
                 return ApproovDefaultMessageSigning.withoutSignatureHeaders(provider.getRequest())
             }
 
@@ -739,10 +871,22 @@ class ApproovURLSessionComponentProvider: ComponentProvider {
         return request.url?.scheme ?? "http"
     }
 
-    // @target-uri: the URL exactly as it is sent, which never carries the fragment
+    // @target-uri: the URL as it is sent, without the fragment and without the scheme's default port
     public func getTargetUri() -> String {
-        let url = request.url?.absoluteString ?? ""
-        return url.firstIndex(of: "#").map { String(url[..<$0]) } ?? url
+        guard let url = request.url else {
+            return ""
+        }
+        let scheme = url.scheme?.lowercased()
+        if let port = url.port, (scheme == "https" && port == 443) || (scheme == "http" && port == 80),
+           var components = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+            components.port = nil
+            components.fragment = nil
+            if let target = components.string {
+                return target
+            }
+        }
+        let target = url.absoluteString
+        return target.firstIndex(of: "#").map { String(target[..<$0]) } ?? target
     }
 
     public func getRequestTarget() -> String {

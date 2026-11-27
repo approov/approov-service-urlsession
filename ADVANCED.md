@@ -100,7 +100,7 @@ The signer, `ApproovDefaultMessageSigning`, adds RFC 9421 message signatures to 
 
 Message signing is **off unless you install it**. If you do not need signatures, keep the default and install nothing.
 
-The signer is implemented as a service mutator, so installing another mutator, passing `nil` to `setServiceMutator` or an `initialize` that succeeds removes it. The signer makes the standard decisions, the same as `CLOSE_FAILURE`. If those suit you, give it a default factory and install it right after `initialize`, as in the example. To sign under other decisions, such as `ALWAYS_PROCEED`, combine them with the signer in a mutator of your own, as shown below.
+The signer is implemented as a service mutator, so installing another mutator, passing `nil` to `setServiceMutator` or an `initialize` that succeeds removes it. The signer makes the standard decisions, the same as `CLOSE_FAILURE`. If those suit you, give it a default factory and install it right after `initialize`, as in the example. To sign under other decisions, such as `ALWAYS_PROCEED`, use [`combined(decisions:)`](#sign-with-other-decisions).
 
 ```swift
 ApproovService.setServiceMutator(ApproovDefaultMessageSigning().setDefaultFactory(
@@ -111,9 +111,11 @@ Once the signer is installed, every request that carries the Approov token heade
 
 You can add the account signature, `hmac-sha256`, with `setUseInstallAndAccountMessageSigning()` on the factory. It uses a shared account key, delivered to the app when it passes attestation. Its member is `account`. Both are members of the same `Signature` and `Signature-Input` headers, over the same covered components. If one signature cannot be produced, the request goes ahead with the other, or unsigned. `setUseAccountMessageSigning()` and `setUseInstallMessageSigning()` select one signature only.
 
+The signed target URI, and the authority if you cover it, leave out a default port: `:443` for `https` and `:80` for `http`. So `https://api.example.com:443/v1` and `https://api.example.com/v1` give the same signature base.
+
 A request to a secrets-only API that the SDK reports as `UNPROTECTED_URL` carries no token header and is not signed. A request to an Approov protected host can go ahead after a failed token fetch. It then still carries the token header, empty or with the status. So the signer signs it too, over that value.
 
-To sign under other decisions, combine them with the signer in a mutator of your own. Your mutator makes its decisions and calls the signer from its `handleInterceptorProcessedRequest`. This mutator makes the `ALWAYS_PROCEED` token decisions and signs:
+To sign under decisions that `combined(decisions:)` does not offer, combine them with the signer in a mutator of your own. Your mutator makes its decisions and calls the signer from its `handleInterceptorProcessedRequest`. This mutator makes the `ALWAYS_PROCEED` token decisions and signs:
 
 ```swift
 import Approov
@@ -141,9 +143,19 @@ When you write such a mutator:
 * To change the request before it is signed, make your change first and then call the signer.
 * Let an error from the signer propagate unchanged. A required body digest that cannot be generated then fails the request, as it does when the signer is installed on its own.
 
-Your backend receives `Signature` and `Signature-Input` headers whose members include `install`, `account` or both. A signature that cannot be produced is logged as an error, such as `ApproovService: install message signature unavailable, leaving it out`.
+Your backend receives `Signature` and `Signature-Input` headers whose members include `install`, `account` or both. When a signature cannot be produced, the request goes ahead with the other signature or unsigned. The package logs a missing install or account signature as a warning once per process, such as `ApproovService: install message signature unavailable, signed without it`. It logs a request sent unsigned as an error once per process, such as `ApproovService: no message signature could be produced, proceeding unsigned: ...`. It logs later occurrences at `.debug`.
 
 Your backend verifies the signatures as [Installation Message Signing](https://docs.approov.io/operations/message-signing/installation/) and [Account Message Signing](https://docs.approov.io/operations/message-signing/account/) describe.
+
+### Sign with other decisions
+
+`ApproovDefaultMessageSigning.combined(decisions:)` returns a signer that adds both the install and the account signature. It makes the decisions of `decisions`: `.CLOSE_FAILURE`, `.ALWAYS_PROCEED`, `.DEFAULT` or a mutator of your own. `combined()` uses `.DEFAULT`, the same as `.CLOSE_FAILURE`. A signature that cannot be produced is left out, and the request goes ahead with the other signature or unsigned. Your backend can check the install signature only if the Approov token carries the install public key. Turn that on for your account with `approov policy -setInstallPubKey on` (see [installation message signing](https://docs.approov.io/operations/message-signing/installation/)). Each call returns a new `ApproovDefaultMessageSigning`, so `setDefaultFactory(_:)` and `putHostFactory(hostName:factory:)` on it change only that signer.
+
+```swift
+ApproovService.setServiceMutator(ApproovDefaultMessageSigning.combined(decisions: .CLOSE_FAILURE))
+
+ApproovService.setServiceMutator(ApproovDefaultMessageSigning.combined(decisions: .ALWAYS_PROCEED))
+```
 
 ### What the default signature covers
 
@@ -175,7 +187,7 @@ Initialize with an empty string instead of the account ID to start the package i
 * requests through an `ApproovURLSession` go out with no Approov processing. There is no token, signing, secure strings or Approov connection check, only OS trust.
 * the methods that call the SDK do not call it. Those that return a result throw `ApproovError.permanentError` or return `nil`.
 
-Before any `initialize`, a request is handled the same way as in bypass mode. It is neither failed nor held.
+Before any `initialize`, a request is handled the same way as in bypass mode. It is neither failed nor held. This can happen when another SDK that starts at app launch, an app extension, or a background task sends a request before your app's own start code runs.
 
 Bypass mode is a starting or fallback state. Use it, for example, while your app fetches the account ID remotely. The README example also uses it as a guard, in case the account ID does not reach the app intact.
 

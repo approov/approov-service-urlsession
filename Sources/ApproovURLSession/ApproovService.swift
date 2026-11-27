@@ -265,7 +265,7 @@ public class ApproovService {
             if !config.isEmpty {
                 // Must match the top CHANGELOG entry (in lock-step with Package.swift releaseTAG
                 // and the podspec s.version); bump all three in a PR before tagging a release.
-                Approov.setUserProperty("approov-service-urlsession/3.7.0")
+                Approov.setUserProperty("approov-service-urlsession/3.7.1")
             }
         }
     }
@@ -1617,6 +1617,7 @@ public class ApproovService {
 
     static func resetForTesting() {
         PinningURLSessionDelegate.resetForTesting()
+        ApproovDefaultMessageSigning.resetMissingSignatureLogsForTesting()
         lastARCQueue.sync { lastARC = "" }
         loggingQueue.sync { messageSignatureWarned = false }
         initializerQueue.sync {

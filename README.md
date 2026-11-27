@@ -26,19 +26,19 @@ Then follow the steps below. Each step makes the next one possible:
 4. [Look in the debug log](ADVANCED.md#diagnostics) to see that each request gets a token.
 5. [Register your app and check tokens on your backend](#next-steps). Until your backend checks the token, your API is not protected.
 
-Optional features are in [ADVANCED.md](ADVANCED.md). Every method is in [REFERENCE.md](REFERENCE.md).
+The [Approov documentation for this package](https://docs.approov.io/app-integration/packages/ios-swift-urlsession/) has more background. Optional features are in [ADVANCED.md](ADVANCED.md). Every method is in [REFERENCE.md](REFERENCE.md).
 
 ## ADDING THE DEPENDENCY
 
 ### Swift Package Manager
 
-In Xcode, choose `File > Add Package Dependencies...`, enter `https://github.com/approov/approov-service-urlsession.git`, choose the dependency rule `Up to Next Major Version` from `3.7.0`, and add the `ApproovURLSessionPackage` product to your app target.
+In Xcode, choose `File > Add Package Dependencies...`, enter `https://github.com/approov/approov-service-urlsession.git`, choose the dependency rule `Up to Next Major Version` from `3.7.1`, and add the `ApproovURLSessionPackage` product to your app target.
 
 In a `Package.swift`, add the package and the product:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/approov/approov-service-urlsession.git", from: "3.7.0")
+    .package(url: "https://github.com/approov/approov-service-urlsession.git", from: "3.7.1")
 ],
 targets: [
     .target(
@@ -55,8 +55,22 @@ targets: [
 The pods come from GitHub, not from the CocoaPods trunk. Add both to your `Podfile` and run `pod install`:
 
 ```ruby
-pod 'ApproovURLSession', :git => 'https://github.com/approov/approov-service-urlsession.git', :tag => '3.7.0'
+pod 'ApproovURLSession', :git => 'https://github.com/approov/approov-service-urlsession.git', :tag => '3.7.1'
 pod 'approov-ios-sdk', :git => 'https://github.com/approov/approov-ios-sdk.git', :tag => '3.7.0'
+```
+
+Xcode 27 builds only for iOS 15 or later. If Xcode shows a deployment target error for the pods, add this block to the end of your `Podfile` and run `pod install` again:
+
+```ruby
+post_install do |installer|
+  installer.pods_project.targets.each do |target|
+    target.build_configurations.each do |config|
+      if config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'].to_f < 15.0
+        config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
+      end
+    end
+  end
+end
 ```
 
 The package supports iOS 12 or later and watchOS 9 or later.
@@ -128,7 +142,7 @@ The `async` methods of `URLSession` cannot be overridden, so use their `WithAppr
 
 * [What each request carries](ADVANCED.md#what-each-request-carries), and [what happens when a token fetch fails](ADVANCED.md#what-happens-by-default). By default, a request fails if the device has a network problem. It goes ahead with an empty token header if the app cannot reach the Approov service.
 * [Service mutators](ADVANCED.md#service-mutators), which change those decisions. For example, a mutator can send requests without a valid token. It can also fail a request on chosen errors. Your app then receives the `URLError` that the mutator throws and decides what to do, for example retry or show a message.
-* [Message signing](ADVANCED.md#message-signing), which you install with one call
+* [Message signing](ADVANCED.md#message-signing), which you install with one call, for example `ApproovDefaultMessageSigning.combined(decisions: .ALWAYS_PROCEED)`
 * [Header names](ADVANCED.md#header-names), [secure strings](ADVANCED.md#secure-strings), [token binding](ADVANCED.md#token-binding), [excluding URLs](ADVANCED.md#excluding-urls) and [redirects](ADVANCED.md#redirects)
 * [Diagnostics](ADVANCED.md#diagnostics), which show the result of each token fetch in the log
 
@@ -136,7 +150,7 @@ Then continue with the [next steps](#next-steps).
 
 ## NEXT STEPS
 
-1. [Register your app](https://docs.approov.io/getting-started/add-app-signing-certificates/), so that your release builds pass attestation.
+1. [Register your app's signing certificate](https://docs.approov.io/getting-started/add-app-signing-certificates/), so that your release builds pass attestation.
 2. [Check tokens on your backend](https://docs.approov.io/getting-started/integrate-backend/), and signatures if you installed message signing. This is the step that protects your API.
 3. [Go live](https://docs.approov.io/getting-started/go-live/). Monitor first, then let your backend reject requests without a valid token.
 
